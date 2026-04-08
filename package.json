@@ -1,0 +1,112 @@
+{
+  "name": "project-lanes",
+  "displayName": "Project Lanes - Fast Switching",
+  "version": "0.0.1",
+  "description": "Manage projects as lanes in a multi-root workspace and switch Explorer, terminals, and editor tabs in one click",
+  "categories": [
+    "Other"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YukiIto1999/vscode-project-lanes"
+  },
+  "publisher": "yukiito1999",
+  "main": "./dist/extension.js",
+  "scripts": {
+    "build": "vp build",
+    "watch": "vp build --watch",
+    "test": "vp test run",
+    "test:watch": "vp test",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
+    "check": "vp check",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.0",
+    "vite-plus": "^0.1.16"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "project-lanes",
+          "title": "Project Lanes",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "project-lanes": [
+        {
+          "id": "projectLanes",
+          "name": "Lanes"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "projectLanes.focus",
+        "title": "Project Lanes: Focus"
+      },
+      {
+        "command": "projectLanes.unfocus",
+        "title": "Project Lanes: Unfocus"
+      },
+      {
+        "command": "projectLanes.closeTerminals",
+        "title": "Project Lanes: Close Terminals"
+      }
+    ],
+    "configuration": {
+      "title": "Project Lanes",
+      "properties": {
+        "projectLanes.refreshInterval": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Agent status refresh interval in seconds."
+        },
+        "projectLanes.agent.idleThreshold": {
+          "type": "number",
+          "default": 5,
+          "minimum": 3,
+          "maximum": 120,
+          "description": "Seconds of inactivity before an agent is considered idle."
+        },
+        "projectLanes.terminal.shellPath": {
+          "type": "string",
+          "default": "",
+          "description": "Shell path for Lane Terminal. Leave empty to auto-detect from $SHELL."
+        },
+        "projectLanes.agent.showStatus": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show agent status in badge, decoration, and status bar."
+        }
+      }
+    },
+    "terminal": {
+      "profiles": [
+        {
+          "id": "projectLanes.terminal",
+          "title": "Lane Terminal"
+        }
+      ]
+    }
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.96.0"
+  }
+}
