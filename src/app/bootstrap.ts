@@ -99,7 +99,7 @@ export const bootstrapRuntime = (
   });
 
   // エージェントモニタ（閾値を動的参照）
-  const homePath = (process.env.HOME ?? `/home/${process.env.USER}`) as AbsolutePath;
+  const homePath = (process.env.HOME || `/home/${process.env.USER}`) as AbsolutePath;
   const agentSources = createDefaultSources(homePath, claudeSession);
   const agentMonitor = createAgentMonitorService({
     proc: procSnapshot,
