@@ -1,7 +1,7 @@
 {
   "name": "project-lanes",
   "displayName": "Project Lanes - Fast Switching",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Manage projects as lanes in a multi-root workspace and switch Explorer, terminals, and editor tabs in one click",
   "categories": [
     "Other"
