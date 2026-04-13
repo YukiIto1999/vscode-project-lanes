@@ -9,7 +9,7 @@ export const createConfigAdapter = (): ConfigPort => ({
     const cfg = vscode.workspace.getConfiguration('projectLanes');
     return {
       refreshIntervalSec: cfg.get<number>('refreshInterval', 1),
-      idleThresholdSec: cfg.get<number>('agent.idleThreshold', 10),
+      idleThresholdSec: cfg.get<number>('agent.idleThreshold', 5),
       showAgentStatus: cfg.get<boolean>('agent.showStatus', true),
       shellPath: (cfg.get<string>('terminal.shellPath', '') || undefined) as
         | AbsolutePath
@@ -23,7 +23,7 @@ export const createConfigAdapter = (): ConfigPort => ({
         const cfg = vscode.workspace.getConfiguration('projectLanes');
         listener({
           refreshIntervalSec: cfg.get<number>('refreshInterval', 1),
-          idleThresholdSec: cfg.get<number>('agent.idleThreshold', 10),
+          idleThresholdSec: cfg.get<number>('agent.idleThreshold', 5),
           showAgentStatus: cfg.get<boolean>('agent.showStatus', true),
           shellPath: (cfg.get<string>('terminal.shellPath', '') || undefined) as
             | AbsolutePath

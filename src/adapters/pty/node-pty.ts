@@ -1,6 +1,9 @@
-import * as pty from 'node-pty';
+import type * as NodePty from 'node-pty';
 import type { Disposable } from '../../foundation/model';
 import type { ShellSessionFactoryPort, ShellSessionHandle } from '../../terminal/ports';
+
+/** node-pty を実行時に遅延ロード（トップレベル require によるアクティベーション失敗の防止） */
+const loadPty = (): typeof NodePty => require('node-pty');
 
 /** スクロールバックバッファの最大サイズ（バイト） */
 const MAX_SCROLLBACK = 64 * 1024;
@@ -11,6 +14,7 @@ const detectShell = (): string => process.env.SHELL ?? '/bin/bash';
 /** node-pty によるシェルセッション生成のアダプター */
 export const createShellSessionFactory = (): ShellSessionFactoryPort => ({
   create: (spec): ShellSessionHandle => {
+    const pty = loadPty();
     const shell = spec.shellPath ?? detectShell();
     const proc = pty.spawn(shell, [], {
       name: 'xterm-256color',
