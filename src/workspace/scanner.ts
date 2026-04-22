@@ -1,65 +1,62 @@
 import * as nodePath from 'node:path';
-import type { AbsolutePath, LaneId, UriString, WorkspaceKey } from '../foundation/model';
-import type { Lane, LaneCatalog } from '../lane/model';
+import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import type {
   FolderMutation,
   WorkspaceAnchor,
   WorkspaceBootstrapResult,
+  WorkspaceFileInfo,
   WorkspaceFolder,
 } from './model';
-import type { DirectoryPort, WorkspaceHostPort } from './ports';
+import type {
+  CatalogStorePort,
+  DirectoryPort,
+  WorkspaceFilePort,
+  WorkspaceHostPort,
+} from './ports';
 
 const ANCHOR_NAME = '.lanes-root' as const;
 
-/** ワークスペースフォルダからアンカーの検出 */
-export const detectAnchor = (folders: readonly WorkspaceFolder[]): WorkspaceAnchor | undefined => {
-  const first = folders[0];
-  if (!first || first.name !== ANCHOR_NAME) return undefined;
-  const path = uriToAbsolutePath(first.uri);
-  return {
-    name: ANCHOR_NAME,
-    uri: first.uri,
-    path,
-    parentPath: nodePath.dirname(path) as AbsolutePath,
-  };
+/** アンカーの判定 */
+export const isAnchor = (folder: WorkspaceFolder): boolean => folder.name === ANCHOR_NAME;
+
+/** workspaceFolders からレーン正本を解決
+ *
+ * unfocused（アンカー以外が 2 件以上、または stored 未保存）のときは workspaceFolders が正本、
+ * focused（縮退中）のときは stored catalog を正本として返す
+ */
+export const resolveCanonicalLanes = (
+  rawFolders: readonly WorkspaceFolder[],
+  stored: readonly WorkspaceFolder[] | undefined,
+): readonly WorkspaceFolder[] => {
+  const nonAnchor = rawFolders.filter((f) => !isAnchor(f));
+  if (!stored || nonAnchor.length >= 2) return nonAnchor;
+  return stored;
 };
 
-/** アンカーの親ディレクトリからレーンカタログの構築 */
-export const buildCatalog = (
-  anchor: WorkspaceAnchor,
-  directory: DirectoryPort,
-  toUri: (path: string) => UriString,
-): LaneCatalog => {
-  const entries = directory.listDirectories(anchor.parentPath);
-  const lanes: Lane[] = entries
-    .filter((e) => !e.name.startsWith('.'))
-    .map((e) => ({
-      id: e.name as LaneId,
-      label: e.name,
-      rootUri: toUri(nodePath.join(anchor.parentPath, e.name)),
-      rootPath: e.path,
-    }));
-  return {
-    lanes,
-    byId: new Map(lanes.map((l) => [l.id, l])),
-  };
-};
+/** アンカーメタデータの構築 */
+const buildAnchor = (path: AbsolutePath, toUri: (path: string) => UriString): WorkspaceAnchor => ({
+  name: ANCHOR_NAME,
+  uri: toUri(path),
+  path,
+  parentPath: nodePath.dirname(path) as AbsolutePath,
+});
 
-/** アンカーが存在しなければ作成してワークスペースに挿入 */
+/** アンカーが無ければ作成し workspaceFolders の先頭に挿入 */
 const ensureAnchor = (
-  folders: readonly WorkspaceFolder[],
+  rawFolders: readonly WorkspaceFolder[],
+  workspaceFile: WorkspaceFileInfo,
   directory: DirectoryPort,
   host: WorkspaceHostPort,
   toUri: (path: string) => UriString,
-): readonly WorkspaceFolder[] => {
-  if (folders.length === 0) return folders;
-  if (folders[0]!.name === ANCHOR_NAME) return folders;
+): WorkspaceAnchor | undefined => {
+  const existing = rawFolders[0];
+  if (existing && isAnchor(existing)) {
+    return buildAnchor(uriToAbsolutePath(existing.uri), toUri);
+  }
 
-  const parentPath = nodePath.dirname(uriToAbsolutePath(folders[0]!.uri)) as AbsolutePath;
-  const anchorPath = nodePath.join(parentPath, ANCHOR_NAME) as AbsolutePath;
-
-  if (!directory.ensureDirectory(anchorPath)) return folders;
+  const anchorPath = nodePath.join(workspaceFile.directoryPath, ANCHOR_NAME) as AbsolutePath;
+  if (!directory.ensureDirectory(anchorPath)) return undefined;
 
   const mutation: FolderMutation = {
     start: 0,
@@ -67,20 +64,34 @@ const ensureAnchor = (
     folders: [{ uri: toUri(anchorPath), name: ANCHOR_NAME }],
   };
   host.applyMutation(mutation);
-  return host.readFolders();
+  return buildAnchor(anchorPath, toUri);
 };
 
-/** ワークスペースのブートストラップ（アンカー未設置なら自動作成） */
+/** ワークスペースのブートストラップ
+ *
+ * 正本 = workspace ファイル（存在の確認）+ stored catalog（workspaceState）。
+ * フォーカス操作が `.code-workspace` を縮退させても stored から全レーン復元。
+ */
 export const bootstrapWorkspace = (
   host: WorkspaceHostPort,
+  workspaceFile: WorkspaceFilePort,
+  catalogStore: CatalogStorePort,
   directory: DirectoryPort,
   toUri: (path: string) => UriString,
 ): WorkspaceBootstrapResult => {
-  const folders = ensureAnchor(host.readFolders(), directory, host, toUri);
-  if (folders.length === 0) return { kind: 'disabled', reason: 'no-workspace' };
-  const anchor = detectAnchor(folders);
+  const fileInfo = workspaceFile.read();
+  if (!fileInfo) return { kind: 'disabled', reason: 'no-workspace-file' };
+
+  const rawFolders = host.readFolders();
+  const stored = catalogStore.load();
+  const canonicalLanes = resolveCanonicalLanes(rawFolders, stored);
+
+  // 0 件は「これからプロジェクトを登録していく」初期状態として許容
+  catalogStore.save(canonicalLanes);
+
+  const anchor = ensureAnchor(rawFolders, fileInfo, directory, host, toUri);
   if (!anchor) return { kind: 'disabled', reason: 'missing-anchor' };
-  const catalog = buildCatalog(anchor, directory, toUri);
-  const key = `filtering:${anchor.parentPath}` as WorkspaceKey;
-  return { kind: 'ready', context: { key, anchor, catalog } };
+
+  const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
+  return { kind: 'ready', context: { key, anchor, canonicalLanes } };
 };
