@@ -1,7 +1,7 @@
 {
   "name": "project-lanes",
   "displayName": "Project Lanes - Fast Switching",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Manage projects as lanes in a multi-root workspace and switch Explorer, terminals, and editor tabs in one click",
   "categories": [
     "Other"
@@ -100,7 +100,19 @@
           "title": "Lane Terminal"
         }
       ]
-    }
+    },
+    "viewsWelcome": [
+      {
+        "view": "projectLanes",
+        "contents": "この拡張機能はマルチルートワークスペース（.code-workspace）専用です。\n[ワークスペースファイルを開く](command:workbench.action.openWorkspace)",
+        "when": "workbenchState != workspace"
+      },
+      {
+        "view": "projectLanes",
+        "contents": "まだレーンがありません。\n[フォルダーをワークスペースに追加](command:workbench.action.addRootFolder)",
+        "when": "workbenchState == workspace"
+      }
+    ]
   },
   "activationEvents": [
     "onStartupFinished"

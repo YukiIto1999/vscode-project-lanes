@@ -1,5 +1,4 @@
 import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
-import type { LaneCatalog } from '../lane/model';
 
 /** ワークスペースフォルダ情報 */
 export interface WorkspaceFolder {
@@ -15,10 +14,10 @@ export interface WorkspaceAnchor {
   readonly parentPath: AbsolutePath;
 }
 
-/** ディレクトリエントリ（スキャン結果） */
-export interface DirectoryEntry {
-  readonly name: string;
-  readonly path: AbsolutePath;
+/** ワークスペースファイル情報（.code-workspace） */
+export interface WorkspaceFileInfo {
+  readonly uri: UriString;
+  readonly directoryPath: AbsolutePath;
 }
 
 /** ワークスペースフォルダ変更操作 */
@@ -32,10 +31,13 @@ export interface FolderMutation {
 export interface WorkspaceContext {
   readonly key: WorkspaceKey;
   readonly anchor: WorkspaceAnchor;
-  readonly catalog: LaneCatalog;
+  readonly canonicalLanes: readonly WorkspaceFolder[];
 }
 
 /** ブートストラップ結果 */
 export type WorkspaceBootstrapResult =
-  | { readonly kind: 'disabled'; readonly reason: 'no-workspace' | 'missing-anchor' }
+  | {
+      readonly kind: 'disabled';
+      readonly reason: 'no-workspace-file' | 'missing-anchor';
+    }
   | { readonly kind: 'ready'; readonly context: WorkspaceContext };

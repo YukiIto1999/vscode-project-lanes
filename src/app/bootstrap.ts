@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import type { AbsolutePath, LaneId, SessionId, UnixSeconds, UriString } from '../foundation/model';
 import { createConfigAdapter } from '../adapters/vscode/config';
-import { createSelectionStoreAdapter } from '../adapters/vscode/storage';
+import { createCatalogStoreAdapter, createSelectionStoreAdapter } from '../adapters/vscode/storage';
 import { createEditorAdapter } from '../adapters/vscode/editors';
 import {
   createDirectoryAdapter,
+  createWorkspaceFileAdapter,
   createWorkspaceHostAdapter,
   createWorkspaceSettingsAdapter,
 } from '../adapters/vscode/workspace';
@@ -17,7 +18,11 @@ import { createProcSnapshotAdapter, createProcEnvAdapter } from '../adapters/lin
 import { createClaudeSessionAdapter } from '../adapters/linux/claude-sessions';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { bootstrapWorkspace } from '../workspace/scanner';
+import { createCatalogRegistry } from '../workspace/registry';
+import { reconcileUserChange } from '../workspace/reconciler';
 import { planFocusLane, planRevealAll } from '../workspace/folder-plan';
+import type { FolderMutation } from '../workspace/model';
+import type { WorkspaceHostPort } from '../workspace/ports';
 import { createLaneService } from '../lane/service';
 import { createTerminalService } from '../terminal/service';
 import { createAgentMonitorService } from '../agent/service';
@@ -30,19 +35,36 @@ export const bootstrapRuntime = (
   context: vscode.ExtensionContext,
 ): ProjectLanesRuntime | undefined => {
   // ワークスペースブートストラップ
-  const workspaceHost = createWorkspaceHostAdapter();
+  const rawWorkspaceHost = createWorkspaceHostAdapter();
+  const workspaceFile = createWorkspaceFileAdapter();
   const directory = createDirectoryAdapter();
+  const catalogStore = createCatalogStoreAdapter(context.workspaceState);
   const toUri = (path: string): UriString => vscode.Uri.file(path).toString() as UriString;
 
-  const result = bootstrapWorkspace(workspaceHost, directory, toUri);
+  // 自変更の識別カウンタ: applyMutation で++、onDidChangeWorkspaceFolders で--
+  let selfMutations = 0;
+  const workspaceHost: WorkspaceHostPort = {
+    readFolders: rawWorkspaceHost.readFolders,
+    applyMutation: (m: FolderMutation) => {
+      selfMutations++;
+      rawWorkspaceHost.applyMutation(m);
+    },
+  };
+
+  const result = bootstrapWorkspace(workspaceHost, workspaceFile, catalogStore, directory, toUri);
   if (result.kind === 'disabled') return undefined;
 
   const { context: wsContext } = result;
-  const { anchor, catalog } = wsContext;
+  const { anchor, canonicalLanes } = wsContext;
 
-  // ワークスペース設定（既存設定をマージ）
+  // カタログ集約（実行時の可変）
+  const registry = createCatalogRegistry(canonicalLanes, catalogStore);
+
+  // ワークスペース設定（既存設定をマージ / 冪等）
   const settings = createWorkspaceSettingsAdapter();
   settings.hideAnchor(anchor);
+  settings.setDefaultTerminalProfile('projectLanes.terminal');
+  settings.disablePersistentTerminals();
 
   // アダプター構築
   const config = createConfigAdapter();
@@ -77,7 +99,7 @@ export const bootstrapRuntime = (
 
   // レーンサービス
   const laneService = createLaneService({
-    catalog,
+    getCatalog: () => registry.snapshot(),
     workspaceKey: wsContext.key,
     editor,
     visibility: {
@@ -87,7 +109,7 @@ export const bootstrapRuntime = (
       },
       revealAllLanes: () => {
         const folders = workspaceHost.readFolders();
-        workspaceHost.applyMutation(planRevealAll(folders.length, catalog));
+        workspaceHost.applyMutation(planRevealAll(folders.length, registry.snapshot()));
       },
     },
     terminal: {
@@ -128,12 +150,15 @@ export const bootstrapRuntime = (
   /** エージェント状態の更新と再描画 */
   const refreshAndRender = () => {
     try {
-      agentMonitor.refresh(catalog, terminalService.managedSessionIds());
+      agentMonitor.refresh(registry.snapshot(), terminalService.managedSessionIds());
     } catch {
       // /proc 読み取りエラー等は無視して前回のスナップショットを維持
     }
     render();
   };
+
+  // カタログ変化時に再描画
+  const registryDisposable = registry.onChange(() => refreshAndRender());
 
   // 定期更新
   const cfg = config.read();
@@ -152,11 +177,41 @@ export const bootstrapRuntime = (
   // 起動時にアクティブレーンのターミナルを復元
   const initialLane = laneService.snapshot().activeLaneId;
   if (initialLane) {
-    const lane = catalog.byId.get(initialLane);
+    const lane = registry.snapshot().byId.get(initialLane);
     if (lane) terminalService.revealLane(lane);
   }
 
   render();
+
+  // ワークスペースフォルダ変化の購読
+  // 自変更（applyMutation 経由）は selfMutations カウンタでスキップし、
+  // ユーザー操作（Add/Remove Folder to Workspace）のみを reconcile する
+  const workspaceFoldersHandler = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    if (selfMutations > 0) {
+      selfMutations--;
+      return;
+    }
+    const action = reconcileUserChange({
+      rawFolders: workspaceHost.readFolders(),
+      currentLanes: registry.folders(),
+      activeLaneId: laneService.snapshot().activeLaneId,
+    });
+
+    if (action.kind === 'noop') return;
+
+    if (action.kind === 'replace') {
+      registry.replace(action.canonicalLanes);
+      return;
+    }
+
+    // absorb: カタログに追記 → focused 状態を再適用（追加フォルダを workspaceFolders から除去）
+    registry.absorb(action.additions);
+    const activeLane = registry.snapshot().byId.get(action.restoreFocusLaneId);
+    if (activeLane) {
+      const folders = workspaceHost.readFolders();
+      workspaceHost.applyMutation(planFocusLane(folders.length, activeLane));
+    }
+  });
 
   // コマンド登録
   const focusCommand = vscode.commands.registerCommand('projectLanes.focus', (laneId?: string) =>
@@ -177,7 +232,7 @@ export const bootstrapRuntime = (
     provideTerminalProfile: () => {
       const activeLaneId = laneService.snapshot().activeLaneId;
       if (!activeLaneId) return undefined;
-      const lane = catalog.byId.get(activeLaneId);
+      const lane = registry.snapshot().byId.get(activeLaneId);
       if (!lane) return undefined;
       terminalService.addTerminal(lane);
       return undefined;
@@ -201,9 +256,11 @@ export const bootstrapRuntime = (
     closeTerminalsCommand,
     profileProvider,
     terminalCloseHandler,
+    workspaceFoldersHandler,
     statusBar.disposable,
     ...treeView.disposables,
     configDisposable,
+    registryDisposable,
     { dispose: () => refreshDisposable.dispose() },
     { dispose: () => terminalService.dispose() },
   );
