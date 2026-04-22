@@ -2,18 +2,18 @@ import * as vscode from 'vscode';
 import { bootstrapRuntime } from './app/bootstrap';
 
 export const activate = (context: vscode.ExtensionContext): void => {
-  const result = bootstrapRuntime(context);
-  if (!result) {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) {
-      vscode.window.showInformationMessage(
-        'Project Lanes: ワークスペースにフォルダが追加されていません。マルチルートワークスペースを開いてください。',
-      );
-    } else {
-      vscode.window.showWarningMessage(
-        'Project Lanes: .lanes-root アンカーの検出・作成に失敗しました。ワークスペースのルートフォルダ構成を確認してください。',
-      );
-    }
+  const runtime = bootstrapRuntime(context);
+  if (runtime) return;
+
+  // workspace ファイル未指定やフォルダ未登録はサイレント無効化。
+  // .lanes-root 書き込み失敗のみユーザーへ通知。
+  const hasWorkspaceFile =
+    vscode.workspace.workspaceFile && vscode.workspace.workspaceFile.scheme === 'file';
+  const hasFolders = (vscode.workspace.workspaceFolders?.length ?? 0) > 0;
+  if (hasWorkspaceFile && hasFolders) {
+    vscode.window.showWarningMessage(
+      'Project Lanes: .lanes-root アンカーを作成できませんでした。ワークスペースファイルのディレクトリの書き込み権限を確認してください。',
+    );
   }
 };
 
