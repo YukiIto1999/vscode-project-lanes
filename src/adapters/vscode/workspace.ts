@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import type { AbsolutePath, UriString } from '../../foundation/model';
+import { uriToAbsolutePath } from '../../foundation/path';
 import type { WorkspaceFolder } from '../../workspace/model';
 import type {
   DirectoryPort,
+  WorkspaceFilePort,
   WorkspaceHostPort,
   WorkspaceSettingsPort,
 } from '../../workspace/ports';
 import * as fs from 'node:fs';
+import * as nodePath from 'node:path';
 
 /** VS Code ワークスペースフォルダ操作のアダプター */
 export const createWorkspaceHostAdapter = (): WorkspaceHostPort => ({
@@ -28,23 +31,22 @@ export const createWorkspaceHostAdapter = (): WorkspaceHostPort => ({
   },
 });
 
+/** VS Code ワークスペースファイル参照アダプター */
+export const createWorkspaceFileAdapter = (): WorkspaceFilePort => ({
+  read: () => {
+    const uri = vscode.workspace.workspaceFile;
+    if (!uri || uri.scheme !== 'file') return undefined;
+    const uriString = uri.toString() as UriString;
+    const filePath = uriToAbsolutePath(uriString);
+    return {
+      uri: uriString,
+      directoryPath: nodePath.dirname(filePath) as AbsolutePath,
+    };
+  },
+});
+
 /** ファイルシステムのディレクトリ操作アダプター */
 export const createDirectoryAdapter = (): DirectoryPort => ({
-  listDirectories: (parentPath) => {
-    try {
-      return fs
-        .readdirSync(parentPath, { withFileTypes: true })
-        .filter((d) => d.isDirectory())
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((d) => ({
-          name: d.name,
-          path: `${parentPath}/${d.name}` as AbsolutePath,
-        }));
-    } catch {
-      return [];
-    }
-  },
-
   ensureDirectory: (path) => {
     try {
       fs.mkdirSync(path, { recursive: true });
@@ -74,6 +76,14 @@ export const createWorkspaceSettingsAdapter = (): WorkspaceSettingsPort => ({
     const current = cfg.get<string>('defaultProfile.linux');
     if (current !== profileName) {
       cfg.update('defaultProfile.linux', profileName, vscode.ConfigurationTarget.Workspace);
+    }
+  },
+
+  disablePersistentTerminals: () => {
+    const cfg = vscode.workspace.getConfiguration('terminal.integrated');
+    const current = cfg.get<boolean>('enablePersistentSessions');
+    if (current !== false) {
+      cfg.update('enablePersistentSessions', false, vscode.ConfigurationTarget.Workspace);
     }
   },
 });

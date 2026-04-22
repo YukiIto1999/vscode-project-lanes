@@ -12,7 +12,8 @@ import { createLaneSessionStore } from './session-store';
 
 /** レーンサービスの依存 */
 export interface LaneServiceDeps {
-  readonly catalog: LaneCatalog;
+  /** カタログは実行時に変化しうるため関数で注入 */
+  readonly getCatalog: () => LaneCatalog;
   readonly workspaceKey: WorkspaceKey;
   readonly editor: EditorPort;
   readonly visibility: LaneVisibilityPort;
@@ -31,13 +32,14 @@ export interface LaneService {
 
 /** レーンサービスの生成 */
 export const createLaneService = (deps: LaneServiceDeps): LaneService => {
-  const { catalog, workspaceKey, editor, visibility, terminal, selectionStore, prompt } = deps;
+  const { getCatalog, workspaceKey, editor, visibility, terminal, selectionStore, prompt } = deps;
   const editorStore = createLaneSessionStore();
   let activeLaneId: LaneId | undefined = selectionStore.load(workspaceKey);
 
   /** 初回フォーカスの適用（存在しないレーンは無視） */
-  if (activeLaneId && catalog.byId.has(activeLaneId)) {
-    const lane = catalog.byId.get(activeLaneId)!;
+  const initialCatalog = getCatalog();
+  if (activeLaneId && initialCatalog.byId.has(activeLaneId)) {
+    const lane = initialCatalog.byId.get(activeLaneId)!;
     visibility.focusLane(lane);
   } else {
     activeLaneId = undefined;
@@ -45,6 +47,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
   /** フォーカスパイプライン: plan → save → close → filter → terminal → restore → persist */
   const executeFocus = async (targetLane: Lane): Promise<LaneFocusPlan> => {
+    const catalog = getCatalog();
     const currentLane = activeLaneId ? catalog.byId.get(activeLaneId) : undefined;
     const plan = planLaneFocus(currentLane, targetLane, editor.hasDirtyEditors());
 
@@ -67,6 +70,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
   return {
     focus: async (laneId) => {
+      const catalog = getCatalog();
       const targetId = laneId ?? (await prompt.pickLane(catalog.lanes));
       if (!targetId) return { kind: 'noop', reason: 'no-target' };
       const targetLane = catalog.byId.get(targetId);
@@ -78,7 +82,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     },
 
     unfocus: () => {
-      visibility.revealAllLanes(catalog.lanes);
+      visibility.revealAllLanes(getCatalog().lanes);
       activeLaneId = undefined;
       selectionStore.save(workspaceKey, undefined);
     },
@@ -87,6 +91,6 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       if (activeLaneId) await terminal.closeLane(activeLaneId);
     },
 
-    snapshot: () => ({ catalog, activeLaneId }),
+    snapshot: () => ({ catalog: getCatalog(), activeLaneId }),
   };
 };
