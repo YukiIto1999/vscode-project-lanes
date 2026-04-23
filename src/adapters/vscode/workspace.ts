@@ -11,7 +11,10 @@ import type {
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 
-/** VS Code ワークスペースフォルダ操作のアダプター */
+/**
+ * VS Code ワークスペースフォルダ操作アダプターの生成
+ * @returns workspaceFolders 操作ポート
+ */
 export const createWorkspaceHostAdapter = (): WorkspaceHostPort => ({
   readFolders: (): readonly WorkspaceFolder[] =>
     (vscode.workspace.workspaceFolders ?? []).map((f) => ({
@@ -31,7 +34,10 @@ export const createWorkspaceHostAdapter = (): WorkspaceHostPort => ({
   },
 });
 
-/** VS Code ワークスペースファイル参照アダプター */
+/**
+ * VS Code ワークスペースファイル参照アダプターの生成
+ * @returns ワークスペースファイル参照ポート
+ */
 export const createWorkspaceFileAdapter = (): WorkspaceFilePort => ({
   read: () => {
     const uri = vscode.workspace.workspaceFile;
@@ -45,7 +51,10 @@ export const createWorkspaceFileAdapter = (): WorkspaceFilePort => ({
   },
 });
 
-/** ファイルシステムのディレクトリ操作アダプター */
+/**
+ * ファイルシステムディレクトリ操作アダプターの生成
+ * @returns ディレクトリ操作ポート
+ */
 export const createDirectoryAdapter = (): DirectoryPort => ({
   ensureDirectory: (path) => {
     try {
@@ -57,20 +66,11 @@ export const createDirectoryAdapter = (): DirectoryPort => ({
   },
 });
 
-/** VS Code ワークスペース設定のアダプター（既存設定とマージ） */
+/**
+ * VS Code ワークスペース設定アダプターの生成
+ * @returns ワークスペース設定ポート
+ */
 export const createWorkspaceSettingsAdapter = (): WorkspaceSettingsPort => ({
-  hideAnchor: (anchor) => {
-    const cfg = vscode.workspace.getConfiguration('files', vscode.Uri.parse(anchor.uri));
-    const existing = cfg.get<Record<string, boolean>>('exclude') ?? {};
-    if (!existing['**']) {
-      cfg.update(
-        'exclude',
-        { ...existing, '**': true },
-        vscode.ConfigurationTarget.WorkspaceFolder,
-      );
-    }
-  },
-
   setDefaultTerminalProfile: (profileName) => {
     const cfg = vscode.workspace.getConfiguration('terminal.integrated');
     const current = cfg.get<string>('defaultProfile.linux');

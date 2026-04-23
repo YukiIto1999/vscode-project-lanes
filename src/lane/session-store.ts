@@ -1,7 +1,10 @@
 import type { LaneId } from '../foundation/model';
 import type { EditorSnapshot, LaneSessionStore } from './model';
 
-/** インメモリのエディタ状態ストアの生成 */
+/**
+ * インメモリ実装のエディタ状態ストア生成
+ * @returns ストアインスタンス
+ */
 export const createLaneSessionStore = (): LaneSessionStore => {
   const store = new Map<LaneId, EditorSnapshot>();
 

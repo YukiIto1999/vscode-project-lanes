@@ -2,16 +2,24 @@ import type * as NodePty from 'node-pty';
 import type { Disposable } from '../../foundation/model';
 import type { ShellSessionFactoryPort, ShellSessionHandle } from '../../terminal/ports';
 
-/** node-pty を実行時に遅延ロード（トップレベル require によるアクティベーション失敗の防止） */
+/**
+ * node-pty の遅延ロード
+ * @returns node-pty モジュール
+ */
 const loadPty = (): typeof NodePty => require('node-pty');
 
-/** スクロールバックバッファの最大サイズ（バイト） */
 const MAX_SCROLLBACK = 64 * 1024;
 
-/** デフォルトシェルの検出 */
+/**
+ * 既定シェルの検出
+ * @returns シェル絶対パス
+ */
 const detectShell = (): string => process.env.SHELL ?? '/bin/bash';
 
-/** node-pty によるシェルセッション生成のアダプター */
+/**
+ * node-pty ベースのシェルセッション生成アダプターの生成
+ * @returns シェルセッション生成ポート
+ */
 export const createShellSessionFactory = (): ShellSessionFactoryPort => ({
   create: (spec): ShellSessionHandle => {
     const pty = loadPty();

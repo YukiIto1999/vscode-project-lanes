@@ -1,4 +1,4 @@
-import type { ProcessId, SessionId, UnixSeconds } from '../foundation/model';
+import type { LanesSessionId, ProcessId, SessionId, UnixSeconds } from '../foundation/model';
 import type { LaneCatalog } from '../lane/model';
 import type { AgentCandidate, AgentMonitorSnapshot, LaneAgent, ProcSnapshot } from './model';
 import { applyHysteresis } from './activity-policy';
@@ -14,26 +14,47 @@ import { summarizeLaneAgents } from './summarizer';
 
 /** エージェントモニタサービスの依存 */
 export interface AgentMonitorServiceDeps {
+  /** プロセススナップショット取得ポート */
   readonly proc: ProcSnapshotPort;
+  /** 環境変数読み取りポート */
   readonly procEnv: ProcEnvPort;
+  /** 時刻取得ポート */
   readonly clock: ClockPort;
+  /** エージェント検出ソース列 */
   readonly sources: readonly AgentSource[];
-  /** active→idle 遷移の猶予秒数 */
+  /** active 維持の猶予秒数の取得 */
   readonly getIdleThresholdSec: () => number;
 }
 
 /** エージェントモニタサービスの操作インターフェース */
 export interface AgentMonitorService {
+  /**
+   * 状態の更新
+   * @param catalog - 解決元カタログ
+   * @param managedSessionIds - 管理中セッション識別子集合
+   * @returns 更新後スナップショット
+   */
   readonly refresh: (
     catalog: LaneCatalog,
     managedSessionIds: ReadonlySet<SessionId>,
   ) => AgentMonitorSnapshot;
+  /**
+   * 直近スナップショットの取得
+   * @returns 直近スナップショット
+   */
   readonly snapshot: () => AgentMonitorSnapshot;
 }
 
 const EMPTY_SNAPSHOT: AgentMonitorSnapshot = { agents: [], summaries: [] };
 
-/** 候補の親子関係を排除（子プロセスが別ソースで検出された場合の重複防止） */
+const ANCESTRY_DEPTH_LIMIT = 16;
+
+/**
+ * 候補の親子関係除去
+ * @param candidates - 候補列
+ * @param proc - 参照プロセススナップショット
+ * @returns 重複排除済み候補列
+ */
 const deduplicateByAncestry = (
   candidates: readonly AgentCandidate[],
   proc: ProcSnapshot,
@@ -43,7 +64,7 @@ const deduplicateByAncestry = (
 
   const hasAncestorCandidate = (pid: ProcessId): boolean => {
     let current = ppidByPid.get(pid);
-    for (let depth = 0; current && depth < 16; depth++) {
+    for (let depth = 0; current && depth < ANCESTRY_DEPTH_LIMIT; depth++) {
       if (candidatePids.has(current)) return true;
       current = ppidByPid.get(current);
     }
@@ -53,11 +74,14 @@ const deduplicateByAncestry = (
   return candidates.filter((c) => !hasAncestorCandidate(c.pid));
 };
 
-/** エージェントモニタサービスの生成 */
+/**
+ * エージェントモニタサービスの生成
+ * @param deps - 依存
+ * @returns サービスインスタンス
+ */
 export const createAgentMonitorService = (deps: AgentMonitorServiceDeps): AgentMonitorService => {
   let cached: AgentMonitorSnapshot = EMPTY_SNAPSHOT;
-  /** PID ごとの最終 active 検知時刻（ヒステリシス用） */
-  const lastActiveAtByPid = new Map<ProcessId, UnixSeconds>();
+  const lastActiveAtBySession = new Map<LanesSessionId, UnixSeconds>();
 
   return {
     refresh: (catalog, managedSessionIds) => {
@@ -71,29 +95,26 @@ export const createAgentMonitorService = (deps: AgentMonitorServiceDeps): AgentM
 
       const enriched = candidates.map((c) => {
         const envSessionId = deps.procEnv.readEnvVar(c.pid, 'LANES_SESSION_ID');
-        return envSessionId ? { ...c, lanesSessionId: envSessionId } : c;
+        return envSessionId ? { ...c, lanesSessionId: envSessionId as LanesSessionId } : c;
       });
 
       const rawAgents = resolveLaneAgents(enriched, catalog, managedSessionIds, proc, now);
 
-      // ヒステリシス適用
       const agents: LaneAgent[] = rawAgents.map((agent) => {
         const rawActivity = agent.activity;
-        const lastActiveAt = lastActiveAtByPid.get(agent.pid);
+        const lastActiveAt = lastActiveAtBySession.get(agent.lanesSessionId);
         const activity = applyHysteresis(rawActivity, lastActiveAt, now, idleThresholdSec);
 
-        // raw が active の時だけタイマーを更新（ヒステリシス出力で更新すると永遠に切れない）
         if (rawActivity === 'active') {
-          lastActiveAtByPid.set(agent.pid, now);
+          lastActiveAtBySession.set(agent.lanesSessionId, now);
         }
 
         return { ...agent, activity };
       });
 
-      // 消えた PID のエントリをクリーンアップ
-      const currentPids = new Set(agents.map((a) => a.pid));
-      for (const pid of lastActiveAtByPid.keys()) {
-        if (!currentPids.has(pid)) lastActiveAtByPid.delete(pid);
+      const currentSessions = new Set(agents.map((a) => a.lanesSessionId));
+      for (const sid of lastActiveAtBySession.keys()) {
+        if (!currentSessions.has(sid)) lastActiveAtBySession.delete(sid);
       }
 
       const summaries = summarizeLaneAgents(agents);

@@ -1,11 +1,11 @@
 [English](README.md) | [日本語](README.ja.md)
 
-A VS Code extension that manages projects as "lanes" in a multi-root workspace, switching the full context at once.
+A VS Code extension that manages projects as "lanes" within a workspace and switches the full context at once.
 Built for developers running AI coding agents across multiple projects.
 
 ## The Problem
 
-When running many projects in a multi-root workspace:
+When running many projects:
 
 - Explorer shows all projects flat, hard to navigate
 - Terminals pile up across projects
@@ -14,8 +14,8 @@ When running many projects in a multi-root workspace:
 
 ## Features
 
-To address these, each project in the workspace becomes a "lane". Switching lanes swaps Explorer, editor tabs, terminals, and Git together.
-The switch is a view change — background terminals keep running.
+Each project becomes a "lane". Switching lanes swaps Explorer, editor tabs, terminals, and Git together.
+The switch is a view change — background terminals keep running because the workspace folder URI stays stable (a `.lanes-root/active` symlink whose target is updated on switch).
 
 - Lane switching
   - Explorer and Git show only the active lane
@@ -29,7 +29,6 @@ The switch is a view change — background terminals keep running.
 | Command                          | Description                                    |
 | -------------------------------- | ---------------------------------------------- |
 | `Project Lanes: Focus`           | Switch to a lane                               |
-| `Project Lanes: Unfocus`         | Show all lanes in Explorer                     |
 | `Project Lanes: Close Terminals` | Kill all terminal sessions for the active lane |
 
 ## Settings
@@ -43,9 +42,10 @@ The switch is a view change — background terminals keep running.
 
 ## Limitations
 
-- Agent monitoring is Linux only (`/proc`)
+- Agent monitoring is Linux only (`/proc`); the symlink-based workspace layout is also Linux-specific
 - Tab restore covers normal file tabs only (not diff views, notebooks, etc.)
-- Terminal sessions don't survive VS Code restarts
+- Terminal sessions don't survive VS Code window reloads
+- The extension creates `.lanes-root/` next to the `.code-workspace` file; add it to `.gitignore` if you don't want it tracked
 
 ## License
 
