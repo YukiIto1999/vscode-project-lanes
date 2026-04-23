@@ -1,6 +1,12 @@
 import type { Lane, LaneFocusPlan } from './model';
 
-/** レーンフォーカスの純粋判定 */
+/**
+ * レーンフォーカスの純粋判定
+ * @param current - 現活性レーン
+ * @param target - 切替先レーン
+ * @param hasDirtyEditors - 未保存タブの有無
+ * @returns 判定結果
+ */
 export const planLaneFocus = (
   current: Lane | undefined,
   target: Lane | undefined,
