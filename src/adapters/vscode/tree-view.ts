@@ -1,7 +1,11 @@
 import * as vscode from 'vscode';
 import type { LaneTreeItemViewModel, UiSnapshot } from '../../ui/model';
 
-/** ツリー項目のビューモデルを VS Code TreeItem に変換 */
+/**
+ * ビューモデルから VS Code TreeItem への変換
+ * @param vm - 変換元ビューモデル
+ * @returns TreeItem
+ */
 const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
   const item = new vscode.TreeItem(vm.label);
   item.id = vm.laneId;
@@ -18,8 +22,22 @@ const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
   return item;
 };
 
-/** TreeView 用アダプターの生成 */
-export const createTreeViewAdapter = () => {
+/** TreeView 表示アダプター */
+export interface TreeViewAdapter {
+  /**
+   * UI スナップショットの反映
+   * @param snapshot - 反映対象スナップショット
+   */
+  readonly render: (snapshot: UiSnapshot) => void;
+  /** 破棄可能なリソース列 */
+  readonly disposables: readonly vscode.Disposable[];
+}
+
+/**
+ * VS Code TreeView 表示アダプターの生成
+ * @returns TreeView 表示アダプター
+ */
+export const createTreeViewAdapter = (): TreeViewAdapter => {
   const refreshEvent = new vscode.EventEmitter<void>();
   const decorationEmitter = new vscode.EventEmitter<vscode.Uri | vscode.Uri[]>();
 
@@ -51,7 +69,6 @@ export const createTreeViewAdapter = () => {
   const decorationDisposable = vscode.window.registerFileDecorationProvider(decorationProvider);
 
   return {
-    /** UI スナップショットの適用 */
     render: (snapshot: UiSnapshot) => {
       currentSnapshot = snapshot;
       treeView.badge = snapshot.badge

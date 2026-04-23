@@ -11,39 +11,72 @@ import { findSessionByTerminalId, initialTerminalState, reduceTerminal } from '.
 
 /** ターミナルサービスの依存 */
 export interface TerminalServiceDeps {
+  /** シェルセッション生成ポート */
   readonly shellFactory: ShellSessionFactoryPort;
+  /** ターミナル表示ポート */
   readonly presentation: TerminalPresentationPort;
+  /** セッション ID 採番ポート */
   readonly sessionId: SessionIdPort;
+  /** シェル絶対パスの取得 */
   readonly getShellPath: () => AbsolutePath | undefined;
 }
 
 /** ターミナルサービスの操作インターフェース */
 export interface TerminalService {
-  /** レーン切替時: 既存ターミナルを dispose し対象レーンのセッションを復元 */
+  /**
+   * 指定レーンのターミナル表示
+   * @param lane - 対象レーン
+   */
   readonly revealLane: (lane: Lane) => void;
-  /** 新規ターミナルを追加（プロファイル +ボタン用） */
+  /**
+   * 指定レーンへの新規ターミナル追加
+   * @param lane - 対象レーン
+   */
   readonly addTerminal: (lane: Lane) => void;
+  /**
+   * 指定レーンの全ターミナル終了
+   * @param laneId - 対象レーン識別子
+   */
   readonly closeLane: (laneId: LaneId) => void;
+  /**
+   * VS Code からのターミナル終了通知の処理
+   * @param terminalId - 対象ターミナル識別子
+   */
   readonly handleTerminalClosed: (terminalId: TerminalId) => void;
+  /**
+   * 管理中セッション識別子の取得
+   * @returns 管理中セッション識別子の集合
+   */
   readonly managedSessionIds: () => ReadonlySet<SessionId>;
+  /** 全リソースの破棄 */
   readonly dispose: () => void;
 }
 
-/** ターミナルサービスの生成 */
+/**
+ * ターミナルサービスの生成
+ * @param deps - 依存
+ * @returns サービスインスタンス
+ */
 export const createTerminalService = (deps: TerminalServiceDeps): TerminalService => {
   const { shellFactory, presentation, sessionId: sessionIdPort } = deps;
   let state = initialTerminalState();
   const handles = new Map<SessionId, ShellSessionHandle>();
   const exitDisposables = new Map<SessionId, Disposable>();
 
-  /** コマンドを適用し副作用を実行 */
+  /**
+   * コマンド適用と副作用実行
+   * @param command - 適用コマンド
+   */
   const dispatch = (command: TerminalCommand): void => {
     const transition = reduceTerminal(state, command);
     state = transition.state;
     executeEffects(transition.effects);
   };
 
-  /** セッション生成とハンドル登録 */
+  /**
+   * セッション生成とハンドル登録
+   * @param spec - セッション仕様
+   */
   const spawnAndTrack = (spec: TerminalSessionSpec): void => {
     const handle = shellFactory.create(spec);
     handles.set(spec.id, handle);
@@ -51,7 +84,10 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
     exitDisposables.set(spec.id, disposable);
   };
 
-  /** 副作用の実行 */
+  /**
+   * 副作用の実行
+   * @param effects - 実行対象副作用列
+   */
   const executeEffects = (effects: readonly TerminalEffect[]): void => {
     for (const effect of effects) {
       switch (effect.kind) {
@@ -85,7 +121,11 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
     }
   };
 
-  /** セッション仕様の構築 */
+  /**
+   * セッション仕様の構築
+   * @param lane - 対象レーン
+   * @returns セッション仕様
+   */
   const buildSpec = (lane: Lane): TerminalSessionSpec => ({
     id: sessionIdPort.next(lane.id),
     laneId: lane.id,
@@ -96,12 +136,10 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
 
   return {
     revealLane: (lane) => {
-      // 既存の表示ターミナルを dispose（管理下のみ）
       const disposed = presentation.disposeAllOwned();
       for (const terminalId of disposed) {
         const sid = findSessionByTerminalId(state, terminalId);
         if (sid) {
-          // バインド解除のみ（セッション自体は生存）
           dispatch({
             kind: 'terminalBound',
             sessionId: sid,
@@ -110,13 +148,11 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
         }
       }
 
-      // このレーンの生存セッション
       const laneRecord = state.lanes.get(lane.id);
       const sessionIds = laneRecord?.sessionIds ?? [];
       const aliveSessionIds = sessionIds.filter((sid) => handles.get(sid)?.isAlive());
 
       if (aliveSessionIds.length === 0) {
-        // 新規セッション生成→アタッチ→表示
         const spec = buildSpec(lane);
         spawnAndTrack(spec);
         dispatch({ kind: 'sessionStarted', spec });
@@ -128,7 +164,6 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
         return;
       }
 
-      // 既存セッション復元
       const lastVisible = laneRecord?.lastVisibleSessionId;
       const visibleSessionId =
         lastVisible && aliveSessionIds.includes(lastVisible)
