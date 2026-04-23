@@ -4,10 +4,17 @@ import type { AbsolutePath, ProcessId, UnixSeconds } from '../../foundation/mode
 import type { ClaudeSessionRecord } from '../../agent/model';
 import type { ClaudeSessionPort } from '../../agent/ports';
 
-/** cwd を Claude のプロジェクトディレクトリ名に変換 */
+/**
+ * cwd から Claude プロジェクトディレクトリ名への変換
+ * @param cwd - 作業ディレクトリ
+ * @returns プロジェクトディレクトリ名
+ */
 const cwdToProjectDir = (cwd: string): string => cwd.replaceAll('/', '-');
 
-/** Claude セッションメタデータの読み取りアダプター */
+/**
+ * Claude セッション読み取りアダプターの生成
+ * @returns Claude セッション読み取りポート
+ */
 export const createClaudeSessionAdapter = (): ClaudeSessionPort => ({
   list: (homePath) => {
     const sessionsDir = nodePath.join(homePath, '.claude', 'sessions');
@@ -31,7 +38,6 @@ export const createClaudeSessionAdapter = (): ClaudeSessionPort => ({
             return [];
           }
 
-          // JSONL mtime の取得
           const journalUpdatedAt = (() => {
             try {
               const journalPath = nodePath.join(
