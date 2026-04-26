@@ -1,10 +1,19 @@
 import { fileURLToPath } from 'node:url';
 import type { AbsolutePath, UriString } from './model';
 
-/** file:// URI から絶対パスへの変換（UriString は file:// スキーム前提） */
+/**
+ * URI から絶対パスへの変換
+ * @param uri - file:// スキームの URI
+ * @returns 絶対パス
+ */
 export const uriToAbsolutePath = (uri: UriString): AbsolutePath =>
   fileURLToPath(uri) as AbsolutePath;
 
-/** cwd が指定パス配下にあるかの判定（パス区切り文字境界） */
+/**
+ * 子孫関係の判定
+ * @param child - 判定対象パス
+ * @param parent - 上位パス
+ * @returns 子孫または同一なら true
+ */
 export const isDescendantOf = (child: AbsolutePath, parent: AbsolutePath): boolean =>
   child === parent || child.startsWith(parent + '/');

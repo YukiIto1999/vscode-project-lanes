@@ -2,7 +2,12 @@ import type { AbsolutePath, ProcessId } from '../../foundation/model';
 import type { AgentCandidate } from '../model';
 import type { AgentSource, ClaudeSessionPort } from '../ports';
 
-/** Claude Code エージェントの検出ソース */
+/**
+ * Claude Code 検出ソースの生成
+ * @param homePath - ホームディレクトリ絶対パス
+ * @param sessionPort - Claude セッション読み取りポート
+ * @returns 検出ソース
+ */
 export const createClaudeSource = (
   homePath: AbsolutePath,
   sessionPort: ClaudeSessionPort,

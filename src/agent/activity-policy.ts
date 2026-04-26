@@ -1,10 +1,12 @@
 import type { UnixSeconds } from '../foundation/model';
 import type { AgentActivity, AgentCandidate, ProcSnapshot } from './model';
 
-/** 候補の活動状態を即時判定
- *
- * claude-code: journal の mtime で判定
- * その他: 子プロセスの有無で判定。
+/**
+ * 候補の活動状態の即時判定
+ * @param candidate - 判定対象候補
+ * @param proc - 参照プロセススナップショット
+ * @param now - 現在時刻
+ * @returns 活動状態
  */
 export const judgeActivityRaw = (
   candidate: AgentCandidate,
@@ -13,7 +15,6 @@ export const judgeActivityRaw = (
 ): AgentActivity => {
   if (candidate.kind === 'claude-code') {
     if (candidate.lastActivityAt === undefined) return 'idle';
-    // journal mtime が1秒以内なら active（即時検知）
     return now - candidate.lastActivityAt <= 1 ? 'active' : 'idle';
   }
 
@@ -21,10 +22,13 @@ export const judgeActivityRaw = (
   return hasChild ? 'active' : 'idle';
 };
 
-/** ヒステリシス付き活動状態の決定
- *
- * idle→active: 即時（raw が active なら即 active）
- * active→idle: 猶予あり（raw が idle でも閾値秒間は active を維持）
+/**
+ * ヒステリシス付き活動状態の決定
+ * @param rawActivity - 即時判定結果
+ * @param lastActiveAt - 直近 active 検知時刻
+ * @param now - 現在時刻
+ * @param idleThresholdSec - active 維持の猶予秒数
+ * @returns 活動状態
  */
 export const applyHysteresis = (
   rawActivity: AgentActivity,
@@ -33,7 +37,6 @@ export const applyHysteresis = (
   idleThresholdSec: number,
 ): AgentActivity => {
   if (rawActivity === 'active') return 'active';
-  // raw が idle でも、直近に active だった場合は猶予
   if (lastActiveAt !== undefined && now - lastActiveAt <= idleThresholdSec) return 'active';
   return 'idle';
 };

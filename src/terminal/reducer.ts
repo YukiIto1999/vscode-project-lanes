@@ -1,14 +1,21 @@
 import type { SessionId, TerminalId } from '../foundation/model';
 import type { TerminalCommand, TerminalEffect, TerminalState, TerminalTransition } from './model';
 
-/** 空の初期状態 */
+/**
+ * 空の初期状態の生成
+ * @returns 初期状態
+ */
 export const initialTerminalState = (): TerminalState => ({
   sessions: new Map(),
   lanes: new Map(),
-  pendingOpens: [],
 });
 
-/** terminalId からセッション ID の逆引き */
+/**
+ * ターミナル識別子からのセッション識別子逆引き
+ * @param state - 探索対象状態
+ * @param terminalId - 検索対象ターミナル識別子
+ * @returns 該当セッション識別子、または不一致で undefined
+ */
 export const findSessionByTerminalId = (
   state: TerminalState,
   terminalId: TerminalId,
@@ -19,7 +26,12 @@ export const findSessionByTerminalId = (
   return undefined;
 };
 
-/** TerminalState の純粋な状態遷移 */
+/**
+ * 純粋状態遷移
+ * @param state - 遷移前状態
+ * @param command - 遷移コマンド
+ * @returns 遷移結果
+ */
 export const reduceTerminal = (
   state: TerminalState,
   command: TerminalCommand,
@@ -40,26 +52,13 @@ export const reduceTerminal = (
       return { state: { ...state, sessions, lanes }, effects: [] };
     }
 
-    case 'pendingQueued':
-      return {
-        state: { ...state, pendingOpens: [...state.pendingOpens, command.pending] },
-        effects: [],
-      };
-
     case 'terminalBound': {
       const { sessionId, terminalId } = command;
       const sessions = new Map(state.sessions);
       const record = sessions.get(sessionId);
       if (!record) return { state, effects: [] };
       sessions.set(sessionId, { ...record, terminalId });
-      return {
-        state: {
-          ...state,
-          sessions,
-          pendingOpens: state.pendingOpens.filter((p) => p.sessionId !== sessionId),
-        },
-        effects: [],
-      };
+      return { state: { ...state, sessions }, effects: [] };
     }
 
     case 'terminalClosed': {
