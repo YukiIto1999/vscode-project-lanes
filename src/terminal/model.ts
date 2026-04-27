@@ -57,6 +57,12 @@ export type TerminalCommand =
       readonly terminalId: TerminalId;
     }
   | {
+      /** ターミナル束縛解除 */
+      readonly kind: 'terminalUnbound';
+      /** 対象セッション識別子 */
+      readonly sessionId: SessionId;
+    }
+  | {
       /** ターミナル破棄 */
       readonly kind: 'terminalClosed';
       /** 対象ターミナル識別子 */
@@ -89,26 +95,6 @@ export type TerminalCommand =
 
 /** 副作用指示 */
 export type TerminalEffect =
-  | {
-      /** セッション生成 */
-      readonly kind: 'spawnSession';
-      /** セッション仕様 */
-      readonly spec: TerminalSessionSpec;
-    }
-  | {
-      /** ターミナル接続 */
-      readonly kind: 'attachTerminal';
-      /** 対象セッション識別子 */
-      readonly sessionId: SessionId;
-      /** 表示タイトル */
-      readonly title: string;
-    }
-  | {
-      /** ターミナル前面化 */
-      readonly kind: 'showTerminal';
-      /** 対象ターミナル識別子 */
-      readonly terminalId: TerminalId;
-    }
   | {
       /** ターミナル破棄 */
       readonly kind: 'disposeTerminal';

@@ -10,6 +10,8 @@ import {
   createWorkspaceSettingsAdapter,
 } from '../adapters/vscode/workspace';
 import { createTerminalPresentationAdapter } from '../adapters/vscode/terminals';
+import { readLaneTerminalProfile } from '../adapters/vscode/contributions';
+import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
 import { createPromptAdapter } from '../adapters/vscode/quick-pick';
@@ -74,8 +76,10 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   const registry = createCatalogRegistry(canonicalLanes, catalogStore);
 
+  const laneProfile = readLaneTerminalProfile(context.extension);
+
   const settings = createWorkspaceSettingsAdapter();
-  settings.setDefaultTerminalProfile('projectLanes.terminal');
+  settings.setDefaultTerminalProfile(laneProfile.title);
   settings.disablePersistentTerminals();
 
   const config = createConfigAdapter();
@@ -106,6 +110,8 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     getShellPath: () => config.read().shellPath,
   });
 
+  const viewRebind = createLaneViewRebindAdapter(workspaceHost);
+
   const laneService = createLaneService({
     getCatalog: () => registry.snapshot(),
     workspaceKey: wsContext.key,
@@ -115,6 +121,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
       revealLane: async (lane) => terminalService.revealLane(lane),
       closeLane: async (laneId) => terminalService.closeLane(laneId),
     },
+    viewRebind,
     selectionStore,
     prompt,
   });
@@ -201,14 +208,16 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     laneService.closeActiveLaneTerminals(),
   );
 
-  const profileProvider = vscode.window.registerTerminalProfileProvider('projectLanes.terminal', {
+  const profileProvider = vscode.window.registerTerminalProfileProvider(laneProfile.id, {
     provideTerminalProfile: () => {
       const activeLaneId = laneService.snapshot().activeLaneId;
       if (!activeLaneId) return undefined;
       const lane = registry.snapshot().byId.get(activeLaneId);
       if (!lane) return undefined;
-      terminalService.addTerminal(lane);
-      return undefined;
+      const { sessionId, handle } = terminalService.requestSession(lane);
+      return presentation.presentAsProfile(handle, lane.label, (terminalId) => {
+        terminalService.bindTerminal(sessionId, terminalId);
+      });
     },
   });
 
@@ -227,6 +236,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     profileProvider,
     terminalCloseHandler,
     workspaceFoldersHandler,
+    presentation.disposable,
     statusBar.disposable,
     ...treeView.disposables,
     configDisposable,
