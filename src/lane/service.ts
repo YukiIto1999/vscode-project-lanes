@@ -3,7 +3,13 @@ import type { WorkspaceLinkPort } from '../workspace/ports';
 import { executeActiveLinkSwap, planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
 import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
-import type { EditorPort, LanePromptPort, LaneSelectionStorePort, LaneTerminalPort } from './ports';
+import type {
+  EditorPort,
+  LanePromptPort,
+  LaneSelectionStorePort,
+  LaneTerminalPort,
+  LaneViewRebindPort,
+} from './ports';
 import { createLaneSessionStore } from './session-store';
 
 /** レーンサービスの依存 */
@@ -18,6 +24,8 @@ export interface LaneServiceDeps {
   readonly link: WorkspaceLinkPort;
   /** ターミナル切替ポート */
   readonly terminal: LaneTerminalPort;
+  /** ビュー再走査ポート */
+  readonly viewRebind: LaneViewRebindPort;
   /** 選択永続化ポート */
   readonly selectionStore: LaneSelectionStorePort;
   /** ユーザー対話ポート */
@@ -52,7 +60,8 @@ export interface LaneService {
  * @returns サービスインスタンス
  */
 export const createLaneService = (deps: LaneServiceDeps): LaneService => {
-  const { getCatalog, workspaceKey, editor, link, terminal, selectionStore, prompt } = deps;
+  const { getCatalog, workspaceKey, editor, link, terminal, viewRebind, selectionStore, prompt } =
+    deps;
   const editorStore = createLaneSessionStore();
   let activeLaneId: LaneId | undefined = selectionStore.load(workspaceKey);
 
@@ -83,7 +92,10 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
     const currentTarget = link.readTarget();
     const swap = planActiveLinkSwap(link.linkPath, currentTarget, plan.to.rootPath);
-    if (swap) executeActiveLinkSwap(swap, link);
+    if (swap) {
+      executeActiveLinkSwap(swap, link);
+      await viewRebind.rebindActiveFolder(plan.to);
+    }
 
     await terminal.revealLane(plan.to);
     const saved = editorStore.get(plan.to.id);

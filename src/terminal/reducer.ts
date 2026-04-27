@@ -61,6 +61,15 @@ export const reduceTerminal = (
       return { state: { ...state, sessions }, effects: [] };
     }
 
+    case 'terminalUnbound': {
+      const { sessionId } = command;
+      const sessions = new Map(state.sessions);
+      const record = sessions.get(sessionId);
+      if (!record) return { state, effects: [] };
+      sessions.set(sessionId, { ...record, terminalId: undefined });
+      return { state: { ...state, sessions }, effects: [] };
+    }
+
     case 'terminalClosed': {
       const sessionId = findSessionByTerminalId(state, command.terminalId);
       if (!sessionId) return { state, effects: [] };
