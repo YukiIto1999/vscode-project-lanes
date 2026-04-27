@@ -29,7 +29,11 @@ export const createShellSessionFactory = (): ShellSessionFactoryPort => ({
       cols: 80,
       rows: 24,
       cwd: spec.cwdPath,
-      env: { ...process.env, LANES_SESSION_ID: spec.id } as Record<string, string>,
+      env: {
+        ...process.env,
+        PWD: spec.cwdPath,
+        LANES_SESSION_ID: spec.id,
+      } as Record<string, string>,
     });
 
     let alive = true;

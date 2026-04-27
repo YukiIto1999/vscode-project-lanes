@@ -33,6 +33,41 @@ describe('reduceTerminal', () => {
     expect(state.sessions.get('s1' as SessionId)!.terminalId).toBe('t1');
   });
 
+  it('terminalUnbound でターミナル ID を解除し killSession を発行しない', () => {
+    const spec = makeSpec('s1', 'web');
+    let { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });
+    ({ state } = reduceTerminal(state, {
+      kind: 'terminalBound',
+      sessionId: 's1' as SessionId,
+      terminalId: 't1' as TerminalId,
+    }));
+
+    const result = reduceTerminal(state, { kind: 'terminalUnbound', sessionId: 's1' as SessionId });
+    expect(result.state.sessions.get('s1' as SessionId)!.terminalId).toBeUndefined();
+    expect(result.effects).toEqual([]);
+  });
+
+  it('terminalUnbound 後の terminalClosed は副作用を発行しない', () => {
+    const spec = makeSpec('s1', 'web');
+    let { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });
+    ({ state } = reduceTerminal(state, {
+      kind: 'terminalBound',
+      sessionId: 's1' as SessionId,
+      terminalId: 't1' as TerminalId,
+    }));
+    ({ state } = reduceTerminal(state, {
+      kind: 'terminalUnbound',
+      sessionId: 's1' as SessionId,
+    }));
+
+    const result = reduceTerminal(state, {
+      kind: 'terminalClosed',
+      terminalId: 't1' as TerminalId,
+    });
+    expect(result.effects).toEqual([]);
+    expect(result.state.sessions.has('s1' as SessionId)).toBe(true);
+  });
+
   it('terminalClosed でセッション削除と killSession 副作用', () => {
     const spec = makeSpec('s1', 'web');
     let { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });

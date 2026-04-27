@@ -21,6 +21,14 @@ export interface TerminalServiceDeps {
   readonly getShellPath: () => AbsolutePath | undefined;
 }
 
+/** セッション要求の戻り値 */
+export interface RequestedSession {
+  /** 新規セッション識別子 */
+  readonly sessionId: SessionId;
+  /** 接続用シェルハンドル */
+  readonly handle: ShellSessionHandle;
+}
+
 /** ターミナルサービスの操作インターフェース */
 export interface TerminalService {
   /**
@@ -29,10 +37,17 @@ export interface TerminalService {
    */
   readonly revealLane: (lane: Lane) => void;
   /**
-   * 指定レーンへの新規ターミナル追加
+   * 指定レーンへの新規セッション起動と接続用ハンドル取得
    * @param lane - 対象レーン
+   * @returns 新規セッション識別子と接続用ハンドル
    */
-  readonly addTerminal: (lane: Lane) => void;
+  readonly requestSession: (lane: Lane) => RequestedSession;
+  /**
+   * VS Code 側で生成されたターミナル識別子をセッションへ束縛
+   * @param sessionId - 対象セッション識別子
+   * @param terminalId - 束縛先ターミナル識別子
+   */
+  readonly bindTerminal: (sessionId: SessionId, terminalId: TerminalId) => void;
   /**
    * 指定レーンの全ターミナル終了
    * @param laneId - 対象レーン識別子
@@ -74,36 +89,12 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
   };
 
   /**
-   * セッション生成とハンドル登録
-   * @param spec - セッション仕様
-   */
-  const spawnAndTrack = (spec: TerminalSessionSpec): void => {
-    const handle = shellFactory.create(spec);
-    handles.set(spec.id, handle);
-    const disposable = handle.onExit(() => dispatch({ kind: 'sessionExited', sessionId: spec.id }));
-    exitDisposables.set(spec.id, disposable);
-  };
-
-  /**
    * 副作用の実行
    * @param effects - 実行対象副作用列
    */
   const executeEffects = (effects: readonly TerminalEffect[]): void => {
     for (const effect of effects) {
       switch (effect.kind) {
-        case 'spawnSession':
-          spawnAndTrack(effect.spec);
-          break;
-        case 'attachTerminal': {
-          const handle = handles.get(effect.sessionId);
-          if (!handle) break;
-          const terminalId = presentation.attachSession(handle, effect.title);
-          dispatch({ kind: 'terminalBound', sessionId: effect.sessionId, terminalId });
-          break;
-        }
-        case 'showTerminal':
-          presentation.showTerminal(effect.terminalId);
-          break;
         case 'disposeTerminal':
           presentation.disposeTerminal(effect.terminalId);
           break;
@@ -134,18 +125,39 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
     shellPath: deps.getShellPath(),
   });
 
+  /**
+   * セッションの生成、ハンドル登録、終了監視の登録
+   * @param spec - セッション仕様
+   * @returns 接続用ハンドル
+   */
+  const spawnSession = (spec: TerminalSessionSpec): ShellSessionHandle => {
+    const handle = shellFactory.create(spec);
+    handles.set(spec.id, handle);
+    const disposable = handle.onExit(() => dispatch({ kind: 'sessionExited', sessionId: spec.id }));
+    exitDisposables.set(spec.id, disposable);
+    dispatch({ kind: 'sessionStarted', spec });
+    return handle;
+  };
+
+  /**
+   * 既存ハンドルの新規 Terminal への再接続
+   * @param sessionId - 対象セッション識別子
+   * @param title - 表示タイトル
+   * @returns 新規 TerminalId
+   */
+  const attachExisting = (sessionId: SessionId, title: string): TerminalId => {
+    const handle = handles.get(sessionId)!;
+    const terminalId = presentation.attachSession(handle, title);
+    dispatch({ kind: 'terminalBound', sessionId, terminalId });
+    return terminalId;
+  };
+
   return {
     revealLane: (lane) => {
       const disposed = presentation.disposeAllOwned();
       for (const terminalId of disposed) {
         const sid = findSessionByTerminalId(state, terminalId);
-        if (sid) {
-          dispatch({
-            kind: 'terminalBound',
-            sessionId: sid,
-            terminalId: undefined as unknown as TerminalId,
-          });
-        }
+        if (sid) dispatch({ kind: 'terminalUnbound', sessionId: sid });
       }
 
       const laneRecord = state.lanes.get(lane.id);
@@ -154,11 +166,8 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
 
       if (aliveSessionIds.length === 0) {
         const spec = buildSpec(lane);
-        spawnAndTrack(spec);
-        dispatch({ kind: 'sessionStarted', spec });
-        const handle = handles.get(spec.id)!;
-        const terminalId = presentation.attachSession(handle, lane.label);
-        dispatch({ kind: 'terminalBound', sessionId: spec.id, terminalId });
+        spawnSession(spec);
+        const terminalId = attachExisting(spec.id, lane.label);
         presentation.showTerminal(terminalId);
         dispatch({ kind: 'laneRevealed', laneId: lane.id, visibleSessionId: spec.id });
         return;
@@ -171,26 +180,22 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
           : aliveSessionIds[aliveSessionIds.length - 1]!;
 
       for (const sid of aliveSessionIds) {
-        const handle = handles.get(sid)!;
         const record = state.sessions.get(sid)!;
-        const terminalId = presentation.attachSession(handle, record.spec.title);
-        dispatch({ kind: 'terminalBound', sessionId: sid, terminalId });
-        if (sid === visibleSessionId) {
-          presentation.showTerminal(terminalId);
-        }
+        const terminalId = attachExisting(sid, record.spec.title);
+        if (sid === visibleSessionId) presentation.showTerminal(terminalId);
       }
       dispatch({ kind: 'laneRevealed', laneId: lane.id, visibleSessionId });
     },
 
-    addTerminal: (lane) => {
+    requestSession: (lane) => {
       const spec = buildSpec(lane);
-      spawnAndTrack(spec);
-      dispatch({ kind: 'sessionStarted', spec });
-      const handle = handles.get(spec.id)!;
-      const terminalId = presentation.attachSession(handle, lane.label);
-      dispatch({ kind: 'terminalBound', sessionId: spec.id, terminalId });
-      presentation.showTerminal(terminalId);
+      const handle = spawnSession(spec);
       dispatch({ kind: 'laneRevealed', laneId: lane.id, visibleSessionId: spec.id });
+      return { sessionId: spec.id, handle };
+    },
+
+    bindTerminal: (sessionId, terminalId) => {
+      dispatch({ kind: 'terminalBound', sessionId, terminalId });
     },
 
     closeLane: (laneId) => {
