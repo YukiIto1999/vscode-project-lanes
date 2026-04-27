@@ -43,6 +43,20 @@ export interface TerminalPresentationAdapter extends TerminalPresentationPort {
    * @returns 該当ターミナル識別子、または不一致で undefined
    */
   readonly resolveId: (terminal: vscode.Terminal) => TerminalId | undefined;
+  /**
+   * シェルセッションの TerminalProfile としての提示
+   * @param session - 接続対象シェルセッションハンドル
+   * @param title - 表示タイトル
+   * @param onBound - Terminal 生成完了時のコールバック
+   * @returns 渡可能な TerminalProfile
+   */
+  readonly presentAsProfile: (
+    session: ShellSessionHandle,
+    title: string,
+    onBound: (terminalId: TerminalId) => void,
+  ) => vscode.TerminalProfile;
+  /** onDidOpenTerminal 購読の解放 */
+  readonly disposable: Disposable;
 }
 
 /**
@@ -54,18 +68,43 @@ export const createTerminalPresentationAdapter = (): TerminalPresentationAdapter
   const terminalById = new Map<TerminalId, vscode.Terminal>();
   const idByTerminal = new WeakMap<vscode.Terminal, TerminalId>();
   const ownedTerminals = new Set<TerminalId>();
+  const pendingProfileBindings = new WeakMap<
+    vscode.Pseudoterminal,
+    (terminalId: TerminalId) => void
+  >();
 
   const nextId = (): TerminalId => `terminal-${++counter}` as TerminalId;
+
+  const registerTerminal = (terminal: vscode.Terminal): TerminalId => {
+    const id = nextId();
+    terminalById.set(id, terminal);
+    idByTerminal.set(terminal, id);
+    ownedTerminals.add(id);
+    return id;
+  };
+
+  const openSubscription = vscode.window.onDidOpenTerminal((terminal) => {
+    const opts = terminal.creationOptions;
+    if (!('pty' in opts)) return;
+    const pty = opts.pty;
+    const onBound = pendingProfileBindings.get(pty);
+    if (!onBound) return;
+    pendingProfileBindings.delete(pty);
+    const id = registerTerminal(terminal);
+    onBound(id);
+  });
 
   return {
     attachSession: (session, title) => {
       const pty = createPseudoterminal(session);
       const terminal = vscode.window.createTerminal({ name: title, pty });
-      const id = nextId();
-      terminalById.set(id, terminal);
-      idByTerminal.set(terminal, id);
-      ownedTerminals.add(id);
-      return id;
+      return registerTerminal(terminal);
+    },
+
+    presentAsProfile: (session, title, onBound) => {
+      const pty = createPseudoterminal(session);
+      pendingProfileBindings.set(pty, onBound);
+      return new vscode.TerminalProfile({ name: title, pty });
     },
 
     showTerminal: (terminalId) => {
@@ -96,5 +135,7 @@ export const createTerminalPresentationAdapter = (): TerminalPresentationAdapter
     },
 
     resolveId: (terminal) => idByTerminal.get(terminal),
+
+    disposable: openSubscription,
   };
 };
