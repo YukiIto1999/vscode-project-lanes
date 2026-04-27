@@ -26,6 +26,16 @@ export interface EditorPort {
   readonly restoreSnapshot: (snapshot: EditorSnapshot) => Promise<void>;
 }
 
+/** レーン切替後の VS Code ビュー再走査ポート */
+export interface LaneViewRebindPort {
+  /**
+   * 切替先レーンへの active folder ビューの再走査要求
+   * @param activeLane - 切替先レーン
+   * @returns 再走査要求の完了 Promise
+   */
+  readonly rebindActiveFolder: (activeLane: Lane) => Promise<void>;
+}
+
 /** ターミナル切替ポート */
 export interface LaneTerminalPort {
   /**

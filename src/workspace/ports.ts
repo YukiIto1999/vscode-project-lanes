@@ -68,9 +68,9 @@ export interface CatalogStorePort {
 export interface WorkspaceSettingsPort {
   /**
    * 既定ターミナルプロファイル設定
-   * @param profileName - プロファイル名
+   * @param profileTitle - 対象プロファイルの title
    */
-  readonly setDefaultTerminalProfile: (profileName: string) => void;
+  readonly setDefaultTerminalProfile: (profileTitle: string) => void;
   /** ターミナルセッションの永続化抑止 */
   readonly disablePersistentTerminals: () => void;
 }

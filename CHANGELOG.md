@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-04-27
+
+### Fixed
+
+- 既定ターミナルプロファイルが `id` で照合不能だった問題を修正。VS Code は `terminal.integrated.defaultProfile.<platform>` を contributed profile の `title` で照合するため、id を書き込んでいた従来コードでは projectLanes 経路に乗らず内蔵 bash が `.lanes-root/active` を cwd に開いていた
+- ターミナル「+」生成時に `provideTerminalProfile` が `undefined` を返して未管理ターミナルが `.lanes-root/active` で開かれていた問題を修正。正規の `vscode.TerminalProfile` を返却し、生成経路をレーン単一に統一
+- 管理ターミナルで親環境の `PWD` を継承し、プロンプトが symlink 経由のパスを表示していた問題を修正。レーン実パスを `PWD` として明示注入
+
+### Changed
+
+- レーン切替時、symlink target 入替直後に `workspaceFolders[0].name` を切替先レーン label へ更新（同 URI なので拡張ホスト再起動なし）。Explorer ルート表示の追従漏れと、フォルダ変更イベント経由のツリー再描画を同時に実現する `LaneViewRebindPort` を新設。Git 拡張のキャッシュ済 Repository を `git.close` で破棄してから `git.openRepository` で再 scan させる 2 段階で SCM 表示も切替先レーンへ追従。`refreshFilesExplorer` 直接実行による Explorer ビュー強制 focus を回避
+- Lane Terminal プロファイルの id / title を `package.json` の contributes 宣言から単一読出する `readLaneTerminalProfile` を新設。bootstrap 内の重複文字列を排除
+- `terminal/service` の API を再構成: `addTerminal` を撤去し、`requestSession` + `bindTerminal` をプロファイル経路向けに公開
+- ターミナル束縛解除を `TerminalCommand.terminalUnbound` として型表現し、`undefined as unknown as TerminalId` の型キャストを排除
+- 死コードとなっていた `TerminalEffect` の `spawnSession` / `attachTerminal` / `showTerminal` を削除
+
 ## [0.1.0] - 2026-04-26
 
 ### Changed
