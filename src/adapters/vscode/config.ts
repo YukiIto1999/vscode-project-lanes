@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import type { AbsolutePath } from '../../foundation/model';
-import type { Disposable } from '../../foundation/model';
+import type { AbsolutePath, Disposable } from '../../foundation/model';
 import type { ConfigPort, ProjectLanesConfig } from '../../app/model';
 
 /**
@@ -10,9 +9,7 @@ import type { ConfigPort, ProjectLanesConfig } from '../../app/model';
 const readConfig = (): ProjectLanesConfig => {
   const cfg = vscode.workspace.getConfiguration('projectLanes');
   return {
-    refreshIntervalSec: cfg.get<number>('refreshInterval', 1),
-    idleThresholdSec: cfg.get<number>('agent.idleThreshold', 5),
-    showAgentStatus: cfg.get<boolean>('agent.showStatus', true),
+    showActivityIndicator: cfg.get<boolean>('activity.showIndicator', true),
     shellPath: (cfg.get<string>('terminal.shellPath', '') || undefined) as AbsolutePath | undefined,
   };
 };

@@ -1,5 +1,5 @@
 import type { LaneId, UriString } from '../foundation/model';
-import type { AgentMonitorSnapshot, LaneAgentSummary } from '../agent/model';
+import type { LaneActivity, LaneActivityRecord } from '../lane-activity/model';
 import type { Lane, LaneServiceSnapshot } from '../lane/model';
 import type {
   ActivityBadgeViewModel,
@@ -9,127 +9,178 @@ import type {
   UiSnapshot,
 } from './model';
 
-/**
- * ツリー項目の description 文言生成
- * @param summary - 対象集約
- * @returns description 文言
- */
-const formatDescription = (summary: LaneAgentSummary | undefined): string => {
-  if (!summary || summary.totalCount === 0) return '';
-  return `${summary.idleCount} idle / ${summary.totalCount} agents`;
+/** 活動状態のレーン別取得 */
+const activityOf = (activityMap: ReadonlyMap<LaneId, LaneActivity>, laneId: LaneId): LaneActivity =>
+  activityMap.get(laneId) ?? 'no-agent';
+
+/** ツリー項目に出す補助文言 */
+const treeDescriptionFor = (activity: LaneActivity): string => {
+  switch (activity) {
+    case 'agent-working':
+      return 'working';
+    case 'agent-waiting':
+      return 'waiting';
+    case 'no-agent':
+      return '';
+  }
+};
+
+/** デコレーションのテーマカラーキー */
+const decorationThemeColorFor = (activity: LaneActivity): string | undefined => {
+  switch (activity) {
+    case 'agent-working':
+      return 'charts.green';
+    case 'agent-waiting':
+      return 'charts.yellow';
+    case 'no-agent':
+      return undefined;
+  }
+};
+
+/** デコレーションのツールチップ */
+const decorationTooltipFor = (activity: LaneActivity): string => {
+  switch (activity) {
+    case 'agent-working':
+      return 'Agent is working';
+    case 'agent-waiting':
+      return 'Agent is waiting for input';
+    case 'no-agent':
+      return '';
+  }
 };
 
 /**
  * ツリー項目のビューモデル算出
  * @param lanes - レーン列
- * @param summaryMap - レーン単位集約のマップ
+ * @param activityMap - レーン単位の活動状態マップ
  * @param activeLaneId - 活性レーン識別子
+ * @param showIndicator - 活動インジケータ表示有無
  * @returns ツリー項目列
  */
 const projectTreeItems = (
   lanes: readonly Lane[],
-  summaryMap: ReadonlyMap<LaneId, LaneAgentSummary>,
+  activityMap: ReadonlyMap<LaneId, LaneActivity>,
   activeLaneId: LaneId | undefined,
+  showIndicator: boolean,
 ): readonly LaneTreeItemViewModel[] =>
   lanes.map((lane) => ({
     laneId: lane.id,
     label: lane.label,
-    description: formatDescription(summaryMap.get(lane.id)),
+    description: showIndicator ? treeDescriptionFor(activityOf(activityMap, lane.id)) : '',
     isActive: lane.id === activeLaneId,
     resourceUri: `lane:///${lane.id}` as UriString,
   }));
 
 /**
  * Activity Bar バッジの算出
- * @param summaries - レーン単位集約列
+ * @param activities - レーン活動レコード列
+ * @param showIndicator - 活動インジケータ表示有無
  * @returns バッジビューモデル、または無表示で undefined
  */
 const projectBadge = (
-  summaries: readonly LaneAgentSummary[],
+  activities: readonly LaneActivityRecord[],
+  showIndicator: boolean,
 ): ActivityBadgeViewModel | undefined => {
-  const idle = summaries.reduce((sum, s) => sum + s.idleCount, 0);
-  return idle > 0 ? { value: idle, tooltip: `${idle} agents idle` } : undefined;
+  if (!showIndicator) return undefined;
+  const waitingCount = activities.filter((a) => a.activity === 'agent-waiting').length;
+  if (waitingCount === 0) return undefined;
+  const noun = waitingCount === 1 ? 'lane is' : 'lanes are';
+  return { value: waitingCount, tooltip: `${waitingCount} ${noun} waiting for input` };
 };
 
 /**
  * ファイルデコレーション列の算出
  * @param lanes - レーン列
- * @param summaryMap - レーン単位集約のマップ
+ * @param activityMap - レーン単位の活動状態マップ
+ * @param showIndicator - 活動インジケータ表示有無
  * @returns デコレーション列
  */
 const projectDecorations = (
   lanes: readonly Lane[],
-  summaryMap: ReadonlyMap<LaneId, LaneAgentSummary>,
-): readonly LaneDecorationViewModel[] =>
-  lanes.flatMap((lane) => {
-    const s = summaryMap.get(lane.id);
-    if (!s || s.totalCount === 0) return [];
-    if (s.idleCount > 0) {
-      return [
-        {
-          laneId: lane.id,
-          badge: `${s.idleCount}`,
-          colorThemeKey: 'charts.yellow',
-          tooltip: `${s.idleCount} idle / ${s.totalCount} agents`,
-        },
-      ];
-    }
+  activityMap: ReadonlyMap<LaneId, LaneActivity>,
+  showIndicator: boolean,
+): readonly LaneDecorationViewModel[] => {
+  if (!showIndicator) return [];
+  return lanes.flatMap((lane) => {
+    const activity = activityOf(activityMap, lane.id);
+    const colorThemeKey = decorationThemeColorFor(activity);
+    if (!colorThemeKey) return [];
     return [
       {
         laneId: lane.id,
-        badge: `${s.totalCount}`,
-        colorThemeKey: 'charts.green',
-        tooltip: `${s.totalCount} agents active`,
+        badge: '●',
+        colorThemeKey,
+        tooltip: decorationTooltipFor(activity),
       },
     ];
   });
+};
+
+/** ステータスバー記号と末尾説明 */
+const statusIndicatorFor = (
+  activity: LaneActivity,
+): { readonly suffix: string; readonly tooltip: string } => {
+  switch (activity) {
+    case 'agent-working':
+      return { suffix: ' $(sync~spin)', tooltip: ' (agent working)' };
+    case 'agent-waiting':
+      return { suffix: ' $(bell)', tooltip: ' (agent waiting for input)' };
+    case 'no-agent':
+      return { suffix: '', tooltip: '' };
+  }
+};
 
 /**
  * ステータスバーの算出
  * @param activeLane - 活性レーン
- * @param summary - 活性レーンの集約
+ * @param activeLaneActivity - 活性レーンの活動状態
+ * @param showIndicator - 活動インジケータ表示有無
  * @returns ステータスバービューモデル
  */
 const projectStatusBar = (
   activeLane: Lane | undefined,
-  summary: LaneAgentSummary | undefined,
+  activeLaneActivity: LaneActivity,
+  showIndicator: boolean,
 ): StatusBarViewModel => {
   if (!activeLane) {
     return { text: '$(layers) No Lane', tooltip: 'Project Lanes: No lane selected' };
   }
-  const agentText = summary ? ` [${summary.idleCount} idle / ${summary.totalCount}]` : '';
-  const agentTooltip = summary ? ` (${summary.idleCount} idle / ${summary.totalCount} agents)` : '';
+  const { suffix, tooltip } = showIndicator
+    ? statusIndicatorFor(activeLaneActivity)
+    : { suffix: '', tooltip: '' };
   return {
-    text: `$(layers) ${activeLane.label}${agentText}`,
-    tooltip: `Project Lanes: ${activeLane.label}${agentTooltip}`,
+    text: `$(layers) ${activeLane.label}${suffix}`,
+    tooltip: `Project Lanes: ${activeLane.label}${tooltip}`,
   };
 };
 
 /**
  * ドメインスナップショットから UI スナップショットへの射影
  * @param lane - レーンサービススナップショット
- * @param agents - エージェントモニタスナップショット
- * @param showAgentStatus - エージェント情報の表示有無
+ * @param activities - レーン活動レコード列
+ * @param showActivityIndicator - 活動インジケータ表示有無
  * @returns UI スナップショット
  */
 export const projectUi = (
   lane: LaneServiceSnapshot,
-  agents: AgentMonitorSnapshot,
-  showAgentStatus: boolean,
+  activities: readonly LaneActivityRecord[],
+  showActivityIndicator: boolean,
 ): UiSnapshot => {
-  const summaryMap = new Map(agents.summaries.map((s) => [s.laneId, s]));
+  const activityMap = new Map(activities.map((a) => [a.laneId, a.activity]));
   const activeLane = lane.activeLaneId ? lane.catalog.byId.get(lane.activeLaneId) : undefined;
-
-  const effectiveSummaryMap = showAgentStatus ? summaryMap : new Map();
-  const effectiveSummaries = showAgentStatus ? agents.summaries : [];
+  const activeLaneActivity = lane.activeLaneId
+    ? activityOf(activityMap, lane.activeLaneId)
+    : 'no-agent';
 
   return {
-    treeItems: projectTreeItems(lane.catalog.lanes, effectiveSummaryMap, lane.activeLaneId),
-    badge: showAgentStatus ? projectBadge(effectiveSummaries) : undefined,
-    decorations: projectDecorations(lane.catalog.lanes, effectiveSummaryMap),
-    statusBar: projectStatusBar(
-      activeLane,
-      showAgentStatus ? summaryMap.get(lane.activeLaneId!) : undefined,
+    treeItems: projectTreeItems(
+      lane.catalog.lanes,
+      activityMap,
+      lane.activeLaneId,
+      showActivityIndicator,
     ),
+    badge: projectBadge(activities, showActivityIndicator),
+    decorations: projectDecorations(lane.catalog.lanes, activityMap, showActivityIndicator),
+    statusBar: projectStatusBar(activeLane, activeLaneActivity, showActivityIndicator),
   };
 };
