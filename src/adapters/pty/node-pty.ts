@@ -1,6 +1,7 @@
 import type * as NodePty from 'node-pty';
-import type { Disposable } from '../../foundation/model';
+import type { AbsolutePath, Disposable } from '../../foundation/model';
 import type { ShellSessionFactoryPort, ShellSessionHandle } from '../../terminal/ports';
+import { planShellIntegration } from './shell-integration';
 
 /**
  * node-pty の遅延ロード
@@ -16,24 +17,36 @@ const MAX_SCROLLBACK = 64 * 1024;
  */
 const detectShell = (): string => process.env.SHELL ?? '/bin/bash';
 
+/** node-pty ファクトリの依存 */
+export interface ShellSessionFactoryDeps {
+  /** 拡張ルート絶対パス (シェル統合スクリプト解決用) */
+  readonly extensionPath: AbsolutePath;
+}
+
 /**
  * node-pty ベースのシェルセッション生成アダプターの生成
+ * @param deps - 依存
  * @returns シェルセッション生成ポート
  */
-export const createShellSessionFactory = (): ShellSessionFactoryPort => ({
+export const createShellSessionFactory = (
+  deps: ShellSessionFactoryDeps,
+): ShellSessionFactoryPort => ({
   create: (spec): ShellSessionHandle => {
     const pty = loadPty();
-    const shell = spec.shellPath ?? detectShell();
-    const proc = pty.spawn(shell, [], {
+    const shellPath = spec.shellPath ?? detectShell();
+    const baseEnv: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      PWD: spec.cwdPath,
+      LANES_SESSION_ID: spec.id,
+    };
+    const plan = planShellIntegration(shellPath, baseEnv, deps.extensionPath);
+
+    const proc = pty.spawn(shellPath, [...plan.args], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd: spec.cwdPath,
-      env: {
-        ...process.env,
-        PWD: spec.cwdPath,
-        LANES_SESSION_ID: spec.id,
-      } as Record<string, string>,
+      env: { ...plan.env },
     });
 
     let alive = true;
