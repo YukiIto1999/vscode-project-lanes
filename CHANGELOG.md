@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-04-29
+
+### Changed
+
+- レーン活動検出を 3 値判別 (`agent-working` / `agent-waiting` / `no-agent`) に再設計。OSC 633 で foreground 実行有無を切り、PTY 出力時刻の停滞 (1.5s) で working / waiting を分離する。打鍵に対するエコー (シェル / TUI 由来の自前再描画) は、入力時刻と出力時刻のギャップ (`ECHO_GAP_MS=100ms`) を `lane-activity` の射影規則で評価して除外する (adapter 層には業務規則を持たせない)。procfs / Claude セッション JSONL / 子プロセスツリー監視は廃止。`bash` / `zsh` 起動時に OSC 633 統合スクリプトを `--rcfile` / `ZDOTDIR` 経由で注入
+- 設定キーを再編。`projectLanes.refreshInterval` と `projectLanes.agent.idleThreshold` を削除、`projectLanes.agent.showStatus` を `projectLanes.activity.showIndicator` にリネーム
+- 種別判定 (claude-code / codex-cli / gemini-cli / copilot-cli) の概念を撤去。検出は汎用的な「foreground + 出力途絶」ヒューリスティック
+- UI 表記を 3 値対応へ刷新。working は `$(sync~spin)` + 緑●、waiting は `$(bell)` + 黄●、no-agent は無表示。Activity Bar バッジは waiting レーン数のみカウント
+
+### Removed
+
+- `src/agent/` 一式 (model / ports / service / activity-policy / summarizer / resolver / sources)
+- `src/adapters/linux/procfs.ts` および `claude-sessions.ts`
+- 周期実行アダプター `src/adapters/vscode/timers.ts`
+
 ## [0.1.1] - 2026-04-27
 
 ### Fixed
