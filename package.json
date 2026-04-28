@@ -1,7 +1,7 @@
 {
   "name": "project-lanes",
   "displayName": "Project Lanes - Fast Switching",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Manage projects as lanes within a workspace and switch Explorer, terminals, and editor tabs in one click",
   "categories": [
     "Other"
@@ -63,29 +63,15 @@
     "configuration": {
       "title": "Project Lanes",
       "properties": {
-        "projectLanes.refreshInterval": {
-          "type": "number",
-          "default": 1,
-          "minimum": 1,
-          "maximum": 60,
-          "description": "Agent status refresh interval in seconds."
-        },
-        "projectLanes.agent.idleThreshold": {
-          "type": "number",
-          "default": 5,
-          "minimum": 3,
-          "maximum": 120,
-          "description": "Seconds of inactivity before an agent is considered idle."
-        },
         "projectLanes.terminal.shellPath": {
           "type": "string",
           "default": "",
           "description": "Shell path for Lane Terminal. Leave empty to auto-detect from $SHELL."
         },
-        "projectLanes.agent.showStatus": {
+        "projectLanes.activity.showIndicator": {
           "type": "boolean",
           "default": true,
-          "description": "Show agent status in badge, decoration, and status bar."
+          "description": "Show running indicator in badge, decoration, and status bar when a lane has an executing terminal."
         }
       }
     },
