@@ -1,14 +1,30 @@
 import * as vscode from 'vscode';
 import type { Disposable, TerminalId } from '../../foundation/model';
-import type { ShellSessionHandle } from '../../terminal/ports';
-import type { TerminalPresentationPort } from '../../terminal/ports';
+import type { ShellSessionHandle, TerminalPresentationPort } from '../../terminal/ports';
+
+/** Pseudoterminal の入出力通知 (生イベントのみ) */
+type ActivityNotifier = (event: ActivityEvent) => void;
+
+/** ターミナル入出力の生イベント */
+export type ActivityEvent =
+  | { readonly kind: 'output'; readonly terminalId: TerminalId }
+  | { readonly kind: 'input'; readonly terminalId: TerminalId };
 
 /**
- * シェルセッションに接続する Pseudoterminal の生成
+ * シェルセッションに接続する Pseudoterminal の生成。
+ * adapter は VS Code Pseudoterminal の境界に閉じ、入力 / 出力の事実を
+ * 生イベントとして外へ流すのみ。エコー判定や時刻取得は行わない
+ * (それらは lane-activity 業務ルール層の責務)。
  * @param session - 接続対象シェルセッションハンドル
+ * @param getTerminalId - 紐付け済みターミナル識別子の取得 (未バインド時 undefined)
+ * @param notify - 生イベントの通知
  * @returns Pseudoterminal
  */
-const createPseudoterminal = (session: ShellSessionHandle): vscode.Pseudoterminal => {
+const createPseudoterminal = (
+  session: ShellSessionHandle,
+  getTerminalId: () => TerminalId | undefined,
+  notify: ActivityNotifier,
+): vscode.Pseudoterminal => {
   const writeEmitter = new vscode.EventEmitter<string>();
   const closeEmitter = new vscode.EventEmitter<void>();
   let exitDisposable: Disposable | undefined;
@@ -19,7 +35,11 @@ const createPseudoterminal = (session: ShellSessionHandle): vscode.Pseudotermina
 
     open: (dimensions) => {
       if (dimensions) session.resize(dimensions.columns, dimensions.rows);
-      session.attachOutput((data) => writeEmitter.fire(data));
+      session.attachOutput((data) => {
+        writeEmitter.fire(data);
+        const tid = getTerminalId();
+        if (tid) notify({ kind: 'output', terminalId: tid });
+      });
       exitDisposable = session.onExit(() => closeEmitter.fire());
     },
 
@@ -30,7 +50,11 @@ const createPseudoterminal = (session: ShellSessionHandle): vscode.Pseudotermina
       closeEmitter.dispose();
     },
 
-    handleInput: (data) => session.write(data),
+    handleInput: (data) => {
+      const tid = getTerminalId();
+      if (tid) notify({ kind: 'input', terminalId: tid });
+      session.write(data);
+    },
     setDimensions: (dimensions) => session.resize(dimensions.columns, dimensions.rows),
   };
 };
@@ -55,7 +79,11 @@ export interface TerminalPresentationAdapter extends TerminalPresentationPort {
     title: string,
     onBound: (terminalId: TerminalId) => void,
   ) => vscode.TerminalProfile;
-  /** onDidOpenTerminal 購読の解放 */
+  /** ターミナル出力観測の生イベント */
+  readonly onTerminalOutput: vscode.Event<TerminalId>;
+  /** ターミナル入力観測の生イベント (handleInput 由来) */
+  readonly onTerminalInput: vscode.Event<TerminalId>;
+  /** onDidOpenTerminal および各イベント源の解放 */
   readonly disposable: Disposable;
 }
 
@@ -72,6 +100,13 @@ export const createTerminalPresentationAdapter = (): TerminalPresentationAdapter
     vscode.Pseudoterminal,
     (terminalId: TerminalId) => void
   >();
+
+  const outputEmitter = new vscode.EventEmitter<TerminalId>();
+  const inputEmitter = new vscode.EventEmitter<TerminalId>();
+  const notify: ActivityNotifier = (event) => {
+    if (event.kind === 'output') outputEmitter.fire(event.terminalId);
+    else inputEmitter.fire(event.terminalId);
+  };
 
   const nextId = (): TerminalId => `terminal-${++counter}` as TerminalId;
 
@@ -96,14 +131,20 @@ export const createTerminalPresentationAdapter = (): TerminalPresentationAdapter
 
   return {
     attachSession: (session, title) => {
-      const pty = createPseudoterminal(session);
+      let assignedId: TerminalId | undefined;
+      const pty = createPseudoterminal(session, () => assignedId, notify);
       const terminal = vscode.window.createTerminal({ name: title, pty });
-      return registerTerminal(terminal);
+      assignedId = registerTerminal(terminal);
+      return assignedId;
     },
 
     presentAsProfile: (session, title, onBound) => {
-      const pty = createPseudoterminal(session);
-      pendingProfileBindings.set(pty, onBound);
+      let assignedId: TerminalId | undefined;
+      const pty = createPseudoterminal(session, () => assignedId, notify);
+      pendingProfileBindings.set(pty, (terminalId) => {
+        assignedId = terminalId;
+        onBound(terminalId);
+      });
       return new vscode.TerminalProfile({ name: title, pty });
     },
 
@@ -136,6 +177,15 @@ export const createTerminalPresentationAdapter = (): TerminalPresentationAdapter
 
     resolveId: (terminal) => idByTerminal.get(terminal),
 
-    disposable: openSubscription,
+    onTerminalOutput: outputEmitter.event,
+    onTerminalInput: inputEmitter.event,
+
+    disposable: {
+      dispose: () => {
+        openSubscription.dispose();
+        outputEmitter.dispose();
+        inputEmitter.dispose();
+      },
+    },
   };
 };
