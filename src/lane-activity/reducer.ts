@@ -1,11 +1,11 @@
-import type { LaneId } from '../foundation/model';
+import type { Instant, LaneId, SessionId } from '../foundation/model';
 import type {
   LaneActivity,
   LaneActivityRecord,
   LaneActivityState,
-  TerminalActivity,
-  TerminalActivityEvent,
-  TerminalActivityState,
+  SessionActivity,
+  SessionActivityEvent,
+  SessionActivityState,
 } from './model';
 import type { LaneResolverPort } from './ports';
 
@@ -25,10 +25,12 @@ export const ACTIVE_THRESHOLD_MS = 1500;
  */
 export const ECHO_GAP_MS = 100;
 
-const emptyTerminalState = (): TerminalActivityState => ({
+const ZERO: Instant = 0 as Instant;
+
+const emptySessionState = (): SessionActivityState => ({
   fgRunning: false,
-  lastOutputAt: 0,
-  lastInputAt: 0,
+  lastOutputAt: ZERO,
+  lastInputAt: ZERO,
 });
 
 /**
@@ -36,7 +38,7 @@ const emptyTerminalState = (): TerminalActivityState => ({
  * @returns 初期状態
  */
 export const initialLaneActivityState = (): LaneActivityState => ({
-  terminals: new Map(),
+  sessions: new Map(),
 });
 
 /**
@@ -47,49 +49,49 @@ export const initialLaneActivityState = (): LaneActivityState => ({
  */
 export const reduceLaneActivity = (
   state: LaneActivityState,
-  event: TerminalActivityEvent,
+  event: SessionActivityEvent,
 ): LaneActivityState => {
-  const terminals = new Map(state.terminals);
-  const current = terminals.get(event.terminalId) ?? emptyTerminalState();
+  const sessions = new Map(state.sessions);
+  const current = sessions.get(event.sessionId) ?? emptySessionState();
 
   switch (event.kind) {
     case 'fg-started':
-      terminals.set(event.terminalId, { ...current, fgRunning: true, lastOutputAt: event.at });
+      sessions.set(event.sessionId, { ...current, fgRunning: true, lastOutputAt: event.at });
       break;
     case 'fg-ended':
-      terminals.set(event.terminalId, { ...current, fgRunning: false });
+      sessions.set(event.sessionId, { ...current, fgRunning: false });
       break;
     case 'output':
-      terminals.set(event.terminalId, { ...current, lastOutputAt: event.at });
+      sessions.set(event.sessionId, { ...current, lastOutputAt: event.at });
       break;
     case 'input':
-      terminals.set(event.terminalId, { ...current, lastInputAt: event.at });
+      sessions.set(event.sessionId, { ...current, lastInputAt: event.at });
       break;
     case 'forgotten':
-      terminals.delete(event.terminalId);
+      sessions.delete(event.sessionId);
       break;
   }
 
-  return { terminals };
+  return { sessions };
 };
 
 /**
- * ターミナル単位の活動状態の射影。
+ * セッション単位の活動状態の射影。
  * foreground 中で「直近出力が閾値内 AND 入力よりエコーギャップ以上
  * 後に発生」のときのみ working、それ以外の foreground 中は waiting、
  * foreground 外は shell-prompt。
- * @param state - ターミナル状態
- * @param now - 現在時刻 (ms)
+ * @param state - セッション状態
+ * @param now - 現在時刻
  * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
  * @param echoGapMs - エコーとみなす最小ギャップ (ms)
- * @returns ターミナル活動状態
+ * @returns セッション活動状態
  */
-export const projectTerminalActivity = (
-  state: TerminalActivityState,
-  now: number,
+export const projectSessionActivity = (
+  state: SessionActivityState,
+  now: Instant,
   thresholdMs: number = ACTIVE_THRESHOLD_MS,
   echoGapMs: number = ECHO_GAP_MS,
-): TerminalActivity => {
+): SessionActivity => {
   if (!state.fgRunning) return 'shell-prompt';
   const sinceOutput = now - state.lastOutputAt;
   const outputAfterInput = state.lastOutputAt - state.lastInputAt;
@@ -98,11 +100,11 @@ export const projectTerminalActivity = (
 };
 
 /**
- * ターミナル活動列のレーン単位集約
+ * セッション活動列のレーン単位集約
  * @param activities - 活動状態列
  * @returns 集約活動状態 (working > waiting > no-agent の順で最大優先)
  */
-export const aggregateLaneActivity = (activities: readonly TerminalActivity[]): LaneActivity => {
+export const aggregateLaneActivity = (activities: readonly SessionActivity[]): LaneActivity => {
   if (activities.some((a) => a === 'agent-working')) return 'agent-working';
   if (activities.some((a) => a === 'agent-waiting')) return 'agent-waiting';
   return 'no-agent';
@@ -113,7 +115,7 @@ export const aggregateLaneActivity = (activities: readonly TerminalActivity[]): 
  * @param state - 射影元状態
  * @param resolver - レーン解決ポート
  * @param knownLaneIds - 表示対象レーン識別子列
- * @param now - 現在時刻 (ms)
+ * @param now - 現在時刻
  * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
  * @param echoGapMs - エコーとみなす最小ギャップ (ms)
  * @returns レーン活動レコード列
@@ -122,15 +124,15 @@ export const projectLaneActivities = (
   state: LaneActivityState,
   resolver: LaneResolverPort,
   knownLaneIds: Iterable<LaneId>,
-  now: number,
+  now: Instant,
   thresholdMs: number = ACTIVE_THRESHOLD_MS,
   echoGapMs: number = ECHO_GAP_MS,
 ): readonly LaneActivityRecord[] => {
-  const byLane = new Map<LaneId, TerminalActivity[]>();
-  for (const [terminalId, terminalState] of state.terminals) {
-    const laneId = resolver.resolveLaneByTerminal(terminalId);
+  const byLane = new Map<LaneId, SessionActivity[]>();
+  for (const [sessionId, sessionState] of state.sessions) {
+    const laneId = resolver.resolveLaneBySession(sessionId);
     if (!laneId) continue;
-    const activity = projectTerminalActivity(terminalState, now, thresholdMs, echoGapMs);
+    const activity = projectSessionActivity(sessionState, now, thresholdMs, echoGapMs);
     const arr = byLane.get(laneId) ?? [];
     arr.push(activity);
     byLane.set(laneId, arr);
@@ -143,21 +145,59 @@ export const projectLaneActivities = (
 };
 
 /**
- * 次に状態遷移が起きる予想時刻 (ms 絶対値) の算出
+ * セッション全体の射影マップ (差分判定用)
+ * @param state - 射影元状態
+ * @param now - 現在時刻
+ * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
+ * @param echoGapMs - エコーとみなす最小ギャップ (ms)
+ * @returns セッション活動マップ
+ */
+export const projectSessionMap = (
+  state: LaneActivityState,
+  now: Instant,
+  thresholdMs: number = ACTIVE_THRESHOLD_MS,
+  echoGapMs: number = ECHO_GAP_MS,
+): ReadonlyMap<SessionId, SessionActivity> => {
+  const out = new Map<SessionId, SessionActivity>();
+  for (const [sessionId, sessionState] of state.sessions) {
+    out.set(sessionId, projectSessionActivity(sessionState, now, thresholdMs, echoGapMs));
+  }
+  return out;
+};
+
+/**
+ * 2 つの射影マップが等しいか
+ * @param a - 比較元
+ * @param b - 比較先
+ * @returns 等しければ true
+ */
+export const equalSessionMap = (
+  a: ReadonlyMap<SessionId, SessionActivity>,
+  b: ReadonlyMap<SessionId, SessionActivity>,
+): boolean => {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) {
+    if (b.get(k) !== v) return false;
+  }
+  return true;
+};
+
+/**
+ * 次に状態遷移が起きる予想時刻 (絶対値) の算出
  * @param state - 現在状態
- * @param now - 現在時刻 (ms)
+ * @param now - 現在時刻
  * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
  * @returns 次の遷移時刻、無ければ undefined
  */
 export const nextTransitionAt = (
   state: LaneActivityState,
-  now: number,
+  now: Instant,
   thresholdMs: number = ACTIVE_THRESHOLD_MS,
-): number | undefined => {
-  let earliest: number | undefined;
-  for (const t of state.terminals.values()) {
-    if (!t.fgRunning) continue;
-    const transitionAt = t.lastOutputAt + thresholdMs;
+): Instant | undefined => {
+  let earliest: Instant | undefined;
+  for (const s of state.sessions.values()) {
+    if (!s.fgRunning) continue;
+    const transitionAt = (s.lastOutputAt + thresholdMs) as Instant;
     if (transitionAt <= now) continue;
     if (earliest === undefined || transitionAt < earliest) earliest = transitionAt;
   }

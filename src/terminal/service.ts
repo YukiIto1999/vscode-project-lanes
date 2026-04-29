@@ -64,11 +64,11 @@ export interface TerminalService {
    */
   readonly managedSessionIds: () => ReadonlySet<SessionId>;
   /**
-   * ターミナル識別子からのレーン識別子解決
-   * @param terminalId - 対象ターミナル識別子
+   * セッション識別子からのレーン識別子解決
+   * @param sessionId - 対象セッション識別子
    * @returns 該当レーン識別子、または不一致で undefined
    */
-  readonly resolveLaneByTerminal: (terminalId: TerminalId) => LaneId | undefined;
+  readonly resolveLaneBySession: (sessionId: SessionId) => LaneId | undefined;
   /** 全リソースの破棄 */
   readonly dispose: () => void;
 }
@@ -214,11 +214,7 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
 
     managedSessionIds: () => new Set(state.sessions.keys()),
 
-    resolveLaneByTerminal: (terminalId) => {
-      const sessionId = findSessionByTerminalId(state, terminalId);
-      if (!sessionId) return undefined;
-      return state.sessions.get(sessionId)?.spec.laneId;
-    },
+    resolveLaneBySession: (sessionId) => state.sessions.get(sessionId)?.spec.laneId,
 
     dispose: () => {
       dispatch({ kind: 'allDisposed' });
