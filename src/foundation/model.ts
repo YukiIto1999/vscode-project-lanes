@@ -32,6 +32,9 @@ export type ProcessId = Brand<number, 'ProcessId'>;
 /** UNIX エポック秒 */
 export type UnixSeconds = Brand<number, 'UnixSeconds'>;
 
+/** 単調時刻 (ms 単位の観測時刻。MonotonicClockPort 経由で取得) */
+export type Instant = Brand<number, 'Instant'>;
+
 /** 破棄可能なリソース */
 export interface Disposable {
   /** 破棄処理 */

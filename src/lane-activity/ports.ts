@@ -1,77 +1,53 @@
-import type { Disposable, LaneId, TerminalId } from '../foundation/model';
+import type { Instant, LaneId, SessionId } from '../foundation/model';
 
-/** foreground コマンド開始 / 終了イベント */
-export type TerminalExecutionEvent =
-  | { readonly kind: 'started'; readonly terminalId: TerminalId }
-  | { readonly kind: 'ended'; readonly terminalId: TerminalId };
-
-/** foreground コマンド開始 / 終了の入力ポート (OSC 633 由来) */
-export interface TerminalExecutionEventPort {
+/**
+ * セッション活動の事実を受け付ける書込口。
+ * adapter から domain への単方向流入。`at` は受け側 (service) で
+ * 単調時刻を採番するため引数からは省く。
+ */
+export interface SessionActivitySink {
   /**
-   * イベント購読の開始
-   * @param handler - イベントハンドラー
-   * @returns 購読解除可能な Disposable
+   * foreground コマンド開始の通知 (OSC 633 ;C 相当)
+   * @param sessionId - 対象セッション識別子
    */
-  readonly subscribe: (handler: (event: TerminalExecutionEvent) => void) => Disposable;
-}
-
-/** ターミナル出力観測イベント */
-export interface TerminalOutputEvent {
-  /** 対象ターミナル識別子 */
-  readonly terminalId: TerminalId;
-}
-
-/** ターミナル出力の入力ポート (PTY data 由来) */
-export interface TerminalOutputEventPort {
+  readonly executionStarted: (sessionId: SessionId) => void;
   /**
-   * イベント購読の開始
-   * @param handler - イベントハンドラー
-   * @returns 購読解除可能な Disposable
+   * foreground コマンド終了の通知 (OSC 633 ;D 相当)
+   * @param sessionId - 対象セッション識別子
    */
-  readonly subscribe: (handler: (event: TerminalOutputEvent) => void) => Disposable;
-}
-
-/** ターミナル入力観測イベント */
-export interface TerminalInputEvent {
-  /** 対象ターミナル識別子 */
-  readonly terminalId: TerminalId;
-}
-
-/** ターミナル入力の入力ポート (Pseudoterminal handleInput 由来) */
-export interface TerminalInputEventPort {
+  readonly executionEnded: (sessionId: SessionId) => void;
   /**
-   * イベント購読の開始
-   * @param handler - イベントハンドラー
-   * @returns 購読解除可能な Disposable
+   * PTY 出力観測の通知
+   * @param sessionId - 対象セッション識別子
    */
-  readonly subscribe: (handler: (event: TerminalInputEvent) => void) => Disposable;
-}
-
-/** ターミナル破棄通知の入力ポート */
-export interface TerminalLifecycleEventPort {
+  readonly output: (sessionId: SessionId) => void;
   /**
-   * 破棄通知の購読
-   * @param handler - 破棄ハンドラー
-   * @returns 購読解除可能な Disposable
+   * ユーザー入力観測の通知 (Pseudoterminal handleInput 相当)
+   * @param sessionId - 対象セッション識別子
    */
-  readonly subscribe: (handler: (terminalId: TerminalId) => void) => Disposable;
+  readonly input: (sessionId: SessionId) => void;
+  /**
+   * セッション消滅の通知 (PTY exit 相当)
+   * @param sessionId - 対象セッション識別子
+   */
+  readonly forgotten: (sessionId: SessionId) => void;
 }
 
-/** ターミナルからレーンを引く照会ポート */
+/** セッションからレーンを引く照会ポート */
 export interface LaneResolverPort {
   /**
-   * ターミナル識別子からのレーン識別子解決
-   * @param terminalId - 対象ターミナル識別子
+   * セッション識別子からのレーン識別子解決
+   * @param sessionId - 対象セッション識別子
    * @returns 該当レーン識別子、または不一致で undefined
    */
-  readonly resolveLaneByTerminal: (terminalId: TerminalId) => LaneId | undefined;
+  readonly resolveLaneBySession: (sessionId: SessionId) => LaneId | undefined;
 }
 
 /** 単調時刻取得ポート */
 export interface MonotonicClockPort {
   /**
-   * 現在時刻 (ms)
-   * @returns ms 単位の現在時刻
+   * 現在時刻
+   * @returns 観測時刻
    */
-  readonly now: () => number;
+  readonly now: () => Instant;
 }

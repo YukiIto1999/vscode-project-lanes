@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as nodePath from 'node:path';
-import type { AbsolutePath, LaneId, SessionId, TerminalId, UriString } from '../foundation/model';
+import type { AbsolutePath, Instant, LaneId, SessionId, UriString } from '../foundation/model';
 import { createConfigAdapter } from '../adapters/vscode/config';
 import { createCatalogStoreAdapter, createSelectionStoreAdapter } from '../adapters/vscode/storage';
 import { createEditorAdapter } from '../adapters/vscode/editors';
@@ -16,9 +16,6 @@ import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
 import { createPromptAdapter } from '../adapters/vscode/quick-pick';
-import { createTerminalExecutionEventAdapter } from '../adapters/vscode/terminal-execution-events';
-import { createTerminalOutputEventAdapter } from '../adapters/vscode/terminal-output-events';
-import { createTerminalInputEventAdapter } from '../adapters/vscode/terminal-input-events';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
 import { bootstrapWorkspace } from '../workspace/scanner';
@@ -29,7 +26,7 @@ import { createLaneService } from '../lane/service';
 import { createTerminalService } from '../terminal/service';
 import { createLaneActivityService } from '../lane-activity/service';
 import { projectLaneActivities } from '../lane-activity/reducer';
-import type { TerminalLifecycleEventPort } from '../lane-activity/ports';
+import type { MonotonicClockPort } from '../lane-activity/ports';
 import { projectUi } from '../ui/projections';
 
 /** ブートストラップ結果 */
@@ -44,33 +41,6 @@ export type BootstrapOutcome =
       /** 無効化理由 */
       readonly reason: 'no-workspace-file' | 'missing-anchor';
     };
-
-/**
- * ターミナル破棄イベントの emitter ペアの生成
- * @returns subscribe ポートと fire 関数
- */
-const createLifecycleEventBus = (): {
-  port: TerminalLifecycleEventPort;
-  fire: (terminalId: TerminalId) => void;
-} => {
-  const handlers: Array<(terminalId: TerminalId) => void> = [];
-  return {
-    port: {
-      subscribe: (handler) => {
-        handlers.push(handler);
-        return {
-          dispose: () => {
-            const idx = handlers.indexOf(handler);
-            if (idx >= 0) handlers.splice(idx, 1);
-          },
-        };
-      },
-    },
-    fire: (terminalId) => {
-      for (const handler of handlers) handler(terminalId);
-    },
-  };
-};
 
 /**
  * 拡張機能の組み立てと起動
@@ -115,8 +85,15 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   const selectionStore = createSelectionStoreAdapter(context.workspaceState);
   const prompt = createPromptAdapter();
   const extensionPath = context.extensionPath as AbsolutePath;
-  const shellFactory = createShellSessionFactory({ extensionPath });
-  const presentation = createTerminalPresentationAdapter();
+
+  const clock: MonotonicClockPort = { now: () => Date.now() as Instant };
+  const laneActivity = createLaneActivityService({ clock });
+
+  const shellFactory = createShellSessionFactory({
+    extensionPath,
+    activitySink: laneActivity.sink,
+  });
+  const presentation = createTerminalPresentationAdapter({ activitySink: laneActivity.sink });
 
   const instanceId = process.pid;
   const laneCounters = new Map<LaneId, number>();
@@ -152,31 +129,17 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   });
   laneService.initialize();
 
-  const executionEvents = createTerminalExecutionEventAdapter((terminal) =>
-    presentation.resolveId(terminal),
-  );
-  const outputEvents = createTerminalOutputEventAdapter(presentation);
-  const inputEvents = createTerminalInputEventAdapter(presentation);
-  const lifecycleBus = createLifecycleEventBus();
-  const laneActivity = createLaneActivityService({
-    executionEvents,
-    outputEvents,
-    inputEvents,
-    lifecycleEvents: lifecycleBus.port,
-    clock: { now: () => Date.now() },
-  });
-
   const treeView = createTreeViewAdapter();
   const statusBar = createStatusBarAdapter();
 
-  const render = () => {
+  const render = (): void => {
     const cfg = config.read();
     const catalog = registry.snapshot();
     const activities = projectLaneActivities(
       laneActivity.snapshot(),
       terminalService,
       catalog.lanes.map((l) => l.id),
-      Date.now(),
+      clock.now(),
     );
     const snapshot = projectUi(laneService.snapshot(), activities, cfg.showActivityIndicator);
     treeView.render(snapshot);
@@ -239,12 +202,10 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   const terminalCloseHandler = vscode.window.onDidCloseTerminal((terminal) => {
     const terminalId = presentation.resolveId(terminal);
-    if (terminalId) {
-      presentation.disposeTerminal(terminalId);
-      terminalService.handleTerminalClosed(terminalId);
-      lifecycleBus.fire(terminalId);
-      render();
-    }
+    if (!terminalId) return;
+    presentation.disposeTerminal(terminalId);
+    terminalService.handleTerminalClosed(terminalId);
+    render();
   });
 
   context.subscriptions.push(
@@ -259,9 +220,6 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     configDisposable,
     registryDisposable,
     activityDisposable,
-    executionEvents.disposable,
-    outputEvents.disposable,
-    inputEvents.disposable,
     { dispose: () => laneActivity.dispose() },
     { dispose: () => terminalService.dispose() },
   );

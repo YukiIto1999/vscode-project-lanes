@@ -21,8 +21,9 @@ The switch is a view change — background terminals keep running because the wo
   - Explorer and Git show only the active lane
   - Editor tabs are saved and restored per lane
   - Terminals persist in the background across switches
-- Agent monitoring
-  - Detects Claude Code processes and shows idle/active per lane
+- Activity indicator
+  - Shows `working` / `waiting` / `no-agent` per lane, including lanes that aren't currently active
+  - Detection is a generic heuristic over OSC 633 shell integration (bash / zsh) and real-time PTY output observation; not specific to any agent
 
 ## Commands
 
@@ -33,16 +34,15 @@ The switch is a view change — background terminals keep running because the wo
 
 ## Settings
 
-| Setting                            | Default | Description                                            |
-| ---------------------------------- | ------- | ------------------------------------------------------ |
-| `projectLanes.refreshInterval`     | `1`     | Agent status polling interval (seconds)                |
-| `projectLanes.agent.idleThreshold` | `5`     | Seconds of inactivity before marking an agent as idle  |
-| `projectLanes.agent.showStatus`    | `true`  | Show agent status in badge, decoration, and status bar |
-| `projectLanes.terminal.shellPath`  | `""`    | Shell path for Lane Terminal (empty = `$SHELL`)        |
+| Setting                               | Default | Description                                                  |
+| ------------------------------------- | ------- | ------------------------------------------------------------ |
+| `projectLanes.activity.showIndicator` | `true`  | Show activity indicator in badge, decoration, and status bar |
+| `projectLanes.terminal.shellPath`     | `""`    | Shell path for Lane Terminal (empty = `$SHELL`)              |
 
 ## Limitations
 
-- Agent monitoring is Linux only (`/proc`); the symlink-based workspace layout is also Linux-specific
+- The symlink-based lane switching assumes a POSIX filesystem (Linux / macOS); Windows is untested
+- Activity detection requires shell integration via `bash` or `zsh` and OSC 633. Other shells (`fish`, `pwsh`, etc.) skip injection and fall back to `no-agent`
 - Tab restore covers normal file tabs only (not diff views, notebooks, etc.)
 - Terminal sessions don't survive VS Code window reloads
 - The extension creates `.lanes-root/` next to the `.code-workspace` file; add it to `.gitignore` if you don't want it tracked
