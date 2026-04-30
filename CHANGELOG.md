@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] - 2026-04-30
+
+### Changed
+
+- 活動観測の単位を VS Code Terminal (`TerminalId`) から PTY セッション (`SessionId`) に降ろし、Pseudoterminal 接続/切断と独立したライフサイクルにした。これにより非アクティブレーンも `working` / `waiting` / `no-agent` がリアルタイムに判定される。観測は `node-pty` の `proc.onData` に常設した OSC 633 自前パーサ (判別共用体ベースの state machine) が担う
+- `lane-activity` の入力ポートを 4 本のサブスクリプション型から、単方向の事実流入口 (`SessionActivitySink`) に整理。サービス側は射影差分でゲートし、表示が変化したときのみ `onChange` を発火する
+- `LaneResolverPort` をセッション単位 (`resolveLaneBySession`) に変更。bootstrap が `terminalService` 実装を注入する
+- 観測時刻を `Instant = Brand<number, 'Instant'>` で封入し、`MonotonicClockPort` 経由の取得に統一
+
+### Removed
+
+- `src/adapters/vscode/terminal-execution-events.ts` / `terminal-output-events.ts` / `terminal-input-events.ts`。VS Code 公式 Shell Integration の `onDidStartTerminalShellExecution` / `onDidEndTerminalShellExecution` 依存を撤去
+- bootstrap 内の `createLifecycleEventBus`。セッション消滅は `proc.onExit` から直接 sink へ流す
+
+### Added
+
+- `src/adapters/pty/osc633.ts` (純粋 state machine)。OSC 633 ;C / ;D を抽出し、非 OSC 区間を `output` として時系列順に発火
+- `src/architecture.test.ts`。`lane-activity` の `vscode` / `node-pty` / `adapters` 非依存、`TerminalId` 不使用、`Date.now` 直接呼び出し禁止、旧 Shell Integration API 不再混入を vitest で機械検証
+
 ## [0.1.2] - 2026-04-29
 
 ### Changed
