@@ -1,6 +1,8 @@
 import type * as NodePty from 'node-pty';
 import type { AbsolutePath, Disposable } from '../../foundation/model';
+import type { SessionActivitySink } from '../../lane-activity/ports';
 import type { ShellSessionFactoryPort, ShellSessionHandle } from '../../terminal/ports';
+import { initialParserState, parseChunk, type ParserState } from './osc633';
 import { planShellIntegration } from './shell-integration';
 
 /**
@@ -21,6 +23,8 @@ const detectShell = (): string => process.env.SHELL ?? '/bin/bash';
 export interface ShellSessionFactoryDeps {
   /** 拡張ルート絶対パス (シェル統合スクリプト解決用) */
   readonly extensionPath: AbsolutePath;
+  /** セッション活動の事実流入口 */
+  readonly activitySink: SessionActivitySink;
 }
 
 /**
@@ -54,10 +58,29 @@ export const createShellSessionFactory = (
     const scrollbackChunks: string[] = [];
     let scrollbackSize = 0;
     let currentListener: ((data: string) => void) | undefined;
+    let parserState: ParserState = initialParserState();
 
-    const trimScrollback = () => {
+    const trimScrollback = (): void => {
       while (scrollbackSize > MAX_SCROLLBACK && scrollbackChunks.length > 1) {
         scrollbackSize -= scrollbackChunks.shift()!.length;
+      }
+    };
+
+    const dispatchActivity = (chunk: string): void => {
+      const result = parseChunk(parserState, chunk);
+      parserState = result.state;
+      for (const event of result.events) {
+        switch (event.kind) {
+          case 'fg-started':
+            deps.activitySink.executionStarted(spec.id);
+            break;
+          case 'fg-ended':
+            deps.activitySink.executionEnded(spec.id);
+            break;
+          case 'output':
+            deps.activitySink.output(spec.id);
+            break;
+        }
       }
     };
 
@@ -65,11 +88,13 @@ export const createShellSessionFactory = (
       scrollbackChunks.push(data);
       scrollbackSize += data.length;
       trimScrollback();
+      dispatchActivity(data);
       currentListener?.(data);
     });
 
     proc.onExit(() => {
       alive = false;
+      deps.activitySink.forgotten(spec.id);
       for (const cb of exitCallbacks) cb();
     });
 
