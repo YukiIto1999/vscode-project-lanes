@@ -1,7 +1,7 @@
-import type { LaneId, TerminalId } from '../foundation/model';
+import type { Instant, LaneId, SessionId } from '../foundation/model';
 
-/** ターミナル単位の活動状態 */
-export type TerminalActivity = 'shell-prompt' | 'agent-working' | 'agent-waiting';
+/** セッション単位の活動状態 (PTY セッションを観測単位とする) */
+export type SessionActivity = 'shell-prompt' | 'agent-working' | 'agent-waiting';
 
 /** レーン単位の集約活動状態 */
 export type LaneActivity = 'no-agent' | 'agent-waiting' | 'agent-working';
@@ -14,57 +14,57 @@ export interface LaneActivityRecord {
   readonly activity: LaneActivity;
 }
 
-/** ターミナル活動の入力イベント (内部表現) */
-export type TerminalActivityEvent =
+/** セッション活動の入力イベント (内部表現) */
+export type SessionActivityEvent =
   | {
-      /** foreground コマンド開始 (OSC C 相当) */
+      /** foreground コマンド開始 (OSC 633 ;C 相当) */
       readonly kind: 'fg-started';
-      /** 対象ターミナル識別子 */
-      readonly terminalId: TerminalId;
-      /** 観測時刻 (ms) */
-      readonly at: number;
+      /** 対象セッション識別子 */
+      readonly sessionId: SessionId;
+      /** 観測時刻 */
+      readonly at: Instant;
     }
   | {
-      /** foreground コマンド終了 (OSC D 相当) */
+      /** foreground コマンド終了 (OSC 633 ;D 相当) */
       readonly kind: 'fg-ended';
-      /** 対象ターミナル識別子 */
-      readonly terminalId: TerminalId;
+      /** 対象セッション識別子 */
+      readonly sessionId: SessionId;
     }
   | {
-      /** ターミナル出力観測 */
+      /** PTY 出力観測 */
       readonly kind: 'output';
-      /** 対象ターミナル識別子 */
-      readonly terminalId: TerminalId;
-      /** 観測時刻 (ms) */
-      readonly at: number;
+      /** 対象セッション識別子 */
+      readonly sessionId: SessionId;
+      /** 観測時刻 */
+      readonly at: Instant;
     }
   | {
-      /** ターミナル入力観測 (打鍵) */
+      /** ユーザー入力観測 (打鍵) */
       readonly kind: 'input';
-      /** 対象ターミナル識別子 */
-      readonly terminalId: TerminalId;
-      /** 観測時刻 (ms) */
-      readonly at: number;
+      /** 対象セッション識別子 */
+      readonly sessionId: SessionId;
+      /** 観測時刻 */
+      readonly at: Instant;
     }
   | {
-      /** ターミナル消滅 (close 等) */
+      /** セッション消滅 (PTY exit 等) */
       readonly kind: 'forgotten';
-      /** 対象ターミナル識別子 */
-      readonly terminalId: TerminalId;
+      /** 対象セッション識別子 */
+      readonly sessionId: SessionId;
     };
 
-/** ターミナル単位の活動内部状態 */
-export interface TerminalActivityState {
-  /** foreground コマンド実行中か (OSC C 後 D 前) */
+/** セッション単位の活動内部状態 */
+export interface SessionActivityState {
+  /** foreground コマンド実行中か (OSC 633 ;C 後 ;D 前) */
   readonly fgRunning: boolean;
-  /** 最終出力観測時刻 (ms) */
-  readonly lastOutputAt: number;
-  /** 最終入力観測時刻 (ms) */
-  readonly lastInputAt: number;
+  /** 最終出力観測時刻 */
+  readonly lastOutputAt: Instant;
+  /** 最終入力観測時刻 */
+  readonly lastInputAt: Instant;
 }
 
 /** lane-activity コンテキストの内部状態 */
 export interface LaneActivityState {
-  /** ターミナル単位の状態表 */
-  readonly terminals: ReadonlyMap<TerminalId, TerminalActivityState>;
+  /** セッション単位の状態表 */
+  readonly sessions: ReadonlyMap<SessionId, SessionActivityState>;
 }
