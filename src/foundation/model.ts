@@ -20,17 +20,8 @@ export type LaneId = Brand<string, 'LaneId'>;
 /** ターミナルセッション識別子 */
 export type SessionId = Brand<string, 'SessionId'>;
 
-/** LANES_SESSION_ID 環境変数値 */
-export type LanesSessionId = Brand<string, 'LanesSessionId'>;
-
 /** VS Code ターミナルの不透明識別子 */
 export type TerminalId = Brand<string, 'TerminalId'>;
-
-/** OS プロセス ID */
-export type ProcessId = Brand<number, 'ProcessId'>;
-
-/** UNIX エポック秒 */
-export type UnixSeconds = Brand<number, 'UnixSeconds'>;
 
 /** 単調時刻 (ms 単位の観測時刻。MonotonicClockPort 経由で取得) */
 export type Instant = Brand<number, 'Instant'>;
