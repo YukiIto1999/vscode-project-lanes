@@ -1,6 +1,9 @@
 .vscode/**
 src/**
 docs/**
+.git/**
+.github/**
+*.vsix
 node_modules/**
 !node_modules/node-pty/
 !node_modules/node-pty/package.json
