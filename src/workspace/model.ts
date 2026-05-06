@@ -63,14 +63,6 @@ export type WorkspaceBootstrapResult =
       readonly context: WorkspaceContext;
     };
 
-/** アクティブレーン symlink の参照状態 */
-export interface ActiveLinkState {
-  /** symlink 自身の絶対パス */
-  readonly linkPath: AbsolutePath;
-  /** symlink の現参照先 */
-  readonly targetPath: AbsolutePath | undefined;
-}
-
 /** アクティブレーン切替の純粋計画 */
 export interface ActiveLinkSwapPlan {
   /** symlink 自身の絶対パス */
