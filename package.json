@@ -1,7 +1,7 @@
 {
   "name": "project-lanes",
   "displayName": "Project Lanes - Fast Switching",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Manage projects as lanes within a workspace and switch Explorer, terminals, and editor tabs in one click",
   "categories": [
     "Other"
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/vscode": "^1.96.0",
+    "@types/vscode": "^1.101.0",
     "typescript": "^5.7.0",
     "vite-plus": "^0.1.16"
   },
@@ -101,6 +101,6 @@
   ],
   "icon": "media/icon.png",
   "engines": {
-    "vscode": "^1.96.0"
+    "vscode": "^1.101.0"
   }
 }

@@ -17,9 +17,9 @@ const activityOf = (activityMap: ReadonlyMap<LaneId, LaneActivity>, laneId: Lane
 const treeDescriptionFor = (activity: LaneActivity): string => {
   switch (activity) {
     case 'agent-working':
-      return 'working';
+      return '実行中';
     case 'agent-waiting':
-      return 'waiting';
+      return '入力待ち';
     case 'no-agent':
       return '';
   }
@@ -41,9 +41,9 @@ const decorationThemeColorFor = (activity: LaneActivity): string | undefined => 
 const decorationTooltipFor = (activity: LaneActivity): string => {
   switch (activity) {
     case 'agent-working':
-      return 'Agent is working';
+      return 'エージェント実行中';
     case 'agent-waiting':
-      return 'Agent is waiting for input';
+      return 'エージェント入力待ち';
     case 'no-agent':
       return '';
   }
@@ -84,8 +84,7 @@ const projectBadge = (
   if (!showIndicator) return undefined;
   const waitingCount = activities.filter((a) => a.activity === 'agent-waiting').length;
   if (waitingCount === 0) return undefined;
-  const noun = waitingCount === 1 ? 'lane is' : 'lanes are';
-  return { value: waitingCount, tooltip: `${waitingCount} ${noun} waiting for input` };
+  return { value: waitingCount, tooltip: `${waitingCount} レーンが入力待ち` };
 };
 
 /**
@@ -122,9 +121,9 @@ const statusIndicatorFor = (
 ): { readonly suffix: string; readonly tooltip: string } => {
   switch (activity) {
     case 'agent-working':
-      return { suffix: ' $(sync~spin)', tooltip: ' (agent working)' };
+      return { suffix: ' $(sync~spin)', tooltip: '（エージェント実行中）' };
     case 'agent-waiting':
-      return { suffix: ' $(bell)', tooltip: ' (agent waiting for input)' };
+      return { suffix: ' $(bell)', tooltip: '（エージェント入力待ち）' };
     case 'no-agent':
       return { suffix: '', tooltip: '' };
   }
@@ -143,7 +142,7 @@ const projectStatusBar = (
   showIndicator: boolean,
 ): StatusBarViewModel => {
   if (!activeLane) {
-    return { text: '$(layers) No Lane', tooltip: 'Project Lanes: No lane selected' };
+    return { text: '$(layers) レーン未選択', tooltip: 'Project Lanes: レーン未選択' };
   }
   const { suffix, tooltip } = showIndicator
     ? statusIndicatorFor(activeLaneActivity)
