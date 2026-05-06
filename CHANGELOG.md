@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.4] - 2026-05-06
+
+### Changed
+
+- UI 文字列を日本語に統一。ツリー説明 / デコレーション・ステータスバーのツールチップ / バッジ文言を英語表記から「実行中」「入力待ち」「エージェント実行中」「エージェント入力待ち」「N レーンが入力待ち」「レーン未選択」へ刷新
+- `engines.vscode` を `^1.96.0` から `^1.101.0` に引き上げ Node 22 ランタイム (Electron 35+) を前提化。`@types/vscode` も同バージョンに更新し、`tsconfig.json` の `lib: ES2024` / ビルド target `node22` と整合
+- `.vscodeignore` に `.git/**`, `.github/**`, `*.vsix` を追記し VSIX 同梱対象を最小化
+
+### Removed
+
+- 未使用 Brand 型 `LanesSessionId` / `ProcessId` / `UnixSeconds` / `ActiveLinkState` を削除
+
 ## [0.1.3] - 2026-04-30
 
 ### Changed
