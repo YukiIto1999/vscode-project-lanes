@@ -3,7 +3,13 @@ import type { WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
 import { executeActiveLinkSwap, planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
-import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot, LaneSessionStore } from './model';
+import type {
+  Lane,
+  LaneCatalog,
+  LaneFocusPlan,
+  LaneServiceSnapshot,
+  LaneSessionStore,
+} from './model';
 import type {
   EditorPort,
   LanePromptPort,
@@ -164,8 +170,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       const validate = (raw: string): string | undefined => {
         const p = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
         if (p.kind === 'invalid' && p.reason === 'empty') return '名前を入力してください';
-        if (p.kind === 'invalid' && p.reason === 'duplicate')
-          return '同名のレーンが既に存在します';
+        if (p.kind === 'invalid' && p.reason === 'duplicate') return '同名のレーンが既に存在します';
         return undefined;
       };
 

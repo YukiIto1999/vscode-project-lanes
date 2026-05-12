@@ -23,6 +23,7 @@ import { createCatalogRegistry } from '../workspace/registry';
 import { reconcileUserChange } from '../workspace/reconciler';
 import type { WorkspaceFolder } from '../workspace/model';
 import { createLaneService } from '../lane/service';
+import { createLaneSessionStore } from '../lane/session-store';
 import { createTerminalService } from '../terminal/service';
 import { createLaneActivityService } from '../lane-activity/service';
 import { projectLaneActivities } from '../lane-activity/reducer';
@@ -114,6 +115,8 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   const viewRebind = createLaneViewRebindAdapter(workspaceHost);
 
+  const editorStore = createLaneSessionStore();
+
   const laneService = createLaneService({
     getCatalog: () => registry.snapshot(),
     workspaceKey: wsContext.key,
@@ -126,6 +129,9 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     viewRebind,
     selectionStore,
     prompt,
+    registry,
+    terminalRekey: { rekeyLane: (oldId, newId) => terminalService.rekeyLane(oldId, newId) },
+    editorStore,
   });
   laneService.initialize();
 
@@ -179,6 +185,29 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     });
   });
 
+  const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', () =>
+    vscode.commands.executeCommand('workbench.action.addRootFolder'),
+  );
+
+  const extractLaneId = (arg: unknown): LaneId | undefined => {
+    if (typeof arg === 'string') return arg as LaneId;
+    if (arg && typeof arg === 'object' && 'id' in arg) {
+      const id = (arg as { id?: unknown }).id;
+      if (typeof id === 'string') return id as LaneId;
+    }
+    return undefined;
+  };
+
+  const renameLaneCommand = vscode.commands.registerCommand(
+    'projectLanes.renameLane',
+    (arg?: unknown) => laneService.renameLane(extractLaneId(arg)),
+  );
+
+  const removeLaneCommand = vscode.commands.registerCommand(
+    'projectLanes.removeLane',
+    (arg?: unknown) => laneService.removeLane(extractLaneId(arg)),
+  );
+
   const focusCommand = vscode.commands.registerCommand('projectLanes.focus', (laneId?: string) =>
     laneService.focus(laneId as LaneId | undefined).then(() => render()),
   );
@@ -210,6 +239,9 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   context.subscriptions.push(
     focusCommand,
+    addFolderCommand,
+    renameLaneCommand,
+    removeLaneCommand,
     closeTerminalsCommand,
     profileProvider,
     terminalCloseHandler,
