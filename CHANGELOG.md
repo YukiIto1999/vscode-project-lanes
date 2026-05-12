@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.5] - 2026-05-12
+
+### Added
+
+- Lanes パネルのタイトルバー右端に「フォルダ追加」(`$(add)`) と「再走査」(`$(refresh)`) のアイコンアクションを追加。前者は `workbench.action.addRootFolder` を起動して既存の `reconcileUserChange → absorb` 経路に乗せ、後者は `workspaceFolders` / symlink 参照先 / `catalogStore` を見直して `registry` を再構築する
+- レーン項目の右クリックメニュー (`view/item/context`) に「Rename Lane」「Remove Lane」を追加。リネームは `label`（`lane.id` を兼ねる）変更で、`terminal/service` の `state.sessions[*].spec.laneId` と `state.lanes` Map キー、`LaneSessionStore` のキー、`selectionStore` の `activeLaneId` を順に張り替えてからカタログを更新するため、ターミナルセッションを温存したまま改名できる
+- 削除はカタログ正本からの除外のみでファイル実体は触れない。アクティブレーン削除は modal 確認の前に拒否し「先に別レーンへ切り替えてください」と案内
+- 純粋計画関数 `planLaneRename` / `planLaneRemoval` を `src/lane/` に追加。バリデーション（重複・空文字）とアクティブ削除拒否を ADT で表現
+- `architecture.test.ts` に `tree-view.ts` の `contextValue = 'projectLane'` と `package.json` の `menus.view/item/context` の `when` 句との文字列整合テストを追加
+
+### Changed
+
+- 既存コマンドの `title` を短形化し、`category: "Project Lanes"` を分離。コマンドパレットでは従来通り `Project Lanes: ...` で前置されつつ、コンテキストメニューでは prefix なしの短い表示になる
+- `viewsWelcome` の「フォルダーをワークスペースに追加」リンクを新コマンド `projectLanes.addFolder` 経由に統一
+
 ## [0.1.4] - 2026-05-06
 
 ### Changed

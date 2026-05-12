@@ -24,13 +24,20 @@ The switch is a view change — background terminals keep running because the wo
 - Activity indicator
   - Shows `working` / `waiting` / `no-agent` per lane, including lanes that aren't currently active
   - Detection is a generic heuristic over OSC 633 shell integration (bash / zsh) and real-time PTY output observation; not specific to any agent
+- Lane management
+  - Add and reload lanes from title-bar icons on the Lanes panel
+  - Rename or remove a lane via right-click on the lane item. Rename preserves the lane's terminal sessions; remove rejects the active lane and never touches the folder on disk
 
 ## Commands
 
-| Command                          | Description                                    |
-| -------------------------------- | ---------------------------------------------- |
-| `Project Lanes: Focus`           | Switch to a lane                               |
-| `Project Lanes: Close Terminals` | Kill all terminal sessions for the active lane |
+| Command                                  | Description                                                                          |
+| ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| `Project Lanes: Focus`                   | Switch to a lane                                                                     |
+| `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane (delegates to `workbench.action.addRootFolder`)           |
+| `Project Lanes: Reload Lanes`            | Re-scan `workspaceFolders` / symlink target / catalog store and rebuild the registry |
+| `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                    |
+| `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)     |
+| `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                       |
 
 ## Settings
 
