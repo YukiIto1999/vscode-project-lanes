@@ -39,4 +39,27 @@ describe('createLaneSessionStore', () => {
     expect(store.get('web' as LaneId)).toEqual(snap1);
     expect(store.get('api' as LaneId)).toEqual(snap2);
   });
+
+  it('rekey: 旧キーから新キーへ snapshot を移動', () => {
+    const store = createLaneSessionStore();
+    const snapshot = { tabs: [{ uri: 'file:///a.ts' as UriString, viewColumn: 1 }] };
+    store.save('web' as LaneId, snapshot);
+    store.rekey('web' as LaneId, 'frontend' as LaneId);
+    expect(store.get('web' as LaneId)).toBeUndefined();
+    expect(store.get('frontend' as LaneId)).toEqual(snapshot);
+  });
+
+  it('rekey: 同一キーは noop', () => {
+    const store = createLaneSessionStore();
+    const snapshot = { tabs: [{ uri: 'file:///a.ts' as UriString, viewColumn: 1 }] };
+    store.save('web' as LaneId, snapshot);
+    store.rekey('web' as LaneId, 'web' as LaneId);
+    expect(store.get('web' as LaneId)).toEqual(snapshot);
+  });
+
+  it('rekey: 未保存レーンは noop', () => {
+    const store = createLaneSessionStore();
+    store.rekey('missing' as LaneId, 'other' as LaneId);
+    expect(store.get('other' as LaneId)).toBeUndefined();
+  });
 });
