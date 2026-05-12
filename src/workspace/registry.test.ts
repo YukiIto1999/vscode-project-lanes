@@ -98,4 +98,57 @@ describe('createCatalogRegistry', () => {
     registry.absorb([mkFolder('docs', '/home/user/docs')]);
     expect(seen).toHaveLength(1);
   });
+
+  it('rename: 既存レーンの name を書き換えて通知 + 保存', () => {
+    const initial = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+    const seen: LaneCatalog[] = [];
+    registry.onChange((c) => seen.push(c));
+
+    expect(registry.rename('web', 'frontend')).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(registry.folders().map((f) => f.name)).toEqual(['frontend', 'api']);
+    expect(store.saved()).toEqual([
+      mkFolder('frontend', '/home/user/web'),
+      mkFolder('api', '/home/user/api'),
+    ]);
+  });
+
+  it('rename: 同名指定は noop', () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+    expect(registry.rename('web', 'web')).toBe(false);
+    expect(store.saved()).toBeUndefined();
+  });
+
+  it('rename: 未知の name は noop', () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+    expect(registry.rename('missing', 'other')).toBe(false);
+    expect(store.saved()).toBeUndefined();
+  });
+
+  it('remove: 既存レーンを除外して通知 + 保存', () => {
+    const initial = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+    const seen: LaneCatalog[] = [];
+    registry.onChange((c) => seen.push(c));
+
+    expect(registry.remove('api')).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(registry.folders().map((f) => f.name)).toEqual(['web']);
+    expect(store.saved()).toEqual([mkFolder('web', '/home/user/web')]);
+  });
+
+  it('remove: 未知の name は noop', () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+    expect(registry.remove('missing')).toBe(false);
+    expect(store.saved()).toBeUndefined();
+  });
 });
