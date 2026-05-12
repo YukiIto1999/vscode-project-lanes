@@ -91,6 +91,14 @@ export type TerminalCommand =
   | {
       /** 全リソース破棄 */
       readonly kind: 'allDisposed';
+    }
+  | {
+      /** レーン識別子の張替え */
+      readonly kind: 'laneRekeyed';
+      /** 旧レーン識別子 */
+      readonly oldLaneId: LaneId;
+      /** 新レーン識別子 */
+      readonly newLaneId: LaneId;
     };
 
 /** 副作用指示 */
