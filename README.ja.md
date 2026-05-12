@@ -24,13 +24,20 @@
 - 活動状態表示
   - 全レーン (アクティブでないレーンも含む) の状態を `working` / `waiting` / `no-agent` の 3 値で表示
   - 検出は Lane Terminal に注入する OSC 633 シェル統合 (bash / zsh) と PTY 出力のリアルタイム観測に基づく汎用ヒューリスティックで、エージェント種別には依存しない
+- レーン管理
+  - Lanes パネルのタイトルバーアイコンからレーンの追加と再走査
+  - レーン項目の右クリックでリネームと削除。リネームはターミナルセッションを温存したまま `label` (= `lane.id`) を変更、削除はアクティブレーンを拒否しディスク上のフォルダには触れない
 
 ## コマンド
 
-| コマンド                         | 説明                                           |
-| -------------------------------- | ---------------------------------------------- |
-| `Project Lanes: Focus`           | レーンに切替                                   |
-| `Project Lanes: Close Terminals` | アクティブレーンの全ターミナルセッションを終了 |
+| コマンド                                 | 説明                                                                 |
+| ---------------------------------------- | -------------------------------------------------------------------- |
+| `Project Lanes: Focus`                   | レーンに切替                                                         |
+| `Project Lanes: Add Folder to Workspace` | フォルダをレーンとしてワークスペースに追加（`addRootFolder` に委譲） |
+| `Project Lanes: Reload Lanes`            | `workspaceFolders` / symlink / カタログを見直し registry を再構築    |
+| `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                     |
+| `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）           |
+| `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                       |
 
 ## 設定
 
