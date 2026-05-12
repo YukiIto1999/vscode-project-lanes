@@ -86,3 +86,29 @@ describe('VS Code Shell Integration の旧 API は再混入しない', () => {
     expect(content).not.toMatch(/onDidEndTerminalShellExecution/);
   });
 });
+
+describe('TreeView contextValue と package.json の menus.when の整合', () => {
+  const repoRoot = nodePath.resolve(SRC_ROOT, '..');
+  const treeViewPath = nodePath.join(SRC_ROOT, 'adapters/vscode/tree-view.ts');
+  const packageJsonPath = nodePath.join(repoRoot, 'package.json');
+
+  it('tree-view.ts に contextValue = "projectLane" が出現する', () => {
+    const treeView = readSource(treeViewPath);
+    expect(treeView).toMatch(/contextValue\s*=\s*['"]projectLane['"]/);
+  });
+
+  it('package.json の view/item/context は viewItem == projectLane で when を立てる', () => {
+    const pkg = JSON.parse(readSource(packageJsonPath)) as {
+      contributes?: {
+        menus?: { 'view/item/context'?: ReadonlyArray<{ when?: string }> };
+      };
+    };
+    const items = pkg.contributes?.menus?.['view/item/context'] ?? [];
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      if (typeof item.when === 'string' && item.when.includes('viewItem')) {
+        expect(item.when).toContain('viewItem == projectLane');
+      }
+    }
+  });
+});
