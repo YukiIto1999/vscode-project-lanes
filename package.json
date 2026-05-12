@@ -53,31 +53,48 @@
     "commands": [
       {
         "command": "projectLanes.focus",
-        "title": "Project Lanes: Focus"
+        "title": "Focus",
+        "category": "Project Lanes"
       },
       {
         "command": "projectLanes.closeTerminals",
-        "title": "Project Lanes: Close Terminals"
+        "title": "Close Terminals",
+        "category": "Project Lanes"
       },
       {
         "command": "projectLanes.addFolder",
-        "title": "Project Lanes: Add Folder to Workspace"
+        "title": "Add Folder to Workspace",
+        "category": "Project Lanes",
+        "icon": "$(add)"
+      },
+      {
+        "command": "projectLanes.reloadLanes",
+        "title": "Reload Lanes",
+        "category": "Project Lanes",
+        "icon": "$(refresh)"
       },
       {
         "command": "projectLanes.renameLane",
-        "title": "Project Lanes: Rename Lane"
+        "title": "Rename Lane",
+        "category": "Project Lanes"
       },
       {
         "command": "projectLanes.removeLane",
-        "title": "Project Lanes: Remove Lane"
+        "title": "Remove Lane",
+        "category": "Project Lanes"
       }
     ],
     "menus": {
-      "view/context": [
+      "view/title": [
         {
           "command": "projectLanes.addFolder",
           "when": "view == projectLanes",
-          "group": "navigation"
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectLanes.reloadLanes",
+          "when": "view == projectLanes",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [

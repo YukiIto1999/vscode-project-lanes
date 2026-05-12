@@ -18,7 +18,7 @@ import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
 import { createPromptAdapter } from '../adapters/vscode/quick-pick';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
-import { bootstrapWorkspace } from '../workspace/scanner';
+import { bootstrapWorkspace, collectLaneCandidates } from '../workspace/scanner';
 import { createCatalogRegistry } from '../workspace/registry';
 import { reconcileUserChange } from '../workspace/reconciler';
 import type { WorkspaceFolder } from '../workspace/model';
@@ -191,9 +191,10 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   const extractLaneId = (arg: unknown): LaneId | undefined => {
     if (typeof arg === 'string') return arg as LaneId;
-    if (arg && typeof arg === 'object' && 'id' in arg) {
-      const id = (arg as { id?: unknown }).id;
-      if (typeof id === 'string') return id as LaneId;
+    if (arg && typeof arg === 'object') {
+      const obj = arg as { laneId?: unknown; id?: unknown };
+      if (typeof obj.laneId === 'string') return obj.laneId as LaneId;
+      if (typeof obj.id === 'string') return obj.id as LaneId;
     }
     return undefined;
   };
@@ -207,6 +208,23 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     'projectLanes.removeLane',
     (arg?: unknown) => laneService.removeLane(extractLaneId(arg)),
   );
+
+  const reloadLanesCommand = vscode.commands.registerCommand('projectLanes.reloadLanes', () => {
+    const newLanes = collectLaneCandidates(
+      workspaceHost.readFolders(),
+      catalogStore.load(),
+      link.linkPath,
+    );
+    const previousActiveId = laneService.snapshot().activeLaneId;
+    registry.replace(newLanes);
+    laneService.initialize();
+    const nextActiveId = laneService.snapshot().activeLaneId;
+    if (nextActiveId && nextActiveId !== previousActiveId) {
+      const lane = registry.snapshot().byId.get(nextActiveId);
+      if (lane) terminalService.revealLane(lane);
+    }
+    render();
+  });
 
   const focusCommand = vscode.commands.registerCommand('projectLanes.focus', (laneId?: string) =>
     laneService.focus(laneId as LaneId | undefined).then(() => render()),
@@ -242,6 +260,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     addFolderCommand,
     renameLaneCommand,
     removeLaneCommand,
+    reloadLanesCommand,
     closeTerminalsCommand,
     profileProvider,
     terminalCloseHandler,
