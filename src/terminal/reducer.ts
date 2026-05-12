@@ -1,5 +1,11 @@
 import type { SessionId, TerminalId } from '../foundation/model';
-import type { TerminalCommand, TerminalEffect, TerminalState, TerminalTransition } from './model';
+import type {
+  TerminalCommand,
+  TerminalEffect,
+  TerminalSessionRecord,
+  TerminalState,
+  TerminalTransition,
+} from './model';
 
 /**
  * 空の初期状態の生成
@@ -134,6 +140,30 @@ export const reduceTerminal = (
       lanes.delete(laneId);
 
       return { state: { ...state, sessions, lanes }, effects };
+    }
+
+    case 'laneRekeyed': {
+      const { oldLaneId, newLaneId } = command;
+      if (oldLaneId === newLaneId) return { state, effects: [] };
+
+      const sessions = new Map<SessionId, TerminalSessionRecord>();
+      for (const [sid, rec] of state.sessions) {
+        sessions.set(
+          sid,
+          rec.spec.laneId === oldLaneId
+            ? { ...rec, spec: { ...rec.spec, laneId: newLaneId } }
+            : rec,
+        );
+      }
+
+      const lanes = new Map(state.lanes);
+      const laneRecord = lanes.get(oldLaneId);
+      if (laneRecord) {
+        lanes.delete(oldLaneId);
+        lanes.set(newLaneId, laneRecord);
+      }
+
+      return { state: { ...state, sessions, lanes }, effects: [] };
     }
 
     case 'allDisposed': {
