@@ -58,8 +58,41 @@
       {
         "command": "projectLanes.closeTerminals",
         "title": "Project Lanes: Close Terminals"
+      },
+      {
+        "command": "projectLanes.addFolder",
+        "title": "Project Lanes: Add Folder to Workspace"
+      },
+      {
+        "command": "projectLanes.renameLane",
+        "title": "Project Lanes: Rename Lane"
+      },
+      {
+        "command": "projectLanes.removeLane",
+        "title": "Project Lanes: Remove Lane"
       }
     ],
+    "menus": {
+      "view/context": [
+        {
+          "command": "projectLanes.addFolder",
+          "when": "view == projectLanes",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "projectLanes.renameLane",
+          "when": "view == projectLanes && viewItem == projectLane",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "projectLanes.removeLane",
+          "when": "view == projectLanes && viewItem == projectLane",
+          "group": "1_modify@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "Project Lanes",
       "properties": {
@@ -91,7 +124,7 @@
       },
       {
         "view": "projectLanes",
-        "contents": "まだレーンがありません。\n[フォルダーをワークスペースに追加](command:workbench.action.addRootFolder)",
+        "contents": "まだレーンがありません。\n[フォルダーをワークスペースに追加](command:projectLanes.addFolder)",
         "when": "workbenchState == workspace"
       }
     ]
