@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -37,14 +38,14 @@ jobs:
           fi
 
       - name: Extract changelog for this version
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.tag.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
         run: |
           awk '/^## \[${{ steps.version.outputs.value }}\]/{flag=1;next} /^## \[/{flag=0} flag' \
             CHANGELOG.md > .release-notes.md
           test -s .release-notes.md || (echo "CHANGELOG entry for ${{ steps.version.outputs.value }} not found" && exit 1)
 
       - name: Publish to VS Code Marketplace
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.tag.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
         run: npx @vscode/vsce publish --pat "${{ secrets.VSCE_PAT }}"
 
       - name: Create git tag
@@ -56,7 +57,7 @@ jobs:
           git push origin "v${{ steps.version.outputs.value }}"
 
       - name: Create GitHub Release
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.tag.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.version.outputs.value }}
