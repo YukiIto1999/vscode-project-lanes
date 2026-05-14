@@ -29,36 +29,36 @@ describe('projectUi', () => {
     };
     const result = projectUi(lane, [], true);
 
-    expect(result.statusBar.text).toBe('$(layers) レーン未選択');
+    expect(result.statusBar.text).toBe('$(layers) No Lane');
     expect(result.treeItems).toHaveLength(2);
     expect(result.treeItems.every((i) => !i.isActive)).toBe(true);
   });
 
-  it('agent-working は緑デコレーションと実行中文言', () => {
+  it('agent-working は緑デコレーションと working 文言', () => {
     const lane: LaneServiceSnapshot = {
       catalog: makeCatalog(['web']),
       activeLaneId: 'web' as LaneId,
     };
     const result = projectUi(lane, [rec('web', 'agent-working')], true);
 
-    expect(result.treeItems[0]!.description).toBe('実行中');
+    expect(result.treeItems[0]!.description).toBe('working');
     expect(result.decorations).toHaveLength(1);
     expect(result.decorations[0]!.colorThemeKey).toBe('charts.green');
     expect(result.statusBar.text).toContain('$(sync~spin)');
-    expect(result.statusBar.tooltip).toContain('エージェント実行中');
+    expect(result.statusBar.tooltip).toContain('agent working');
   });
 
-  it('agent-waiting は黄デコレーションと入力待ち文言、ベル付きステータス', () => {
+  it('agent-waiting は黄デコレーションと waiting 文言、ベル付きステータス', () => {
     const lane: LaneServiceSnapshot = {
       catalog: makeCatalog(['web']),
       activeLaneId: 'web' as LaneId,
     };
     const result = projectUi(lane, [rec('web', 'agent-waiting')], true);
 
-    expect(result.treeItems[0]!.description).toBe('入力待ち');
+    expect(result.treeItems[0]!.description).toBe('waiting');
     expect(result.decorations[0]!.colorThemeKey).toBe('charts.yellow');
     expect(result.statusBar.text).toContain('$(bell)');
-    expect(result.statusBar.tooltip).toContain('エージェント入力待ち');
+    expect(result.statusBar.tooltip).toContain('agent waiting for input');
   });
 
   it('no-agent はデコレーション無し、description 空、ステータス末尾なし', () => {
@@ -86,7 +86,7 @@ describe('projectUi', () => {
     const result = projectUi(lane, records, true);
 
     expect(result.badge!.value).toBe(2);
-    expect(result.badge!.tooltip).toBe('2 レーンが入力待ち');
+    expect(result.badge!.tooltip).toBe('2 lanes are waiting for input');
   });
 
   it('waiting が無ければバッジ無し (working のみは通知不要)', () => {
@@ -98,13 +98,13 @@ describe('projectUi', () => {
     expect(result.badge).toBeUndefined();
   });
 
-  it('単数形メッセージも "N レーンが入力待ち" の同形式', () => {
+  it('単数形メッセージは "1 lane is waiting for input"', () => {
     const lane: LaneServiceSnapshot = {
       catalog: makeCatalog(['web']),
       activeLaneId: 'web' as LaneId,
     };
     const result = projectUi(lane, [rec('web', 'agent-waiting')], true);
-    expect(result.badge!.tooltip).toBe('1 レーンが入力待ち');
+    expect(result.badge!.tooltip).toBe('1 lane is waiting for input');
   });
 
   it('showActivityIndicator=false で活動表示を全て抑止', () => {
