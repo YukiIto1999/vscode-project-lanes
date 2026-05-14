@@ -5,111 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.6] - 2026-05-14
+
+### Changed
+
+- Reverted all user-facing UI strings to English. The 0.1.4 release had switched tree descriptions, decoration tooltips, status bar text / tooltip, and the activity badge tooltip to Japanese; this release restores English as the canonical UI language. Internal source comments and `*.ja.md` remain in Japanese
+- Translated the remaining user-facing strings that were Japanese-only to English: the missing-`.lanes-root` warning in `extension.ts`, the unsaved-files warning, the Rename Lane input box and its validation messages, the lane-removal confirmation dialog, the active-lane-removal warning, and the `viewsWelcome` placeholders for the Lanes panel
+- Translated all prior CHANGELOG entries (0.0.2 through 0.1.5) to English to match the policy
+
 ## [0.1.5] - 2026-05-12
 
 ### Added
 
-- Lanes パネルのタイトルバー右端に「フォルダ追加」(`$(add)`) と「再走査」(`$(refresh)`) のアイコンアクションを追加。前者は `workbench.action.addRootFolder` を起動して既存の `reconcileUserChange → absorb` 経路に乗せ、後者は `workspaceFolders` / symlink 参照先 / `catalogStore` を見直して `registry` を再構築する
-- レーン項目の右クリックメニュー (`view/item/context`) に「Rename Lane」「Remove Lane」を追加。リネームは `label`（`lane.id` を兼ねる）変更で、`terminal/service` の `state.sessions[*].spec.laneId` と `state.lanes` Map キー、`LaneSessionStore` のキー、`selectionStore` の `activeLaneId` を順に張り替えてからカタログを更新するため、ターミナルセッションを温存したまま改名できる
-- 削除はカタログ正本からの除外のみでファイル実体は触れない。アクティブレーン削除は modal 確認の前に拒否し「先に別レーンへ切り替えてください」と案内
-- 純粋計画関数 `planLaneRename` / `planLaneRemoval` を `src/lane/` に追加。バリデーション（重複・空文字）とアクティブ削除拒否を ADT で表現
-- `architecture.test.ts` に `tree-view.ts` の `contextValue = 'projectLane'` と `package.json` の `menus.view/item/context` の `when` 句との文字列整合テストを追加
+- Title-bar icon actions on the Lanes panel: Add Folder (`$(add)`) launches `workbench.action.addRootFolder` and feeds the existing `reconcileUserChange → absorb` path; Reload Lanes (`$(refresh)`) rebuilds `registry` by re-reading `workspaceFolders`, symlink targets, and `catalogStore`
+- Right-click menu (`view/item/context`) on lane items: Rename Lane and Remove Lane. Rename rewrites the `label` (which doubles as `lane.id`) and re-keys `terminal/service`'s `state.sessions[*].spec.laneId`, the `state.lanes` Map keys, the `LaneSessionStore` keys, and `selectionStore`'s `activeLaneId` before updating the catalog, so terminal sessions survive the rename
+- Removal only excludes the lane from the catalog; the folder on disk is not touched. Removing the active lane is rejected before the modal with a prompt to switch to another lane first
+- Pure planning functions `planLaneRename` / `planLaneRemoval` in `src/lane/`. Validation (duplicate / empty) and active-lane-removal rejection are expressed via ADTs
+- `architecture.test.ts` now asserts string-level consistency between `tree-view.ts`'s `contextValue = 'projectLane'` and the `when` clauses under `menus.view/item/context` in `package.json`
 
 ### Changed
 
-- 既存コマンドの `title` を短形化し、`category: "Project Lanes"` を分離。コマンドパレットでは従来通り `Project Lanes: ...` で前置されつつ、コンテキストメニューでは prefix なしの短い表示になる
-- `viewsWelcome` の「フォルダーをワークスペースに追加」リンクを新コマンド `projectLanes.addFolder` 経由に統一
+- Shortened existing command `title` and split out `category: "Project Lanes"`. The Command Palette still shows the `Project Lanes: ...` prefix, while context menus now show the short name without the prefix
+- The `viewsWelcome` "Add folder to workspace" link now goes through the new `projectLanes.addFolder` command
 
 ## [0.1.4] - 2026-05-06
 
 ### Changed
 
-- UI 文字列を日本語に統一。ツリー説明 / デコレーション・ステータスバーのツールチップ / バッジ文言を英語表記から「実行中」「入力待ち」「エージェント実行中」「エージェント入力待ち」「N レーンが入力待ち」「レーン未選択」へ刷新
-- `engines.vscode` を `^1.96.0` から `^1.101.0` に引き上げ Node 22 ランタイム (Electron 35+) を前提化。`@types/vscode` も同バージョンに更新し、`tsconfig.json` の `lib: ES2024` / ビルド target `node22` と整合
-- `.vscodeignore` に `.git/**`, `.github/**`, `*.vsix` を追記し VSIX 同梱対象を最小化
+- Raised `engines.vscode` from `^1.96.0` to `^1.101.0` to require the Node 22 runtime (Electron 35+). `@types/vscode` is bumped to match, aligning with `tsconfig.json`'s `lib: ES2024` and build target `node22`
+- Added `.git/**`, `.github/**`, and `*.vsix` to `.vscodeignore` to minimize the VSIX payload
 
 ### Removed
 
-- 未使用 Brand 型 `LanesSessionId` / `ProcessId` / `UnixSeconds` / `ActiveLinkState` を削除
+- Unused brand types `LanesSessionId` / `ProcessId` / `UnixSeconds` / `ActiveLinkState`
 
 ## [0.1.3] - 2026-04-30
 
 ### Changed
 
-- 活動観測の単位を VS Code Terminal (`TerminalId`) から PTY セッション (`SessionId`) に降ろし、Pseudoterminal 接続/切断と独立したライフサイクルにした。これにより非アクティブレーンも `working` / `waiting` / `no-agent` がリアルタイムに判定される。観測は `node-pty` の `proc.onData` に常設した OSC 633 自前パーサ (判別共用体ベースの state machine) が担う
-- `lane-activity` の入力ポートを 4 本のサブスクリプション型から、単方向の事実流入口 (`SessionActivitySink`) に整理。サービス側は射影差分でゲートし、表示が変化したときのみ `onChange` を発火する
-- `LaneResolverPort` をセッション単位 (`resolveLaneBySession`) に変更。bootstrap が `terminalService` 実装を注入する
-- 観測時刻を `Instant = Brand<number, 'Instant'>` で封入し、`MonotonicClockPort` 経由の取得に統一
+- Activity observation is now keyed by PTY session (`SessionId`) instead of VS Code Terminal (`TerminalId`), so its lifecycle is independent of Pseudoterminal attach / detach. Inactive lanes now have `working` / `waiting` / `no-agent` evaluated in real time. Observation is driven by an in-process OSC 633 parser (discriminated-union state machine) attached to `node-pty`'s `proc.onData`
+- Consolidated `lane-activity`'s input ports from four subscription types into a single fact-ingress port (`SessionActivitySink`). The service gates on projection diffs and only fires `onChange` when the displayed value changes
+- Changed `LaneResolverPort` to a session-scoped `resolveLaneBySession`. bootstrap injects the `terminalService` implementation
+- Observation timestamps are sealed in `Instant = Brand<number, 'Instant'>` and obtained exclusively via `MonotonicClockPort`
 
 ### Removed
 
-- `src/adapters/vscode/terminal-execution-events.ts` / `terminal-output-events.ts` / `terminal-input-events.ts`。VS Code 公式 Shell Integration の `onDidStartTerminalShellExecution` / `onDidEndTerminalShellExecution` 依存を撤去
-- bootstrap 内の `createLifecycleEventBus`。セッション消滅は `proc.onExit` から直接 sink へ流す
+- `src/adapters/vscode/terminal-execution-events.ts` / `terminal-output-events.ts` / `terminal-input-events.ts`. Dropped the dependency on VS Code's official Shell Integration (`onDidStartTerminalShellExecution` / `onDidEndTerminalShellExecution`)
+- `createLifecycleEventBus` inside bootstrap. Session termination flows from `proc.onExit` straight into the sink
 
 ### Added
 
-- `src/adapters/pty/osc633.ts` (純粋 state machine)。OSC 633 ;C / ;D を抽出し、非 OSC 区間を `output` として時系列順に発火
-- `src/architecture.test.ts`。`lane-activity` の `vscode` / `node-pty` / `adapters` 非依存、`TerminalId` 不使用、`Date.now` 直接呼び出し禁止、旧 Shell Integration API 不再混入を vitest で機械検証
+- `src/adapters/pty/osc633.ts` (pure state machine). Extracts OSC 633 `;C` / `;D` and emits non-OSC segments as `output` in chronological order
+- `src/architecture.test.ts`. Machine-verifies that `lane-activity` does not depend on `vscode` / `node-pty` / `adapters`, does not use `TerminalId`, does not call `Date.now` directly, and never re-introduces the old Shell Integration APIs
 
 ## [0.1.2] - 2026-04-29
 
 ### Changed
 
-- レーン活動検出を 3 値判別 (`agent-working` / `agent-waiting` / `no-agent`) に再設計。OSC 633 で foreground 実行有無を切り、PTY 出力時刻の停滞 (1.5s) で working / waiting を分離する。打鍵に対するエコー (シェル / TUI 由来の自前再描画) は、入力時刻と出力時刻のギャップ (`ECHO_GAP_MS=100ms`) を `lane-activity` の射影規則で評価して除外する (adapter 層には業務規則を持たせない)。procfs / Claude セッション JSONL / 子プロセスツリー監視は廃止。`bash` / `zsh` 起動時に OSC 633 統合スクリプトを `--rcfile` / `ZDOTDIR` 経由で注入
-- 設定キーを再編。`projectLanes.refreshInterval` と `projectLanes.agent.idleThreshold` を削除、`projectLanes.agent.showStatus` を `projectLanes.activity.showIndicator` にリネーム
-- 種別判定 (claude-code / codex-cli / gemini-cli / copilot-cli) の概念を撤去。検出は汎用的な「foreground + 出力途絶」ヒューリスティック
-- UI 表記を 3 値対応へ刷新。working は `$(sync~spin)` + 緑●、waiting は `$(bell)` + 黄●、no-agent は無表示。Activity Bar バッジは waiting レーン数のみカウント
+- Redesigned lane activity detection as a three-state classification (`agent-working` / `agent-waiting` / `no-agent`). OSC 633 gates foreground execution, and PTY-output stagnation (1.5s) separates working from waiting. Echoes from keystrokes (shell / TUI self-redraw) are filtered by an input-vs-output gap (`ECHO_GAP_MS=100ms`) evaluated in `lane-activity`'s projection rules (business rules are kept out of the adapter layer). Dropped procfs / Claude session JSONL / child-process-tree monitoring. OSC 633 integration scripts are injected at `bash` / `zsh` startup via `--rcfile` / `ZDOTDIR`
+- Reorganized configuration keys: removed `projectLanes.refreshInterval` and `projectLanes.agent.idleThreshold`; renamed `projectLanes.agent.showStatus` to `projectLanes.activity.showIndicator`
+- Removed the concept of kind detection (claude-code / codex-cli / gemini-cli / copilot-cli). Detection is a generic "foreground + output stagnation" heuristic
+- Refreshed UI representation for three states. `working` uses `$(sync~spin)` + green dot; `waiting` uses `$(bell)` + yellow dot; `no-agent` shows nothing. The Activity Bar badge counts only `waiting` lanes
 
 ### Removed
 
-- `src/agent/` 一式 (model / ports / service / activity-policy / summarizer / resolver / sources)
-- `src/adapters/linux/procfs.ts` および `claude-sessions.ts`
-- 周期実行アダプター `src/adapters/vscode/timers.ts`
+- The entire `src/agent/` directory (model / ports / service / activity-policy / summarizer / resolver / sources)
+- `src/adapters/linux/procfs.ts` and `claude-sessions.ts`
+- The periodic-execution adapter `src/adapters/vscode/timers.ts`
 
 ## [0.1.1] - 2026-04-27
 
 ### Fixed
 
-- 既定ターミナルプロファイルが `id` で照合不能だった問題を修正。VS Code は `terminal.integrated.defaultProfile.<platform>` を contributed profile の `title` で照合するため、id を書き込んでいた従来コードでは projectLanes 経路に乗らず内蔵 bash が `.lanes-root/active` を cwd に開いていた
-- ターミナル「+」生成時に `provideTerminalProfile` が `undefined` を返して未管理ターミナルが `.lanes-root/active` で開かれていた問題を修正。正規の `vscode.TerminalProfile` を返却し、生成経路をレーン単一に統一
-- 管理ターミナルで親環境の `PWD` を継承し、プロンプトが symlink 経由のパスを表示していた問題を修正。レーン実パスを `PWD` として明示注入
+- Default terminal profile could not be matched by `id`. VS Code matches `terminal.integrated.defaultProfile.<platform>` against the contributed profile's `title`, so writing the id caused the built-in bash to open with `.lanes-root/active` as the cwd instead of going through the projectLanes path
+- When the terminal "+" button created a terminal, `provideTerminalProfile` returned `undefined`, leaving the unmanaged terminal open in `.lanes-root/active`. It now returns a proper `vscode.TerminalProfile`, unifying the creation path into the single lane-aware route
+- Managed terminals inherited the parent environment's `PWD`, so prompts showed the path via the symlink. The real lane path is now explicitly injected as `PWD`
 
 ### Changed
 
-- レーン切替時、symlink target 入替直後に `workspaceFolders[0].name` を切替先レーン label へ更新（同 URI なので拡張ホスト再起動なし）。Explorer ルート表示の追従漏れと、フォルダ変更イベント経由のツリー再描画を同時に実現する `LaneViewRebindPort` を新設。Git 拡張のキャッシュ済 Repository を `git.close` で破棄してから `git.openRepository` で再 scan させる 2 段階で SCM 表示も切替先レーンへ追従。`refreshFilesExplorer` 直接実行による Explorer ビュー強制 focus を回避
-- Lane Terminal プロファイルの id / title を `package.json` の contributes 宣言から単一読出する `readLaneTerminalProfile` を新設。bootstrap 内の重複文字列を排除
-- `terminal/service` の API を再構成: `addTerminal` を撤去し、`requestSession` + `bindTerminal` をプロファイル経路向けに公開
-- ターミナル束縛解除を `TerminalCommand.terminalUnbound` として型表現し、`undefined as unknown as TerminalId` の型キャストを排除
-- 死コードとなっていた `TerminalEffect` の `spawnSession` / `attachTerminal` / `showTerminal` を削除
+- On lane switch, immediately after swapping the symlink target, `workspaceFolders[0].name` is updated to the destination lane's label (the URI is unchanged, so no extension-host restart). A new `LaneViewRebindPort` simultaneously addresses both the Explorer root-display lag and the tree redraw via a folder-change event. The Git extension's cached Repository is discarded with `git.close` and re-scanned via `git.openRepository`, so the SCM view also follows. Avoids forcing the Explorer view to focus by no longer running `refreshFilesExplorer` directly
+- Added `readLaneTerminalProfile` to read the lane terminal profile id / title from the `package.json` contribution as a single source. Removed the duplicated strings in bootstrap
+- Reorganized `terminal/service`'s API: removed `addTerminal`; exposed `requestSession` + `bindTerminal` for the profile path
+- Modeled terminal unbinding as `TerminalCommand.terminalUnbound`, removing the `undefined as unknown as TerminalId` type cast
+- Removed dead code in `TerminalEffect` (`spawnSession`, `attachTerminal`, `showTerminal`)
 
 ## [0.1.0] - 2026-04-26
 
 ### Changed
 
-- ワークスペース設計を全面見直し。`.lanes-root` アンカーフォルダを `workspaceFolders` に並べる方式を廃止し、`.lanes-root/active` symlink を単一 workspaceFolder とする方式へ変更。レーン切替は symlink 差替のみで完結し、`workspaceFolders` 変更を伴わない
-- `.code-workspace` をレーンカタログの正本として扱い、起動時の構造検出で旧構造からも同じ最終状態へ自動移行
-- エージェント検出フィルタを常時適用（従来は管理ターミナル未起動時に他プロセスが表出していた挙動を解消）
-- エージェントの active/idle ヒステリシスを `LANES_SESSION_ID` 軸で管理し PID 再利用による誤判定を解消
+- Overhauled workspace design. Replaced the scheme of listing a `.lanes-root` anchor folder alongside the other entries in `workspaceFolders` with a single-`workspaceFolder` scheme backed by the `.lanes-root/active` symlink. Lane switches are now completed by swapping the symlink alone, without modifying `workspaceFolders`
+- The `.code-workspace` file is treated as the canonical lane catalog. Structure detection at startup migrates older layouts to the new final state automatically
+- The agent detection filter is now always applied (previously, other processes leaked through when no managed terminal was running)
+- Agent active/idle hysteresis is keyed by `LANES_SESSION_ID` to eliminate false detections from PID reuse
 
 ### Fixed
 
-- ターミナル作成時に `.lanes-root` とプロジェクトのどちらに開くかを尋ねられる問題を解消（単一 workspaceFolder 化により発生しなくなった）
-- Explorer トップに `.lanes-root` セクションが表示される問題を解消
-- Explorer 新規ファイル/フォルダでフォルダ選択を要求される問題を解消
+- No longer prompts whether to open new terminals in `.lanes-root` or in the project (the single-`workspaceFolder` design makes the prompt unnecessary)
+- Eliminated the `.lanes-root` section at the top of the Explorer
+- Eliminated the folder-selection prompt when creating a new file / folder in the Explorer
 
 ### Removed
 
-- `Project Lanes: Unfocus` コマンドを削除。単一 workspaceFolder 設計では意味を持たないため
-- 旧アンカー関連の内部契約（`LaneVisibilityPort`, `ProjectLanesRuntime`, `folder-plan`, `TerminalCommand.pendingQueued` 等の死に契約）を整理
+- Removed the `Project Lanes: Unfocus` command, which is meaningless in the single-`workspaceFolder` design
+- Cleaned up dead internal contracts tied to the old anchor design (`LaneVisibilityPort`, `ProjectLanesRuntime`, `folder-plan`, `TerminalCommand.pendingQueued`, etc.)
 
 ## [0.0.2] - 2026-04-13
 
 ### Fixed
 
-- node-pty 未同梱により拡張機能が起動しない致命的不具合を修正
-- idleThreshold のデフォルト値が package.json 宣言と不一致だった問題を修正
-- ワークスペース初期化失敗時にユーザーへの通知がなかった問題を修正
-- HOME 環境変数が空文字列の場合にフォールバックが効かない問題を修正
+- Fixed a fatal startup failure caused by `node-pty` not being bundled
+- Fixed a mismatch between the default value of `idleThreshold` and its declaration in `package.json`
+- Fixed the missing user notification when workspace initialization failed
+- Fixed the fallback for the case where the `HOME` environment variable is an empty string
 
 ## [0.0.1] - 2026-04-12
 
