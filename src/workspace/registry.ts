@@ -66,6 +66,19 @@ export interface WorkspaceCatalogRegistry {
    * @returns 新規追加されたレーン名の列
    */
   readonly absorb: (lanes: readonly WorkspaceFolder[]) => readonly string[];
+  /**
+   * レーンの改名
+   * @param oldName - 改名前 name (= 旧 LaneId)
+   * @param newName - 改名後 name (= 新 LaneId)
+   * @returns 実際に変更が発生すれば true
+   */
+  readonly rename: (oldName: string, newName: string) => boolean;
+  /**
+   * レーンの除外
+   * @param name - 除外対象 name (= LaneId)
+   * @returns 実際に変更が発生すれば true
+   */
+  readonly remove: (name: string) => boolean;
 }
 
 /**
@@ -107,6 +120,20 @@ export const createCatalogRegistry = (
       if (additions.length === 0) return [];
       commit([...folders, ...additions]);
       return additions.map((f) => f.name);
+    },
+    rename: (oldName, newName) => {
+      if (oldName === newName) return false;
+      const idx = folders.findIndex((f) => f.name === oldName);
+      if (idx < 0) return false;
+      const next = folders.map((f, i) => (i === idx ? { ...f, name: newName } : f));
+      commit(next);
+      return true;
+    },
+    remove: (name) => {
+      const next = folders.filter((f) => f.name !== name);
+      if (next.length === folders.length) return false;
+      commit(next);
+      return true;
     },
   };
 };
