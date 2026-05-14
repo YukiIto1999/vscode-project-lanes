@@ -49,6 +49,12 @@ export interface LaneSessionStore {
    */
   readonly get: (laneId: LaneId) => EditorSnapshot | undefined;
   /**
+   * エディタ状態のキー張替え
+   * @param oldLaneId - 旧レーン識別子
+   * @param newLaneId - 新レーン識別子
+   */
+  readonly rekey: (oldLaneId: LaneId, newLaneId: LaneId) => void;
+  /**
    * エディタ状態の破棄
    * @param laneId - 対象レーン識別子
    */

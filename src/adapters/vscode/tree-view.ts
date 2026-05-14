@@ -14,6 +14,7 @@ const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
     ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'))
     : new vscode.ThemeIcon('circle-outline');
   item.resourceUri = vscode.Uri.parse(vm.resourceUri);
+  item.contextValue = 'projectLane';
   item.command = {
     command: 'projectLanes.focus',
     title: 'Focus',

@@ -134,6 +134,53 @@ describe('reduceTerminal', () => {
     expect(result.state.lanes.size).toBe(0);
     expect(result.effects.filter((e) => e.kind === 'killSession')).toHaveLength(2);
   });
+
+  it('laneRekeyed で sessions の spec.laneId と lanes Map キーを張替え', () => {
+    const s1 = makeSpec('s1', 'web');
+    const s2 = makeSpec('s2', 'web');
+    const s3 = makeSpec('s3', 'api');
+    let { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec: s1 });
+    ({ state } = reduceTerminal(state, { kind: 'sessionStarted', spec: s2 }));
+    ({ state } = reduceTerminal(state, { kind: 'sessionStarted', spec: s3 }));
+
+    const result = reduceTerminal(state, {
+      kind: 'laneRekeyed',
+      oldLaneId: 'web' as LaneId,
+      newLaneId: 'frontend' as LaneId,
+    });
+
+    expect(result.state.sessions.get('s1' as SessionId)!.spec.laneId).toBe('frontend');
+    expect(result.state.sessions.get('s2' as SessionId)!.spec.laneId).toBe('frontend');
+    expect(result.state.sessions.get('s3' as SessionId)!.spec.laneId).toBe('api');
+    expect(result.state.lanes.has('web' as LaneId)).toBe(false);
+    expect(result.state.lanes.get('frontend' as LaneId)!.sessionIds).toEqual(['s1', 's2']);
+    expect(result.effects).toEqual([]);
+  });
+
+  it('laneRekeyed で oldLaneId === newLaneId は noop', () => {
+    const spec = makeSpec('s1', 'web');
+    const { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });
+    const result = reduceTerminal(state, {
+      kind: 'laneRekeyed',
+      oldLaneId: 'web' as LaneId,
+      newLaneId: 'web' as LaneId,
+    });
+    expect(result.state).toBe(state);
+    expect(result.effects).toEqual([]);
+  });
+
+  it('laneRekeyed で対象レーンに記録が無くても他は無傷', () => {
+    const spec = makeSpec('s1', 'api');
+    const { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });
+    const result = reduceTerminal(state, {
+      kind: 'laneRekeyed',
+      oldLaneId: 'web' as LaneId,
+      newLaneId: 'frontend' as LaneId,
+    });
+    expect(result.state.sessions.get('s1' as SessionId)!.spec.laneId).toBe('api');
+    expect(result.state.lanes.get('api' as LaneId)!.sessionIds).toEqual(['s1']);
+    expect(result.state.lanes.has('frontend' as LaneId)).toBe(false);
+  });
 });
 
 describe('findSessionByTerminalId', () => {

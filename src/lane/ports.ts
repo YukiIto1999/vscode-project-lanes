@@ -78,4 +78,22 @@ export interface LanePromptPort {
   readonly pickLane: (lanes: readonly Lane[]) => Promise<LaneId | undefined>;
   /** 未保存タブ警告の表示 */
   readonly warnDirtyEditors: () => void;
+  /**
+   * リネーム入力ダイアログ
+   * @param current - 現在のラベル
+   * @param validate - 純粋検証関数 (エラー時はメッセージ、OK 時は undefined)
+   * @returns 入力された生入力、または取消で undefined
+   */
+  readonly promptRename: (
+    current: string,
+    validate: (input: string) => string | undefined,
+  ) => Promise<string | undefined>;
+  /**
+   * 削除確認 (modal)
+   * @param lane - 削除対象レーン
+   * @returns OK で true、キャンセルで false
+   */
+  readonly confirmRemoval: (lane: Lane) => Promise<boolean>;
+  /** アクティブレーン削除を試みた際の警告 */
+  readonly warnActiveLaneRemoval: () => void;
 }

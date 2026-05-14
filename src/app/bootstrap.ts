@@ -18,11 +18,12 @@ import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
 import { createPromptAdapter } from '../adapters/vscode/quick-pick';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
-import { bootstrapWorkspace } from '../workspace/scanner';
+import { bootstrapWorkspace, collectLaneCandidates } from '../workspace/scanner';
 import { createCatalogRegistry } from '../workspace/registry';
 import { reconcileUserChange } from '../workspace/reconciler';
 import type { WorkspaceFolder } from '../workspace/model';
 import { createLaneService } from '../lane/service';
+import { createLaneSessionStore } from '../lane/session-store';
 import { createTerminalService } from '../terminal/service';
 import { createLaneActivityService } from '../lane-activity/service';
 import { projectLaneActivities } from '../lane-activity/reducer';
@@ -114,6 +115,8 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   const viewRebind = createLaneViewRebindAdapter(workspaceHost);
 
+  const editorStore = createLaneSessionStore();
+
   const laneService = createLaneService({
     getCatalog: () => registry.snapshot(),
     workspaceKey: wsContext.key,
@@ -126,6 +129,9 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     viewRebind,
     selectionStore,
     prompt,
+    registry,
+    terminalRekey: { rekeyLane: (oldId, newId) => terminalService.rekeyLane(oldId, newId) },
+    editorStore,
   });
   laneService.initialize();
 
@@ -179,6 +185,47 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     });
   });
 
+  const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', () =>
+    vscode.commands.executeCommand('workbench.action.addRootFolder'),
+  );
+
+  const extractLaneId = (arg: unknown): LaneId | undefined => {
+    if (typeof arg === 'string') return arg as LaneId;
+    if (arg && typeof arg === 'object') {
+      const obj = arg as { laneId?: unknown; id?: unknown };
+      if (typeof obj.laneId === 'string') return obj.laneId as LaneId;
+      if (typeof obj.id === 'string') return obj.id as LaneId;
+    }
+    return undefined;
+  };
+
+  const renameLaneCommand = vscode.commands.registerCommand(
+    'projectLanes.renameLane',
+    (arg?: unknown) => laneService.renameLane(extractLaneId(arg)),
+  );
+
+  const removeLaneCommand = vscode.commands.registerCommand(
+    'projectLanes.removeLane',
+    (arg?: unknown) => laneService.removeLane(extractLaneId(arg)),
+  );
+
+  const reloadLanesCommand = vscode.commands.registerCommand('projectLanes.reloadLanes', () => {
+    const newLanes = collectLaneCandidates(
+      workspaceHost.readFolders(),
+      catalogStore.load(),
+      link.linkPath,
+    );
+    const previousActiveId = laneService.snapshot().activeLaneId;
+    registry.replace(newLanes);
+    laneService.initialize();
+    const nextActiveId = laneService.snapshot().activeLaneId;
+    if (nextActiveId && nextActiveId !== previousActiveId) {
+      const lane = registry.snapshot().byId.get(nextActiveId);
+      if (lane) terminalService.revealLane(lane);
+    }
+    render();
+  });
+
   const focusCommand = vscode.commands.registerCommand('projectLanes.focus', (laneId?: string) =>
     laneService.focus(laneId as LaneId | undefined).then(() => render()),
   );
@@ -210,6 +257,10 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   context.subscriptions.push(
     focusCommand,
+    addFolderCommand,
+    renameLaneCommand,
+    removeLaneCommand,
+    reloadLanesCommand,
     closeTerminalsCommand,
     profileProvider,
     terminalCloseHandler,

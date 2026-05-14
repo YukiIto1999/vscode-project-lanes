@@ -53,13 +53,63 @@
     "commands": [
       {
         "command": "projectLanes.focus",
-        "title": "Project Lanes: Focus"
+        "title": "Focus",
+        "category": "Project Lanes"
       },
       {
         "command": "projectLanes.closeTerminals",
-        "title": "Project Lanes: Close Terminals"
+        "title": "Close Terminals",
+        "category": "Project Lanes"
+      },
+      {
+        "command": "projectLanes.addFolder",
+        "title": "Add Folder to Workspace",
+        "category": "Project Lanes",
+        "icon": "$(add)"
+      },
+      {
+        "command": "projectLanes.reloadLanes",
+        "title": "Reload Lanes",
+        "category": "Project Lanes",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "projectLanes.renameLane",
+        "title": "Rename Lane",
+        "category": "Project Lanes"
+      },
+      {
+        "command": "projectLanes.removeLane",
+        "title": "Remove Lane",
+        "category": "Project Lanes"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "projectLanes.addFolder",
+          "when": "view == projectLanes",
+          "group": "navigation@1"
+        },
+        {
+          "command": "projectLanes.reloadLanes",
+          "when": "view == projectLanes",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "projectLanes.renameLane",
+          "when": "view == projectLanes && viewItem == projectLane",
+          "group": "1_modify@1"
+        },
+        {
+          "command": "projectLanes.removeLane",
+          "when": "view == projectLanes && viewItem == projectLane",
+          "group": "1_modify@2"
+        }
+      ]
+    },
     "configuration": {
       "title": "Project Lanes",
       "properties": {
@@ -91,7 +141,7 @@
       },
       {
         "view": "projectLanes",
-        "contents": "まだレーンがありません。\n[フォルダーをワークスペースに追加](command:workbench.action.addRootFolder)",
+        "contents": "まだレーンがありません。\n[フォルダーをワークスペースに追加](command:projectLanes.addFolder)",
         "when": "workbenchState == workspace"
       }
     ]

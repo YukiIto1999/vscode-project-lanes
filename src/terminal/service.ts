@@ -54,6 +54,12 @@ export interface TerminalService {
    */
   readonly closeLane: (laneId: LaneId) => void;
   /**
+   * レーン識別子の張替え (リネーム時の追従)
+   * @param oldLaneId - 旧レーン識別子
+   * @param newLaneId - 新レーン識別子
+   */
+  readonly rekeyLane: (oldLaneId: LaneId, newLaneId: LaneId) => void;
+  /**
    * VS Code からのターミナル終了通知の処理
    * @param terminalId - 対象ターミナル識別子
    */
@@ -206,6 +212,10 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
 
     closeLane: (laneId) => {
       dispatch({ kind: 'laneClosed', laneId });
+    },
+
+    rekeyLane: (oldLaneId, newLaneId) => {
+      dispatch({ kind: 'laneRekeyed', oldLaneId, newLaneId });
     },
 
     handleTerminalClosed: (terminalId) => {

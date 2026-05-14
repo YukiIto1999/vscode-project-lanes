@@ -1,8 +1,15 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { WorkspaceLinkPort } from '../workspace/ports';
+import type { WorkspaceCatalogRegistry } from '../workspace/registry';
 import { executeActiveLinkSwap, planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
-import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
+import type {
+  Lane,
+  LaneCatalog,
+  LaneFocusPlan,
+  LaneServiceSnapshot,
+  LaneSessionStore,
+} from './model';
 import type {
   EditorPort,
   LanePromptPort,
@@ -10,7 +17,8 @@ import type {
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
-import { createLaneSessionStore } from './session-store';
+import { planLaneRemoval } from './removal-plan';
+import { planLaneRename } from './rename-plan';
 
 /** レーンサービスの依存 */
 export interface LaneServiceDeps {
@@ -30,6 +38,12 @@ export interface LaneServiceDeps {
   readonly selectionStore: LaneSelectionStorePort;
   /** ユーザー対話ポート */
   readonly prompt: LanePromptPort;
+  /** カタログ正本の操作 */
+  readonly registry: WorkspaceCatalogRegistry;
+  /** ターミナル rekey ポート */
+  readonly terminalRekey: { readonly rekeyLane: (oldId: LaneId, newId: LaneId) => void };
+  /** エディタ snapshot ストア */
+  readonly editorStore: LaneSessionStore;
 }
 
 /** レーンサービスの操作インターフェース */
@@ -48,6 +62,18 @@ export interface LaneService {
    */
   readonly closeActiveLaneTerminals: () => Promise<void>;
   /**
+   * レーン名の変更
+   * @param laneId - 対象レーン識別子、または未指定で対話選択
+   * @returns 完了の Promise
+   */
+  readonly renameLane: (laneId?: LaneId) => Promise<void>;
+  /**
+   * レーンの削除
+   * @param laneId - 対象レーン識別子、または未指定で対話選択
+   * @returns 完了の Promise
+   */
+  readonly removeLane: (laneId?: LaneId) => Promise<void>;
+  /**
    * 現在状態の取得
    * @returns 現状スナップショット
    */
@@ -60,9 +86,19 @@ export interface LaneService {
  * @returns サービスインスタンス
  */
 export const createLaneService = (deps: LaneServiceDeps): LaneService => {
-  const { getCatalog, workspaceKey, editor, link, terminal, viewRebind, selectionStore, prompt } =
-    deps;
-  const editorStore = createLaneSessionStore();
+  const {
+    getCatalog,
+    workspaceKey,
+    editor,
+    link,
+    terminal,
+    viewRebind,
+    selectionStore,
+    prompt,
+    registry,
+    terminalRekey,
+    editorStore,
+  } = deps;
   let activeLaneId: LaneId | undefined = selectionStore.load(workspaceKey);
 
   const initialize = (): void => {
@@ -123,6 +159,58 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
     closeActiveLaneTerminals: async () => {
       if (activeLaneId) await terminal.closeLane(activeLaneId);
+    },
+
+    renameLane: async (laneId) => {
+      const targetId = laneId ?? (await prompt.pickLane(getCatalog().lanes));
+      if (!targetId) return;
+      const target = getCatalog().byId.get(targetId);
+      if (!target) return;
+
+      const validate = (raw: string): string | undefined => {
+        const p = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
+        if (p.kind === 'invalid' && p.reason === 'empty') return '名前を入力してください';
+        if (p.kind === 'invalid' && p.reason === 'duplicate') return '同名のレーンが既に存在します';
+        return undefined;
+      };
+
+      const raw = await prompt.promptRename(target.label, validate);
+      if (raw === undefined) return;
+
+      const plan = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
+      if (plan.kind !== 'rename') return;
+
+      terminalRekey.rekeyLane(plan.from.id, plan.to.id);
+      editorStore.rekey(plan.from.id, plan.to.id);
+      if (activeLaneId === plan.from.id) {
+        activeLaneId = plan.to.id;
+        selectionStore.save(workspaceKey, activeLaneId);
+      }
+      registry.rename(plan.from.label, plan.to.label);
+
+      if (activeLaneId === plan.to.id) {
+        const newLane = getCatalog().byId.get(plan.to.id);
+        if (newLane) await viewRebind.rebindActiveFolder(newLane);
+      }
+    },
+
+    removeLane: async (laneId) => {
+      const targetId = laneId ?? (await prompt.pickLane(getCatalog().lanes));
+      if (!targetId) return;
+
+      const plan = planLaneRemoval({ targetId, activeLaneId, catalog: getCatalog() });
+      if (plan.kind === 'noop') return;
+      if (plan.kind === 'blocked') {
+        prompt.warnActiveLaneRemoval();
+        return;
+      }
+
+      const confirmed = await prompt.confirmRemoval(plan.target);
+      if (!confirmed) return;
+
+      await terminal.closeLane(plan.target.id);
+      editorStore.clear(plan.target.id);
+      registry.remove(plan.target.label);
     },
 
     snapshot: () => ({ catalog: getCatalog(), activeLaneId }),
