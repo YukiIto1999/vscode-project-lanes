@@ -3,11 +3,17 @@ import type { AgentSource } from '../ports';
 
 /** プロセス名指定の構成 */
 export interface ProcessNameSourceConfig {
+  /** 検出対象種別 */
   readonly kind: AgentKind;
+  /** マッチ対象プロセス名列 */
   readonly commNames: readonly string[];
 }
 
-/** プロセス名ベースのエージェント検出ソース（Codex/Copilot/Gemini 共通） */
+/**
+ * プロセス名ベース検出ソースの生成
+ * @param config - 検出構成
+ * @returns 検出ソース
+ */
 export const createProcessNameSource = (config: ProcessNameSourceConfig): AgentSource => ({
   kind: config.kind,
 

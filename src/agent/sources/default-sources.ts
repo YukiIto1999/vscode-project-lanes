@@ -3,7 +3,12 @@ import type { AgentSource, ClaudeSessionPort } from '../ports';
 import { createClaudeSource } from './claude-source';
 import { createProcessNameSource } from './process-name-source';
 
-/** 既定のエージェント検出ソース群の構築 */
+/**
+ * 既定エージェント検出ソース群の構築
+ * @param homePath - ホームディレクトリ絶対パス
+ * @param claudeSessionPort - Claude セッション読み取りポート
+ * @returns 検出ソース列
+ */
 export const createDefaultSources = (
   homePath: AbsolutePath,
   claudeSessionPort: ClaudeSessionPort,

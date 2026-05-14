@@ -3,7 +3,10 @@ import type { UriString } from '../../foundation/model';
 import type { EditorPort } from '../../lane/ports';
 import type { EditorSnapshot } from '../../lane/model';
 
-/** VS Code エディタ操作のアダプター */
+/**
+ * VS Code エディタ操作アダプターの生成
+ * @returns エディタ操作ポート
+ */
 export const createEditorAdapter = (): EditorPort => ({
   hasDirtyEditors: () => vscode.window.tabGroups.all.some((g) => g.tabs.some((t) => t.isDirty)),
 
@@ -31,7 +34,7 @@ export const createEditorAdapter = (): EditorPort => ({
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(tab.uri));
         await vscode.window.showTextDocument(doc, tab.viewColumn, true);
       } catch {
-        // ファイルが削除された場合は無視
+        /* 削除済みファイルは無視 */
       }
     }
   },

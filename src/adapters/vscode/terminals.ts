@@ -3,7 +3,11 @@ import type { Disposable, TerminalId } from '../../foundation/model';
 import type { ShellSessionHandle } from '../../terminal/ports';
 import type { TerminalPresentationPort } from '../../terminal/ports';
 
-/** Pseudoterminal を生成し ShellSessionHandle に接続 */
+/**
+ * シェルセッションに接続する Pseudoterminal の生成
+ * @param session - 接続対象シェルセッションハンドル
+ * @returns Pseudoterminal
+ */
 const createPseudoterminal = (session: ShellSessionHandle): vscode.Pseudoterminal => {
   const writeEmitter = new vscode.EventEmitter<string>();
   const closeEmitter = new vscode.EventEmitter<void>();
@@ -31,13 +35,20 @@ const createPseudoterminal = (session: ShellSessionHandle): vscode.Pseudotermina
   };
 };
 
-/** TerminalPresentationPort + vscode.Terminal 解決 */
+/** ターミナル表示ポート拡張 */
 export interface TerminalPresentationAdapter extends TerminalPresentationPort {
-  /** vscode.Terminal から TerminalId の解決 */
+  /**
+   * vscode.Terminal からの ターミナル識別子解決
+   * @param terminal - 対象ターミナル
+   * @returns 該当ターミナル識別子、または不一致で undefined
+   */
   readonly resolveId: (terminal: vscode.Terminal) => TerminalId | undefined;
 }
 
-/** VS Code ターミナル表示ポートのアダプター */
+/**
+ * VS Code ターミナル表示アダプターの生成
+ * @returns ターミナル表示アダプター
+ */
 export const createTerminalPresentationAdapter = (): TerminalPresentationAdapter => {
   let counter = 0;
   const terminalById = new Map<TerminalId, vscode.Terminal>();
