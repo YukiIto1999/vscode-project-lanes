@@ -169,8 +169,9 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
       const validate = (raw: string): string | undefined => {
         const p = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
-        if (p.kind === 'invalid' && p.reason === 'empty') return '名前を入力してください';
-        if (p.kind === 'invalid' && p.reason === 'duplicate') return '同名のレーンが既に存在します';
+        if (p.kind === 'invalid' && p.reason === 'empty') return 'Enter a name.';
+        if (p.kind === 'invalid' && p.reason === 'duplicate')
+          return 'A lane with this name already exists.';
         return undefined;
       };
 

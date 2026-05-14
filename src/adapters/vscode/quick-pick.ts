@@ -15,14 +15,12 @@ export const createPromptAdapter = (): LanePromptPort => ({
   },
 
   warnDirtyEditors: () => {
-    vscode.window.showWarningMessage(
-      '未保存のファイルがあります。保存してから切り替えてください。',
-    );
+    vscode.window.showWarningMessage('There are unsaved files. Save them before switching lanes.');
   },
 
   promptRename: async (current, validate) => {
     const result = await vscode.window.showInputBox({
-      title: 'レーン名の変更',
+      title: 'Rename Lane',
       value: current,
       valueSelection: [0, current.length],
       validateInput: (v) => validate(v),
@@ -32,10 +30,10 @@ export const createPromptAdapter = (): LanePromptPort => ({
 
   confirmRemoval: async (lane) => {
     const choice = await vscode.window.showWarningMessage(
-      `レーン "${lane.label}" を削除しますか？`,
+      `Remove lane "${lane.label}"?`,
       {
         modal: true,
-        detail: 'ワークスペースのカタログから除外します。ディスク上のフォルダは変更されません。',
+        detail: 'Removes the lane from the workspace catalog. The folder on disk is not changed.',
       },
       'OK',
     );
@@ -44,7 +42,7 @@ export const createPromptAdapter = (): LanePromptPort => ({
 
   warnActiveLaneRemoval: () => {
     vscode.window.showWarningMessage(
-      'アクティブレーンは削除できません。先に別のレーンへ切り替えてください。',
+      'Cannot remove the active lane. Switch to another lane first.',
     );
   },
 });
