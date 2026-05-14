@@ -9,13 +9,23 @@ import type {
   UiSnapshot,
 } from './model';
 
-/** ツリー項目の description 生成 */
+/**
+ * ツリー項目の description 文言生成
+ * @param summary - 対象集約
+ * @returns description 文言
+ */
 const formatDescription = (summary: LaneAgentSummary | undefined): string => {
   if (!summary || summary.totalCount === 0) return '';
   return `${summary.idleCount} idle / ${summary.totalCount} agents`;
 };
 
-/** ツリー項目のビューモデル生成 */
+/**
+ * ツリー項目のビューモデル算出
+ * @param lanes - レーン列
+ * @param summaryMap - レーン単位集約のマップ
+ * @param activeLaneId - 活性レーン識別子
+ * @returns ツリー項目列
+ */
 const projectTreeItems = (
   lanes: readonly Lane[],
   summaryMap: ReadonlyMap<LaneId, LaneAgentSummary>,
@@ -29,7 +39,11 @@ const projectTreeItems = (
     resourceUri: `lane:///${lane.id}` as UriString,
   }));
 
-/** Activity Bar バッジの算出 */
+/**
+ * Activity Bar バッジの算出
+ * @param summaries - レーン単位集約列
+ * @returns バッジビューモデル、または無表示で undefined
+ */
 const projectBadge = (
   summaries: readonly LaneAgentSummary[],
 ): ActivityBadgeViewModel | undefined => {
@@ -37,7 +51,12 @@ const projectBadge = (
   return idle > 0 ? { value: idle, tooltip: `${idle} agents idle` } : undefined;
 };
 
-/** デコレーション情報の算出 */
+/**
+ * ファイルデコレーション列の算出
+ * @param lanes - レーン列
+ * @param summaryMap - レーン単位集約のマップ
+ * @returns デコレーション列
+ */
 const projectDecorations = (
   lanes: readonly Lane[],
   summaryMap: ReadonlyMap<LaneId, LaneAgentSummary>,
@@ -65,7 +84,12 @@ const projectDecorations = (
     ];
   });
 
-/** ステータスバーの算出 */
+/**
+ * ステータスバーの算出
+ * @param activeLane - 活性レーン
+ * @param summary - 活性レーンの集約
+ * @returns ステータスバービューモデル
+ */
 const projectStatusBar = (
   activeLane: Lane | undefined,
   summary: LaneAgentSummary | undefined,
@@ -81,7 +105,13 @@ const projectStatusBar = (
   };
 };
 
-/** ドメインスナップショットから UI スナップショットへのプロジェクション */
+/**
+ * ドメインスナップショットから UI スナップショットへの射影
+ * @param lane - レーンサービススナップショット
+ * @param agents - エージェントモニタスナップショット
+ * @param showAgentStatus - エージェント情報の表示有無
+ * @returns UI スナップショット
+ */
 export const projectUi = (
   lane: LaneServiceSnapshot,
   agents: AgentMonitorSnapshot,

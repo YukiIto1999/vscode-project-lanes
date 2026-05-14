@@ -1,89 +1,64 @@
 import { describe, expect, it } from 'vitest';
-import type { LaneId, UriString } from '../foundation/model';
+import type { AbsolutePath, UriString } from '../foundation/model';
 import type { WorkspaceFolder } from './model';
 import { reconcileUserChange } from './reconciler';
 
-const toUri = (path: string) => `file://${path}` as UriString;
-const mkFolder = (name: string, path: string): WorkspaceFolder => ({
-  name,
-  uri: toUri(path),
-});
+const linkPath = '/ws/.lanes-root/active' as AbsolutePath;
+const linkUri = `file://${linkPath}` as UriString;
+const toUri = (p: string) => `file://${p}` as UriString;
+const mkFolder = (name: string, path: string): WorkspaceFolder => ({ name, uri: toUri(path) });
 
-const anchor = mkFolder('.lanes-root', '/home/user/.lanes-root');
-const web = mkFolder('web', '/home/user/web');
-const api = mkFolder('api', '/home/user/api');
-const docs = mkFolder('docs', '/home/user/docs');
+const baseInput = {
+  linkPath,
+  activeLabel: 'web',
+  linkUri,
+};
 
 describe('reconcileUserChange', () => {
-  describe('unfocused', () => {
-    it('raw と current が同じなら noop', () => {
-      const action = reconcileUserChange({
-        rawFolders: [anchor, web, api],
-        currentLanes: [web, api],
-        activeLaneId: undefined,
-      });
-      expect(action).toEqual({ kind: 'noop' });
+  it('workspaceFolders が symlink folder 1 件なら noop', () => {
+    const result = reconcileUserChange({
+      ...baseInput,
+      rawFolders: [{ name: 'web', uri: linkUri }],
+      currentLanes: [mkFolder('web', '/p/web')],
     });
-
-    it('追加されていれば replace', () => {
-      const action = reconcileUserChange({
-        rawFolders: [anchor, web, api, docs],
-        currentLanes: [web, api],
-        activeLaneId: undefined,
-      });
-      expect(action).toEqual({ kind: 'replace', canonicalLanes: [web, api, docs] });
-    });
-
-    it('削除されていれば replace', () => {
-      const action = reconcileUserChange({
-        rawFolders: [anchor, web],
-        currentLanes: [web, api],
-        activeLaneId: undefined,
-      });
-      expect(action).toEqual({ kind: 'replace', canonicalLanes: [web] });
-    });
-
-    it('並び替えも replace', () => {
-      const action = reconcileUserChange({
-        rawFolders: [anchor, api, web],
-        currentLanes: [web, api],
-        activeLaneId: undefined,
-      });
-      expect(action).toEqual({ kind: 'replace', canonicalLanes: [api, web] });
-    });
+    expect(result).toEqual({ kind: 'noop' });
   });
 
-  describe('focused', () => {
-    it('期待通り [anchor, activeLane] なら noop', () => {
-      const action = reconcileUserChange({
-        rawFolders: [anchor, web],
-        currentLanes: [web, api],
-        activeLaneId: 'web' as LaneId,
-      });
-      expect(action).toEqual({ kind: 'noop' });
+  it('ユーザーが未知フォルダを追加 → absorb に additions', () => {
+    const result = reconcileUserChange({
+      ...baseInput,
+      rawFolders: [{ name: 'web', uri: linkUri }, mkFolder('new', '/p/new')],
+      currentLanes: [mkFolder('web', '/p/web')],
     });
+    expect(result.kind).toBe('absorb');
+    if (result.kind !== 'absorb') return;
+    expect(result.additions.map((f) => f.name)).toEqual(['new']);
+    expect(result.collapsedFolder).toEqual({ uri: linkUri, name: 'web' });
+  });
 
-    it('ユーザー追加は absorb + focus 復元要求', () => {
-      const newProject = mkFolder('new-project', '/home/user/new-project');
-      const action = reconcileUserChange({
-        rawFolders: [anchor, web, newProject],
-        currentLanes: [web, api],
-        activeLaneId: 'web' as LaneId,
-      });
-      expect(action).toEqual({
-        kind: 'absorb',
-        additions: [newProject],
-        restoreFocusLaneId: 'web' as LaneId,
-      });
+  it('既知レーンを追加しても additions は空', () => {
+    const result = reconcileUserChange({
+      ...baseInput,
+      rawFolders: [{ name: 'web', uri: linkUri }, mkFolder('api', '/p/api')],
+      currentLanes: [mkFolder('web', '/p/web'), mkFolder('api', '/p/api')],
     });
+    expect(result.kind).toBe('absorb');
+    if (result.kind !== 'absorb') return;
+    expect(result.additions).toEqual([]);
+  });
 
-    it('既知レーンが追加フォルダとして現れただけなら noop', () => {
-      const action = reconcileUserChange({
-        rawFolders: [anchor, web, api],
-        currentLanes: [web, api],
-        activeLaneId: 'web' as LaneId,
-      });
-      expect(action).toEqual({ kind: 'noop' });
+  it('旧アンカーが紛れ込んでも除外される', () => {
+    const result = reconcileUserChange({
+      ...baseInput,
+      rawFolders: [
+        mkFolder('.lanes-root', '/ws/.lanes-root'),
+        { name: 'web', uri: linkUri },
+        mkFolder('new', '/p/new'),
+      ],
+      currentLanes: [],
     });
+    expect(result.kind).toBe('absorb');
+    if (result.kind !== 'absorb') return;
+    expect(result.additions.map((f) => f.name)).toEqual(['new']);
   });
 });

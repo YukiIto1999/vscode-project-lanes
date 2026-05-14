@@ -1,7 +1,10 @@
 import * as vscode from 'vscode';
 import type { LanePromptPort } from '../../lane/ports';
 
-/** VS Code QuickPick によるレーン選択のアダプター */
+/**
+ * VS Code QuickPick ベースの対話アダプターの生成
+ * @returns ユーザー対話ポート
+ */
 export const createPromptAdapter = (): LanePromptPort => ({
   pickLane: async (lanes) => {
     const picked = await vscode.window.showQuickPick(
