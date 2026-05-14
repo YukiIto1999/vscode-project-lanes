@@ -11,7 +11,7 @@ export const activate = (context: vscode.ExtensionContext): void => {
 
   if (outcome.reason === 'missing-anchor') {
     vscode.window.showWarningMessage(
-      'Project Lanes: .lanes-root アンカーを作成できませんでした。ワークスペースファイルのディレクトリの書き込み権限を確認してください。',
+      'Project Lanes: Failed to create the .lanes-root anchor. Check write permission for the workspace file directory.',
     );
   }
 };

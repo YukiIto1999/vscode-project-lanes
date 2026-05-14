@@ -136,12 +136,12 @@
     "viewsWelcome": [
       {
         "view": "projectLanes",
-        "contents": "この拡張機能はワークスペースファイル（.code-workspace）専用です。\n[ワークスペースファイルを開く](command:workbench.action.openWorkspace)",
+        "contents": "This extension requires a workspace file (.code-workspace).\n[Open Workspace File](command:workbench.action.openWorkspace)",
         "when": "workbenchState != workspace"
       },
       {
         "view": "projectLanes",
-        "contents": "まだレーンがありません。\n[フォルダーをワークスペースに追加](command:projectLanes.addFolder)",
+        "contents": "No lanes yet.\n[Add Folder to Workspace](command:projectLanes.addFolder)",
         "when": "workbenchState == workspace"
       }
     ]
