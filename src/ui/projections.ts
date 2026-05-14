@@ -17,9 +17,9 @@ const activityOf = (activityMap: ReadonlyMap<LaneId, LaneActivity>, laneId: Lane
 const treeDescriptionFor = (activity: LaneActivity): string => {
   switch (activity) {
     case 'agent-working':
-      return '実行中';
+      return 'working';
     case 'agent-waiting':
-      return '入力待ち';
+      return 'waiting';
     case 'no-agent':
       return '';
   }
@@ -41,9 +41,9 @@ const decorationThemeColorFor = (activity: LaneActivity): string | undefined => 
 const decorationTooltipFor = (activity: LaneActivity): string => {
   switch (activity) {
     case 'agent-working':
-      return 'エージェント実行中';
+      return 'Agent is working';
     case 'agent-waiting':
-      return 'エージェント入力待ち';
+      return 'Agent is waiting for input';
     case 'no-agent':
       return '';
   }
@@ -84,7 +84,8 @@ const projectBadge = (
   if (!showIndicator) return undefined;
   const waitingCount = activities.filter((a) => a.activity === 'agent-waiting').length;
   if (waitingCount === 0) return undefined;
-  return { value: waitingCount, tooltip: `${waitingCount} レーンが入力待ち` };
+  const noun = waitingCount === 1 ? 'lane is' : 'lanes are';
+  return { value: waitingCount, tooltip: `${waitingCount} ${noun} waiting for input` };
 };
 
 /**
@@ -121,9 +122,9 @@ const statusIndicatorFor = (
 ): { readonly suffix: string; readonly tooltip: string } => {
   switch (activity) {
     case 'agent-working':
-      return { suffix: ' $(sync~spin)', tooltip: '（エージェント実行中）' };
+      return { suffix: ' $(sync~spin)', tooltip: ' (agent working)' };
     case 'agent-waiting':
-      return { suffix: ' $(bell)', tooltip: '（エージェント入力待ち）' };
+      return { suffix: ' $(bell)', tooltip: ' (agent waiting for input)' };
     case 'no-agent':
       return { suffix: '', tooltip: '' };
   }
@@ -142,7 +143,7 @@ const projectStatusBar = (
   showIndicator: boolean,
 ): StatusBarViewModel => {
   if (!activeLane) {
-    return { text: '$(layers) レーン未選択', tooltip: 'Project Lanes: レーン未選択' };
+    return { text: '$(layers) No Lane', tooltip: 'Project Lanes: No lane selected' };
   }
   const { suffix, tooltip } = showIndicator
     ? statusIndicatorFor(activeLaneActivity)
