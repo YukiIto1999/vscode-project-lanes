@@ -2,16 +2,9 @@ import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-/**
- * 構造制約の機械検証。
- * 規約・依存方向・観測単位の用語は人の記憶ではなくテストで固定する。
- */
-
 const SRC_ROOT = nodePath.resolve(__dirname);
 
-/**
- * ディレクトリ配下の .ts ファイルを再帰収集 (テストファイル除外可)
- */
+/** ディレクトリ配下の .ts ファイルを再帰収集 */
 const collectTsFiles = (
   dir: string,
   options: { excludeTests: boolean } = { excludeTests: true },

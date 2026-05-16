@@ -8,7 +8,7 @@ interface GitApiShape {
   readonly getRepository: (uri: vscode.Uri) => object | null;
 }
 
-/** Git 拡張 exports（必要部分のみ） */
+/** Git 拡張 exports のうち本拡張が依存する最小契約 */
 interface GitExtensionShape {
   readonly getAPI: (version: 1) => GitApiShape;
 }

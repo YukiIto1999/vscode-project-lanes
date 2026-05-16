@@ -29,7 +29,7 @@ interface StepResult {
   readonly state: ParserState;
   /** 通常出力が観測されたか */
   readonly emittedOutput: boolean;
-  /** 確定した OSC 633 イベント (無ければ undefined) */
+  /** 確定した OSC 633 イベント、未確定で undefined */
   readonly emittedFg?: Osc633Event | undefined;
 }
 
