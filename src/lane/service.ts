@@ -1,7 +1,7 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
-import { executeActiveLinkSwap, planActiveLinkSwap } from './active-link';
+import { planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
 import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
 import type {
@@ -124,7 +124,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     const currentTarget = link.readTarget();
     const swap = planActiveLinkSwap(link.linkPath, currentTarget, plan.to.rootPath);
     if (swap) {
-      executeActiveLinkSwap(swap, link);
+      link.swap(swap.to);
       await viewRebind.rebindActiveFolder(plan.to);
     }
 

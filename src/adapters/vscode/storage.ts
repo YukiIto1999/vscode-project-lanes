@@ -18,7 +18,7 @@ export const createSelectionStoreAdapter = (memento: vscode.Memento): LaneSelect
   },
 });
 
-/** シリアライズ用ワークスペースフォルダ表現 */
+/** JSON シリアライズ可能なワークスペースフォルダ表現 */
 interface StoredFolder {
   /** フォルダ URI 文字列 */
   readonly uri: string;

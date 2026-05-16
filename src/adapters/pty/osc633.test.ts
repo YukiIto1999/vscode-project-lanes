@@ -58,7 +58,7 @@ describe('parseChunk: OSC 633 ;C / ;D', () => {
     expect(events).toEqual([]);
   });
 
-  it('ST 終端 (ESC \\\\) でも確定する', () => {
+  it('ST 終端 ESC + バックスラッシュでも確定する', () => {
     const { state, events } = drive([`${ESC}]633;C${ESC}\\`]);
     expect(state.phase).toBe('plain');
     expect(events).toEqual([{ kind: 'fg-started' }]);
@@ -70,8 +70,8 @@ describe('parseChunk: OSC 633 ;C / ;D', () => {
   });
 });
 
-describe('parseChunk: 非 633 OSC は透過 (skip)', () => {
-  it('OSC 0 (ウィンドウタイトル) は無視', () => {
+describe('parseChunk: 非 633 OSC は読み飛ばして透過', () => {
+  it('ウィンドウタイトルを示す OSC 0 は無視', () => {
     const { events } = drive([`${ESC}]0;Title${BEL}body`]);
     expect(events).toEqual([{ kind: 'output' }]);
   });

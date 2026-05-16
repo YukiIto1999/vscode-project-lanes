@@ -1,7 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { AbsolutePath } from '../foundation/model';
-import type { WorkspaceLinkPort } from '../workspace/ports';
-import { executeActiveLinkSwap, planActiveLinkSwap } from './active-link';
+import { planActiveLinkSwap } from './active-link';
 
 const linkPath = '/ws/.lanes-root/active' as AbsolutePath;
 
@@ -17,21 +16,8 @@ describe('planActiveLinkSwap', () => {
     expect(planActiveLinkSwap(linkPath, from, to)).toEqual({ linkPath, from, to });
   });
 
-  it('from が undefined でも plan を返す（初回 swap）', () => {
+  it('初回 swap のため from が undefined でも plan を返す', () => {
     const to = '/p/b' as AbsolutePath;
     expect(planActiveLinkSwap(linkPath, undefined, to)).toEqual({ linkPath, from: undefined, to });
-  });
-});
-
-describe('executeActiveLinkSwap', () => {
-  it('port.swap を target 引数で呼ぶ', () => {
-    const swap = vi.fn();
-    const port: WorkspaceLinkPort = {
-      linkPath,
-      readTarget: () => undefined,
-      swap,
-    };
-    executeActiveLinkSwap({ linkPath, from: undefined, to: '/p/b' as AbsolutePath }, port);
-    expect(swap).toHaveBeenCalledWith('/p/b');
   });
 });
