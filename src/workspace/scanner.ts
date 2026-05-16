@@ -65,6 +65,23 @@ export const chooseActiveLane = (
 };
 
 /**
+ * workspaceFolders を symlink folder 1 件へ縮退させる副作用境界
+ * @param host - workspaceFolders 操作ポート
+ * @param linkFolder - 縮退後の単一フォルダ
+ */
+export const collapseFoldersToLink = (
+  host: WorkspaceHostPort,
+  linkFolder: WorkspaceFolder,
+): void => {
+  const folders = host.readFolders();
+  host.applyMutation({
+    start: 0,
+    deleteCount: folders.length,
+    folders: [linkFolder],
+  });
+};
+
+/**
  * ワークスペースのブートストラップ
  * @param host - workspaceFolders 操作ポート
  * @param fileInfo - 確定済みワークスペースファイル情報
@@ -116,13 +133,7 @@ export const bootstrapWorkspace = (
     !isLinkFolder(rawFolders[0]!, linkPath) ||
     rawFolders[0]!.name !== activeLane.name;
 
-  if (needsFolderUpdate) {
-    host.applyMutation({
-      start: 0,
-      deleteCount: rawFolders.length,
-      folders: [linkFolder],
-    });
-  }
+  if (needsFolderUpdate) collapseFoldersToLink(host, linkFolder);
 
   catalogStore.save(lanes);
 

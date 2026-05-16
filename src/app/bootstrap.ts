@@ -18,10 +18,14 @@ import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
 import { createPromptAdapter } from '../adapters/vscode/quick-pick';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
-import { bootstrapWorkspace, collectLaneCandidates } from '../workspace/scanner';
+import {
+  bootstrapWorkspace,
+  collapseFoldersToLink,
+  collectLaneCandidates,
+} from '../workspace/scanner';
 import { createCatalogRegistry } from '../workspace/registry';
 import { reconcileUserChange } from '../workspace/reconciler';
-import type { WorkspaceDisabledReason, WorkspaceFolder } from '../workspace/model';
+import type { WorkspaceDisabledReason } from '../workspace/model';
 import { toLaneId } from '../lane/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
@@ -170,13 +174,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     if (action.kind === 'noop') return;
 
     registry.absorb(action.additions);
-    const folders = workspaceHost.readFolders();
-    const collapsedFolder: WorkspaceFolder = action.collapsedFolder;
-    workspaceHost.applyMutation({
-      start: 0,
-      deleteCount: folders.length,
-      folders: [collapsedFolder],
-    });
+    collapseFoldersToLink(workspaceHost, action.collapsedFolder);
   });
 
   const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', () =>
