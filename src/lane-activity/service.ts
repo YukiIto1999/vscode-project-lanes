@@ -15,9 +15,9 @@ import {
 export interface LaneActivityServiceDeps {
   /** 単調時刻 */
   readonly clock: MonotonicClockPort;
-  /** 出力途絶を待機中とみなす猶予時間 (ms) */
+  /** 出力途絶を入力待機とみなす猶予時間 ms */
   readonly thresholdMs?: number;
-  /** エコーとみなす最小ギャップ (ms) */
+  /** エコーとみなす最小ギャップ ms */
   readonly echoGapMs?: number;
 }
 

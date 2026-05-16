@@ -20,7 +20,7 @@ export type LaneRenamePlan =
       readonly kind: 'rename';
       /** 改名前レーン */
       readonly from: Lane;
-      /** 改名後の識別。`id = label` の不変条件を維持し、リネーム時は新ラベルから新 LaneId を導出する */
+      /** 改名後の識別、`id = label` の不変条件下で新ラベルから導出する */
       readonly to: { readonly id: LaneId; readonly label: string };
     };
 
@@ -28,7 +28,7 @@ export type LaneRenamePlan =
 export interface LaneRenameInput {
   /** 対象レーン識別子 */
   readonly targetId: LaneId;
-  /** 入力された新ラベル (trim 前の生入力) */
+  /** 入力された新ラベルの trim 前生文字列 */
   readonly newLabel: string;
   /** 評価時点のカタログ */
   readonly catalog: LaneCatalog;

@@ -21,7 +21,7 @@ const detectShell = (): string => process.env.SHELL ?? '/bin/bash';
 
 /** node-pty ファクトリの依存 */
 export interface ShellSessionFactoryDeps {
-  /** 拡張ルート絶対パス (シェル統合スクリプト解決用) */
+  /** シェル統合スクリプト解決の起点となる拡張ルート絶対パス */
   readonly extensionPath: AbsolutePath;
   /** セッション活動の事実流入口 */
   readonly activitySink: SessionActivitySink;

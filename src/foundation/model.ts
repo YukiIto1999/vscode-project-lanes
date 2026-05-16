@@ -23,7 +23,7 @@ export type SessionId = Brand<string, 'SessionId'>;
 /** VS Code ターミナルの不透明識別子 */
 export type TerminalId = Brand<string, 'TerminalId'>;
 
-/** 単調時刻 (ms 単位の観測時刻。MonotonicClockPort 経由で取得) */
+/** MonotonicClockPort 経由で取得する ms 単位の観測時刻 */
 export type Instant = Brand<number, 'Instant'>;
 
 /** 破棄可能なリソース */
