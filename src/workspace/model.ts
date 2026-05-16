@@ -34,13 +34,16 @@ export interface WorkspaceContext {
   readonly canonicalLanes: readonly WorkspaceFolder[];
 }
 
+/** ワークスペース無効化の理由 */
+export type WorkspaceDisabledReason = 'no-workspace-file' | 'missing-anchor';
+
 /** ブートストラップ結果 */
 export type WorkspaceBootstrapResult =
   | {
       /** 無効化結果 */
       readonly kind: 'disabled';
       /** 無効化理由 */
-      readonly reason: 'no-workspace-file' | 'missing-anchor';
+      readonly reason: WorkspaceDisabledReason;
     }
   | {
       /** 利用可能結果 */

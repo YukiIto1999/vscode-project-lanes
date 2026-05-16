@@ -1,11 +1,10 @@
 import * as nodePath from 'node:path';
 import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
-import type { WorkspaceBootstrapResult, WorkspaceFolder } from './model';
+import type { WorkspaceBootstrapResult, WorkspaceFileInfo, WorkspaceFolder } from './model';
 import type {
   CatalogStorePort,
   DirectoryPort,
-  WorkspaceFilePort,
   WorkspaceHostPort,
   WorkspaceLinkPort,
 } from './ports';
@@ -68,7 +67,7 @@ export const chooseActiveLane = (
 /**
  * ワークスペースのブートストラップ
  * @param host - workspaceFolders 操作ポート
- * @param workspaceFile - ワークスペースファイル参照ポート
+ * @param fileInfo - 確定済みワークスペースファイル情報
  * @param catalogStore - カタログ永続化ポート
  * @param directory - ディレクトリ操作ポート
  * @param link - symlink 操作ポート
@@ -77,15 +76,12 @@ export const chooseActiveLane = (
  */
 export const bootstrapWorkspace = (
   host: WorkspaceHostPort,
-  workspaceFile: WorkspaceFilePort,
+  fileInfo: WorkspaceFileInfo,
   catalogStore: CatalogStorePort,
   directory: DirectoryPort,
   link: WorkspaceLinkPort,
   toUri: (path: string) => UriString,
 ): WorkspaceBootstrapResult => {
-  const fileInfo = workspaceFile.read();
-  if (!fileInfo) return { kind: 'disabled', reason: 'no-workspace-file' };
-
   const anchorDir = nodePath.join(fileInfo.directoryPath, ANCHOR_DIR_NAME) as AbsolutePath;
   if (!directory.ensureDirectory(anchorDir)) {
     return { kind: 'disabled', reason: 'missing-anchor' };
