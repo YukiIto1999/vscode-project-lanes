@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.7] - 2026-05-16
+
+### Changed
+
+- Renamed the lane-switch command from `projectLanes.focus` ("Focus") to `projectLanes.switchLane` ("Switch Lane") to resolve a naming collision with VS Code's view-focus semantics. The status-bar click target, the tree-item click target, and the Command Palette entry all reference the new id. Any external `keybindings.json` referring to `projectLanes.focus` must be updated
+
+### Added
+
+- New command `projectLanes.toggleActivityIndicator` ("Toggle Activity Indicator") flips the `projectLanes.activity.showIndicator` setting in place. The write target is the current workspace when a workspace is open, otherwise global settings. The existing configuration-change listener picks up the new value and re-renders the tree / decoration / status bar / badge without restart
+- `architecture.test.ts` now machine-verifies that every command declared in `package.json` is registered in `bootstrap.ts`, and that every `projectLanes.*` command registered in `bootstrap.ts` is declared in `package.json`. The check prevents drift between the manifest and the runtime
+
 ## [0.1.6] - 2026-05-14
 
 ### Changed
