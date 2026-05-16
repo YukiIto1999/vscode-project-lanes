@@ -1,7 +1,7 @@
 import * as nodePath from 'node:path';
 import type { AbsolutePath } from '../../foundation/model';
 
-/** シェル種別 (注入対応の有無) */
+/** OSC 633 注入対応の有無で分かれるシェル種別 */
 export type ShellKind = 'bash' | 'zsh' | 'unsupported';
 
 /** シェル統合の起動計画 */
