@@ -52,8 +52,8 @@
     },
     "commands": [
       {
-        "command": "projectLanes.focus",
-        "title": "Focus",
+        "command": "projectLanes.switchLane",
+        "title": "Switch Lane",
         "category": "Project Lanes"
       },
       {
