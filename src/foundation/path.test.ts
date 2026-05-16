@@ -26,7 +26,7 @@ describe('isDescendantOf', () => {
     expect(isDescendantOf(child, parent)).toBe(true);
   });
 
-  it('プレフィクスが一致するだけでは false（パス区切り文字境界）', () => {
+  it('パス区切り文字境界を跨がないプレフィクス一致は false', () => {
     const child = '/home/user/project-extra' as AbsolutePath;
     const parent = '/home/user/project' as AbsolutePath;
     expect(isDescendantOf(child, parent)).toBe(false);

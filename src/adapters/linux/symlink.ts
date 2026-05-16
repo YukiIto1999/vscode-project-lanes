@@ -22,7 +22,7 @@ export interface SymlinkOps {
 /**
  * 同ディレクトリ内のユニークなステージング絶対パス生成
  * @param linkPath - 対象 symlink 絶対パス
- * @returns ステージング用絶対パス
+ * @returns 原子的入替で経由するステージング絶対パス
  */
 const stagingPathFor = (linkPath: AbsolutePath): AbsolutePath => {
   const dir = nodePath.dirname(linkPath);

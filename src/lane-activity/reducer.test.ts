@@ -32,7 +32,7 @@ describe('reduceLaneActivity', () => {
     });
   });
 
-  it('fg-ended で fgRunning=false に更新 (lastOutputAt は保持)', () => {
+  it('fg-ended で fgRunning=false に更新し lastOutputAt は保持', () => {
     let s = reduceLaneActivity(initialLaneActivityState(), {
       kind: 'fg-started',
       sessionId: sid('s1'),
@@ -112,12 +112,12 @@ describe('projectSessionActivity', () => {
     expect(projectSessionActivity(state, at(5500))).toBe('agent-working');
   });
 
-  it('fgRunning + 出力が入力直後 (エコーギャップ以内) → agent-waiting', () => {
+  it('fgRunning + エコーギャップ以内の入力直後出力 → agent-waiting', () => {
     const state = { fgRunning: true, lastOutputAt: at(5050), lastInputAt: at(5000) };
     expect(projectSessionActivity(state, at(5050))).toBe('agent-waiting');
   });
 
-  it('fgRunning + 出力が入力ちょうど ECHO_GAP_MS 後 → agent-waiting (境界は閉じる)', () => {
+  it('fgRunning + 入力ちょうど ECHO_GAP_MS 後の出力は境界を閉じて agent-waiting', () => {
     const state = {
       fgRunning: true,
       lastOutputAt: at(5000 + ECHO_GAP_MS),
@@ -126,12 +126,12 @@ describe('projectSessionActivity', () => {
     expect(projectSessionActivity(state, at(5000 + ECHO_GAP_MS))).toBe('agent-waiting');
   });
 
-  it('fgRunning + 直近出力途絶 (ACTIVE_THRESHOLD_MS 超) → agent-waiting', () => {
+  it('fgRunning + 直近出力途絶が ACTIVE_THRESHOLD_MS 超 → agent-waiting', () => {
     const state = { fgRunning: true, lastOutputAt: at(1000), lastInputAt: at(0) };
     expect(projectSessionActivity(state, at(1000 + ACTIVE_THRESHOLD_MS))).toBe('agent-waiting');
   });
 
-  it('入力が無い (lastInputAt=0) なら出力は常にエージェント由来扱い', () => {
+  it('lastInputAt=0 の入力未観測なら出力は常にエージェント由来扱い', () => {
     const state = { fgRunning: true, lastOutputAt: at(5000), lastInputAt: at(0) };
     expect(projectSessionActivity(state, at(5500))).toBe('agent-working');
   });
