@@ -82,6 +82,11 @@
         "command": "projectLanes.removeLane",
         "title": "Remove Lane",
         "category": "Project Lanes"
+      },
+      {
+        "command": "projectLanes.toggleActivityIndicator",
+        "title": "Toggle Activity Indicator",
+        "category": "Project Lanes"
       }
     ],
     "menus": {

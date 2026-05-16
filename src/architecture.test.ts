@@ -87,6 +87,44 @@ describe('VS Code Shell Integration の旧 API は再混入しない', () => {
   });
 });
 
+describe('package.json の commands と bootstrap.ts の registerCommand の整合', () => {
+  const repoRoot = nodePath.resolve(SRC_ROOT, '..');
+  const bootstrapPath = nodePath.join(SRC_ROOT, 'app/bootstrap.ts');
+  const packageJsonPath = nodePath.join(repoRoot, 'package.json');
+
+  const declaredCommands = (() => {
+    const pkg = JSON.parse(readSource(packageJsonPath)) as {
+      contributes?: { commands?: ReadonlyArray<{ command?: string }> };
+    };
+    return new Set(
+      (pkg.contributes?.commands ?? [])
+        .map((c) => c.command)
+        .filter((c): c is string => typeof c === 'string'),
+    );
+  })();
+
+  const registeredCommands = (() => {
+    const src = readSource(bootstrapPath);
+    const re = /registerCommand\(\s*['"]([^'"]+)['"]/g;
+    const ids: string[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(src)) !== null) ids.push(match[1]!);
+    return new Set(ids);
+  })();
+
+  it('package.json で宣言された command は bootstrap.ts で登録されている', () => {
+    const missing = [...declaredCommands].filter((c) => !registeredCommands.has(c));
+    expect(missing).toEqual([]);
+  });
+
+  it('bootstrap.ts で登録された projectLanes.* command は package.json で宣言されている', () => {
+    const orphan = [...registeredCommands]
+      .filter((c) => c.startsWith('projectLanes.'))
+      .filter((c) => !declaredCommands.has(c));
+    expect(orphan).toEqual([]);
+  });
+});
+
 describe('TreeView contextValue と package.json の menus.when の整合', () => {
   const repoRoot = nodePath.resolve(SRC_ROOT, '..');
   const treeViewPath = nodePath.join(SRC_ROOT, 'adapters/vscode/tree-view.ts');
