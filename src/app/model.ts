@@ -8,7 +8,7 @@ export interface ProjectLanesConfig {
   readonly shellPath: AbsolutePath | undefined;
 }
 
-/** 設定読み取りポート */
+/** 設定読み書きポート */
 export interface ConfigPort {
   /**
    * 現設定値の取得
@@ -21,4 +21,9 @@ export interface ConfigPort {
    * @returns 購読解除可能な Disposable
    */
   readonly onDidChange: (listener: (config: ProjectLanesConfig) => void) => Disposable;
+  /**
+   * 活動インジケータ表示有無の反転
+   * @returns 書き込み完了の Promise
+   */
+  readonly toggleActivityIndicator: () => Promise<void>;
 }

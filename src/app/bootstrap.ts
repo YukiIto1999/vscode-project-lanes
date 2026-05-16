@@ -235,6 +235,11 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     laneService.closeActiveLaneTerminals(),
   );
 
+  const toggleActivityIndicatorCommand = vscode.commands.registerCommand(
+    'projectLanes.toggleActivityIndicator',
+    () => config.toggleActivityIndicator(),
+  );
+
   const profileProvider = vscode.window.registerTerminalProfileProvider(laneProfile.id, {
     provideTerminalProfile: () => {
       const activeLaneId = laneService.snapshot().activeLaneId;
@@ -263,6 +268,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     removeLaneCommand,
     reloadLanesCommand,
     closeTerminalsCommand,
+    toggleActivityIndicatorCommand,
     profileProvider,
     terminalCloseHandler,
     workspaceFoldersHandler,
