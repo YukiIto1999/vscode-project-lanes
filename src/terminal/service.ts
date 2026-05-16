@@ -54,7 +54,7 @@ export interface TerminalService {
    */
   readonly closeLane: (laneId: LaneId) => void;
   /**
-   * レーン識別子の張替え (リネーム時の追従)
+   * リネーム時の追従によるレーン識別子の張替え
    * @param oldLaneId - 旧レーン識別子
    * @param newLaneId - 新レーン識別子
    */

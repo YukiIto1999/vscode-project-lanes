@@ -31,7 +31,7 @@ export interface LaneActivityService {
    */
   readonly snapshot: () => LaneActivityState;
   /**
-   * 状態変更通知の購読 (射影が変化したときのみ発火)
+   * 射影が変化したときに発火する状態変更通知の購読
    * @param handler - 通知ハンドラー
    * @returns 購読解除可能な Disposable
    */

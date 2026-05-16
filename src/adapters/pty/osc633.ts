@@ -1,10 +1,3 @@
-/**
- * OSC 633 ストリームパーサ。
- * シェル統合スクリプトが吐く `\x1b]633;<payload>\x07` (または `\x1b]633;<payload>\x1b\\`) を
- * 純粋な状態遷移として認識し、`fg-started` / `fg-ended` / `output` の各事実を抽出する。
- * バイト列受け取り → 構造化イベント列 への変換に閉じ、時刻取得・I/O は行わない。
- */
-
 const ESC = '\x1b';
 const BEL = '\x07';
 const OSC_OPEN = ']';
@@ -20,16 +13,7 @@ export type Osc633Event =
   | { readonly kind: 'fg-ended' }
   | { readonly kind: 'output' };
 
-/**
- * パーサの状態。各フェーズはチャンク境界を跨いで保持される。
- * - plain: 通常出力
- * - esc: ESC を観測直後 (次が `]` なら OSC 突入)
- * - osc-id: ESC `]` のあとの識別子蓄積中 (`;` を境に payload/skip へ分岐)
- * - osc-633: 633 確定後の payload 蓄積中
- * - osc-633-st: 633 payload 中で ESC を観測 (次が `\` で ST 終端)
- * - osc-other: 非 633 OSC を読み飛ばし中
- * - osc-other-st: 非 633 OSC 中で ESC を観測
- */
+/** チャンク境界を跨ぐパーサ状態 */
 export type ParserState =
   | { readonly phase: 'plain' }
   | { readonly phase: 'esc' }
@@ -56,8 +40,7 @@ interface StepResult {
 export const initialParserState = (): ParserState => ({ phase: 'plain' });
 
 /**
- * payload 文字列から fg-started / fg-ended への解釈。
- * `C` / `D` / `D;<status>` のみを対象とし、それ以外 (A, B, E, P 等) は無視。
+ * payload 文字列から fg-started / fg-ended への解釈
  * @param payload - `633;` 以降の本体文字列
  * @returns 対応イベント、対象外なら undefined
  */
@@ -148,10 +131,7 @@ const step = (state: ParserState, c: string): StepResult => {
 };
 
 /**
- * チャンク 1 つ分のパース。
- * - 連続する通常出力区間ごとに `output` を 1 回発火 (バイト時系列を保つ)
- * - OSC 633 ;C / ;D[;...] の終端確定時に `fg-started` / `fg-ended` を発火
- * - 不完全シーケンスは状態として持ち越す
+ * チャンク 1 つ分のパース
  * @param state - 遷移前状態
  * @param chunk - PTY から到着したチャンク
  * @returns 遷移後状態と発火イベント列
