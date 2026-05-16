@@ -1,6 +1,33 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { EditorSnapshot, Lane } from './model';
 
+/** レーン別エディタ状態の保存ストア */
+export interface LaneSessionStore {
+  /**
+   * エディタ状態の保存
+   * @param laneId - 対象レーン識別子
+   * @param snapshot - 保存対象スナップショット
+   */
+  readonly save: (laneId: LaneId, snapshot: EditorSnapshot) => void;
+  /**
+   * エディタ状態の取得
+   * @param laneId - 対象レーン識別子
+   * @returns 保存済みスナップショット、または未保存で undefined
+   */
+  readonly get: (laneId: LaneId) => EditorSnapshot | undefined;
+  /**
+   * エディタ状態のキー張替え
+   * @param oldLaneId - 旧レーン識別子
+   * @param newLaneId - 新レーン識別子
+   */
+  readonly rekey: (oldLaneId: LaneId, newLaneId: LaneId) => void;
+  /**
+   * エディタ状態の破棄
+   * @param laneId - 対象レーン識別子
+   */
+  readonly clear: (laneId: LaneId) => void;
+}
+
 /** エディタ操作ポート */
 export interface EditorPort {
   /**

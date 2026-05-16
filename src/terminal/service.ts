@@ -65,11 +65,6 @@ export interface TerminalService {
    */
   readonly handleTerminalClosed: (terminalId: TerminalId) => void;
   /**
-   * 管理中セッション識別子の取得
-   * @returns 管理中セッション識別子の集合
-   */
-  readonly managedSessionIds: () => ReadonlySet<SessionId>;
-  /**
    * セッション識別子からのレーン識別子解決
    * @param sessionId - 対象セッション識別子
    * @returns 該当レーン識別子、または不一致で undefined
@@ -221,8 +216,6 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
     handleTerminalClosed: (terminalId) => {
       dispatch({ kind: 'terminalClosed', terminalId });
     },
-
-    managedSessionIds: () => new Set(state.sessions.keys()),
 
     resolveLaneBySession: (sessionId) => state.sessions.get(sessionId)?.spec.laneId,
 
