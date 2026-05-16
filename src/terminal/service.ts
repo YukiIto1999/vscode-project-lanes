@@ -163,13 +163,13 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
     revealLane: (lane) => {
       const disposed = presentation.disposeAllOwned();
       for (const terminalId of disposed) {
-        const sid = findSessionByTerminalId(state, terminalId);
-        if (sid) dispatch({ kind: 'terminalUnbound', sessionId: sid });
+        const sessionId = findSessionByTerminalId(state, terminalId);
+        if (sessionId) dispatch({ kind: 'terminalUnbound', sessionId });
       }
 
       const laneRecord = state.lanes.get(lane.id);
       const sessionIds = laneRecord?.sessionIds ?? [];
-      const aliveSessionIds = sessionIds.filter((sid) => handles.get(sid)?.isAlive());
+      const aliveSessionIds = sessionIds.filter((sessionId) => handles.get(sessionId)?.isAlive());
 
       if (aliveSessionIds.length === 0) {
         const spec = buildSpec(lane);
@@ -186,10 +186,10 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
           ? lastVisible
           : aliveSessionIds[aliveSessionIds.length - 1]!;
 
-      for (const sid of aliveSessionIds) {
-        const record = state.sessions.get(sid)!;
-        const terminalId = attachExisting(sid, record.spec.title);
-        if (sid === visibleSessionId) presentation.showTerminal(terminalId);
+      for (const sessionId of aliveSessionIds) {
+        const record = state.sessions.get(sessionId)!;
+        const terminalId = attachExisting(sessionId, record.spec.title);
+        if (sessionId === visibleSessionId) presentation.showTerminal(terminalId);
       }
       dispatch({ kind: 'laneRevealed', laneId: lane.id, visibleSessionId });
     },

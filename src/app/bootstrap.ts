@@ -100,9 +100,9 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   const laneCounters = new Map<LaneId, number>();
   const sessionIdPort = {
     next: (laneId: LaneId): SessionId => {
-      const n = (laneCounters.get(laneId) ?? 0) + 1;
-      laneCounters.set(laneId, n);
-      return `${laneId}:${instanceId}:${n}` as SessionId;
+      const nextCount = (laneCounters.get(laneId) ?? 0) + 1;
+      laneCounters.set(laneId, nextCount);
+      return `${laneId}:${instanceId}:${nextCount}` as SessionId;
     },
   };
 
