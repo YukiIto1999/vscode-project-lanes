@@ -14,8 +14,8 @@ interface GitExtensionShape {
 }
 
 /**
- * Git 拡張 API の取得（未導入・未活性なら undefined）
- * @returns Git API、または取得不可で undefined
+ * Git 拡張 API の取得
+ * @returns Git API、未導入や未活性で取得不可なら undefined
  */
 const acquireGitApi = async (): Promise<GitApiShape | undefined> => {
   const ext = vscode.extensions.getExtension<GitExtensionShape>('vscode.git');

@@ -108,7 +108,7 @@ export interface LanePromptPort {
   /**
    * リネーム入力ダイアログ
    * @param current - 現在のラベル
-   * @param validate - 純粋検証関数 (エラー時はメッセージ、OK 時は undefined)
+   * @param validate - エラー時はメッセージ、OK 時は undefined を返す純粋検証関数
    * @returns 入力された生入力、または取消で undefined
    */
   readonly promptRename: (
@@ -116,7 +116,7 @@ export interface LanePromptPort {
     validate: (input: string) => string | undefined,
   ) => Promise<string | undefined>;
   /**
-   * 削除確認 (modal)
+   * modal による削除確認
    * @param lane - 削除対象レーン
    * @returns OK で true、キャンセルで false
    */

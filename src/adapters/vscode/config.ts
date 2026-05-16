@@ -15,10 +15,6 @@ const readConfig = (): ProjectLanesConfig => {
 };
 
 /**
- * VS Code 設定読み取りアダプターの生成
- * @returns 設定読み取りポート
- */
-/**
  * 設定値の書き込み先スコープ決定
  * @returns Workspace スコープが利用可能ならそれ、なければ Global
  */
@@ -27,6 +23,10 @@ const writeTarget = (): vscode.ConfigurationTarget =>
     ? vscode.ConfigurationTarget.Workspace
     : vscode.ConfigurationTarget.Global;
 
+/**
+ * VS Code 設定読み書きアダプターの生成
+ * @returns 設定読み書きポート
+ */
 export const createConfigAdapter = (): ConfigPort => ({
   read: readConfig,
 

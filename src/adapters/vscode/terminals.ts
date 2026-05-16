@@ -4,10 +4,7 @@ import type { SessionActivitySink } from '../../lane-activity/ports';
 import type { ShellSessionHandle, TerminalPresentationPort } from '../../terminal/ports';
 
 /**
- * シェルセッションに接続する Pseudoterminal の生成。
- * adapter は VS Code Pseudoterminal の境界に閉じ、入力観測の事実のみ
- * activity sink に流す。出力観測は PTY 層 (node-pty 常設リスナ) が担当する
- * ため Pseudoterminal は関与しない。
+ * シェルセッションに接続する Pseudoterminal の生成
  * @param session - 接続対象シェルセッションハンドル
  * @param sink - セッション活動の事実流入口
  * @returns Pseudoterminal
