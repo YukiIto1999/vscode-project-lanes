@@ -176,6 +176,14 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       const plan = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
       if (plan.kind !== 'rename') return;
 
+      // 横断アグリゲートの順序固定:
+      //   1. terminal aggregate: ターミナルセッションの laneId を張替え (catalog 更新前に必須)
+      //   2. editor aggregate: エディタスナップショットの key を張替え
+      //   3. selection 永続化: 活性レーンが対象なら新 id へ追従
+      //   4. catalog 正本更新: registry.rename が onChange を発火し render を呼ぶ
+      //   5. VS Code folder 名再走査: 活性レーンの場合のみ Explorer 表示を新 label へ
+      // 1-3 を 4 より前に行う理由は、4 の onChange を受けた render が
+      // 既に rekey 済みの terminal / editor 状態を参照する不変条件を保つため
       terminalRekey.rekeyLane(plan.from.id, plan.to.id);
       editorStore.rekey(plan.from.id, plan.to.id);
       if (activeLaneId === plan.from.id) {
