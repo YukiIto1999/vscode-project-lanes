@@ -71,11 +71,11 @@ export const createDirectoryAdapter = (): DirectoryPort => ({
  * @returns ワークスペース設定ポート
  */
 export const createWorkspaceSettingsAdapter = (): WorkspaceSettingsPort => ({
-  setDefaultTerminalProfile: (profileName) => {
+  setDefaultTerminalProfile: (profileTitle) => {
     const cfg = vscode.workspace.getConfiguration('terminal.integrated');
     const current = cfg.get<string>('defaultProfile.linux');
-    if (current !== profileName) {
-      cfg.update('defaultProfile.linux', profileName, vscode.ConfigurationTarget.Workspace);
+    if (current !== profileTitle) {
+      cfg.update('defaultProfile.linux', profileTitle, vscode.ConfigurationTarget.Workspace);
     }
   },
 

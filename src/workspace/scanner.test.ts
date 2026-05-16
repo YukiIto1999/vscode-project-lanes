@@ -4,7 +4,6 @@ import type { FolderMutation, WorkspaceFileInfo, WorkspaceFolder } from './model
 import type {
   CatalogStorePort,
   DirectoryPort,
-  WorkspaceFilePort,
   WorkspaceHostPort,
   WorkspaceLinkPort,
 } from './ports';
@@ -145,40 +144,14 @@ describe('bootstrapWorkspace', () => {
     return { port, saved: () => stored };
   };
 
-  const makeWorkspaceFile = (info: WorkspaceFileInfo | undefined): WorkspaceFilePort => ({
-    read: () => info,
-  });
-
   const okDir: DirectoryPort = { ensureDirectory: () => true };
   const failDir: DirectoryPort = { ensureDirectory: () => false };
-
-  it('workspace ファイル無しなら disabled', () => {
-    const host = makeHost([mkFolder('web', '/home/user/web')]);
-    const link = makeLink(undefined);
-    const store = makeCatalogStore(undefined);
-    const result = bootstrapWorkspace(
-      host.port,
-      makeWorkspaceFile(undefined),
-      store.port,
-      okDir,
-      link.port,
-      toUri,
-    );
-    expect(result).toEqual({ kind: 'disabled', reason: 'no-workspace-file' });
-  });
 
   it('アンカーディレクトリ作成失敗で missing-anchor', () => {
     const host = makeHost([mkFolder('web', '/home/user/web')]);
     const link = makeLink(undefined);
     const store = makeCatalogStore(undefined);
-    const result = bootstrapWorkspace(
-      host.port,
-      makeWorkspaceFile(fileInfo),
-      store.port,
-      failDir,
-      link.port,
-      toUri,
-    );
+    const result = bootstrapWorkspace(host.port, fileInfo, store.port, failDir, link.port, toUri);
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-anchor' });
   });
 
@@ -186,14 +159,7 @@ describe('bootstrapWorkspace', () => {
     const host = makeHost([mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')]);
     const link = makeLink(undefined);
     const store = makeCatalogStore(undefined);
-    const result = bootstrapWorkspace(
-      host.port,
-      makeWorkspaceFile(fileInfo),
-      store.port,
-      okDir,
-      link.port,
-      toUri,
-    );
+    const result = bootstrapWorkspace(host.port, fileInfo, store.port, okDir, link.port, toUri);
     expect(result.kind).toBe('ready');
     expect(link.swaps).toEqual(['/home/user/web']);
     expect(host.snapshot()).toHaveLength(1);
@@ -210,7 +176,7 @@ describe('bootstrapWorkspace', () => {
     ]);
     const link = makeLink(undefined);
     const store = makeCatalogStore(undefined);
-    bootstrapWorkspace(host.port, makeWorkspaceFile(fileInfo), store.port, okDir, link.port, toUri);
+    bootstrapWorkspace(host.port, fileInfo, store.port, okDir, link.port, toUri);
     expect(host.snapshot()).toHaveLength(1);
     expect(host.snapshot()[0]!.uri).toBe(toUri(linkPath));
     expect(link.swaps).toEqual(['/home/user/web']);
@@ -220,7 +186,7 @@ describe('bootstrapWorkspace', () => {
     const host = makeHost([linkFolder]);
     const link = makeLink('/home/user/web' as AbsolutePath);
     const store = makeCatalogStore([mkFolder('web', '/home/user/web')]);
-    bootstrapWorkspace(host.port, makeWorkspaceFile(fileInfo), store.port, okDir, link.port, toUri);
+    bootstrapWorkspace(host.port, fileInfo, store.port, okDir, link.port, toUri);
     expect(host.mutations).toHaveLength(0);
     expect(link.swaps).toHaveLength(0);
   });
@@ -229,14 +195,7 @@ describe('bootstrapWorkspace', () => {
     const host = makeHost([]);
     const link = makeLink(undefined);
     const store = makeCatalogStore(undefined);
-    const result = bootstrapWorkspace(
-      host.port,
-      makeWorkspaceFile(fileInfo),
-      store.port,
-      okDir,
-      link.port,
-      toUri,
-    );
+    const result = bootstrapWorkspace(host.port, fileInfo, store.port, okDir, link.port, toUri);
     expect(result.kind).toBe('ready');
     if (result.kind !== 'ready') return;
     expect(result.context.canonicalLanes).toEqual([]);
@@ -251,7 +210,7 @@ describe('bootstrapWorkspace', () => {
       mkFolder('web', '/home/user/web'),
       mkFolder('api', '/home/user/api'),
     ]);
-    bootstrapWorkspace(host.port, makeWorkspaceFile(fileInfo), store.port, okDir, link.port, toUri);
+    bootstrapWorkspace(host.port, fileInfo, store.port, okDir, link.port, toUri);
     expect(link.swaps).toEqual(['/home/user/web']);
   });
 });

@@ -21,7 +21,7 @@ import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
 import { bootstrapWorkspace, collectLaneCandidates } from '../workspace/scanner';
 import { createCatalogRegistry } from '../workspace/registry';
 import { reconcileUserChange } from '../workspace/reconciler';
-import type { WorkspaceFolder } from '../workspace/model';
+import type { WorkspaceDisabledReason, WorkspaceFolder } from '../workspace/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
 import { createTerminalService } from '../terminal/service';
@@ -40,7 +40,7 @@ export type BootstrapOutcome =
       /** 無効化 */
       readonly kind: 'disabled';
       /** 無効化理由 */
-      readonly reason: 'no-workspace-file' | 'missing-anchor';
+      readonly reason: WorkspaceDisabledReason;
     };
 
 /**
@@ -60,14 +60,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   const linkPath = nodePath.join(fileInfo.directoryPath, '.lanes-root', 'active') as AbsolutePath;
   const link = createWorkspaceLinkAdapter(linkPath);
 
-  const result = bootstrapWorkspace(
-    workspaceHost,
-    workspaceFile,
-    catalogStore,
-    directory,
-    link,
-    toUri,
-  );
+  const result = bootstrapWorkspace(workspaceHost, fileInfo, catalogStore, directory, link, toUri);
   if (result.kind === 'disabled') return { kind: 'disabled', reason: result.reason };
 
   const { context: wsContext } = result;
