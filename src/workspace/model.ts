@@ -8,18 +8,6 @@ export interface WorkspaceFolder {
   readonly name: string;
 }
 
-/** アンカーディレクトリ情報 */
-export interface WorkspaceAnchor {
-  /** アンカー名 */
-  readonly name: '.lanes-root';
-  /** アンカー URI */
-  readonly uri: UriString;
-  /** アンカー絶対パス */
-  readonly path: AbsolutePath;
-  /** アンカー親ディレクトリ絶対パス */
-  readonly parentPath: AbsolutePath;
-}
-
 /** ワークスペースファイル情報 */
 export interface WorkspaceFileInfo {
   /** ワークスペースファイル URI */
@@ -42,8 +30,6 @@ export interface FolderMutation {
 export interface WorkspaceContext {
   /** ワークスペース永続キー */
   readonly key: WorkspaceKey;
-  /** アンカー情報 */
-  readonly anchor: WorkspaceAnchor;
   /** レーン正本 */
   readonly canonicalLanes: readonly WorkspaceFolder[];
 }
