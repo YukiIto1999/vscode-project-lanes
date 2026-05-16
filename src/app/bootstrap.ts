@@ -22,6 +22,7 @@ import { bootstrapWorkspace, collectLaneCandidates } from '../workspace/scanner'
 import { createCatalogRegistry } from '../workspace/registry';
 import { reconcileUserChange } from '../workspace/reconciler';
 import type { WorkspaceDisabledReason, WorkspaceFolder } from '../workspace/model';
+import { toLaneId } from '../lane/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
 import { createTerminalService } from '../terminal/service';
@@ -182,12 +183,23 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     vscode.commands.executeCommand('workbench.action.addRootFolder'),
   );
 
+  /**
+   * VS Code コマンドコールバック引数から LaneId を取り出す
+   *
+   * 引数の形は呼び出し経路で異なる。
+   * - コマンドパレットや keybinding 経由: `string` (LaneId 文字列をそのまま渡す)
+   * - TreeView 右クリックメニュー経由: `{ laneId }` または `{ id }` 形を取る vscode.TreeItem
+   *
+   * 対応経路以外は `undefined` を返す。
+   * @param commandArgument - VS Code が渡すコールバック第一引数
+   * @returns 解決された LaneId、解決不可で undefined
+   */
   const extractLaneId = (commandArgument: unknown): LaneId | undefined => {
-    if (typeof commandArgument === 'string') return commandArgument as LaneId;
+    if (typeof commandArgument === 'string') return toLaneId(commandArgument);
     if (commandArgument && typeof commandArgument === 'object') {
       const fields = commandArgument as { laneId?: unknown; id?: unknown };
-      if (typeof fields.laneId === 'string') return fields.laneId as LaneId;
-      if (typeof fields.id === 'string') return fields.id as LaneId;
+      if (typeof fields.laneId === 'string') return toLaneId(fields.laneId);
+      if (typeof fields.id === 'string') return toLaneId(fields.id);
     }
     return undefined;
   };
@@ -221,7 +233,8 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
 
   const switchLaneCommand = vscode.commands.registerCommand(
     'projectLanes.switchLane',
-    (laneId?: string) => laneService.focus(laneId as LaneId | undefined).then(() => render()),
+    (laneId?: string) =>
+      laneService.focus(laneId === undefined ? undefined : toLaneId(laneId)).then(() => render()),
   );
 
   const closeTerminalsCommand = vscode.commands.registerCommand('projectLanes.closeTerminals', () =>
