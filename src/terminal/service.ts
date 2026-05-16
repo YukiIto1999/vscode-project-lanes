@@ -54,7 +54,7 @@ export interface TerminalService {
    */
   readonly closeLane: (laneId: LaneId) => void;
   /**
-   * レーン識別子の張替え (リネーム時の追従)
+   * リネーム時の追従によるレーン識別子の張替え
    * @param oldLaneId - 旧レーン識別子
    * @param newLaneId - 新レーン識別子
    */
@@ -64,11 +64,6 @@ export interface TerminalService {
    * @param terminalId - 対象ターミナル識別子
    */
   readonly handleTerminalClosed: (terminalId: TerminalId) => void;
-  /**
-   * 管理中セッション識別子の取得
-   * @returns 管理中セッション識別子の集合
-   */
-  readonly managedSessionIds: () => ReadonlySet<SessionId>;
   /**
    * セッション識別子からのレーン識別子解決
    * @param sessionId - 対象セッション識別子
@@ -221,8 +216,6 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
     handleTerminalClosed: (terminalId) => {
       dispatch({ kind: 'terminalClosed', terminalId });
     },
-
-    managedSessionIds: () => new Set(state.sessions.keys()),
 
     resolveLaneBySession: (sessionId) => state.sessions.get(sessionId)?.spec.laneId,
 

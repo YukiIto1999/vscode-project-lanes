@@ -1,6 +1,6 @@
 import type { Instant, LaneId, SessionId } from '../foundation/model';
 
-/** セッション単位の活動状態 (PTY セッションを観測単位とする) */
+/** PTY セッションを観測単位とする活動状態 */
 export type SessionActivity = 'shell-prompt' | 'agent-working' | 'agent-waiting';
 
 /** レーン単位の集約活動状態 */
@@ -14,10 +14,10 @@ export interface LaneActivityRecord {
   readonly activity: LaneActivity;
 }
 
-/** セッション活動の入力イベント (内部表現) */
+/** 内部表現のセッション活動入力イベント */
 export type SessionActivityEvent =
   | {
-      /** foreground コマンド開始 (OSC 633 ;C 相当) */
+      /** foreground コマンド開始 */
       readonly kind: 'fg-started';
       /** 対象セッション識別子 */
       readonly sessionId: SessionId;
@@ -25,7 +25,7 @@ export type SessionActivityEvent =
       readonly at: Instant;
     }
   | {
-      /** foreground コマンド終了 (OSC 633 ;D 相当) */
+      /** foreground コマンド終了 */
       readonly kind: 'fg-ended';
       /** 対象セッション識別子 */
       readonly sessionId: SessionId;
@@ -39,7 +39,7 @@ export type SessionActivityEvent =
       readonly at: Instant;
     }
   | {
-      /** ユーザー入力観測 (打鍵) */
+      /** ユーザー打鍵入力の観測 */
       readonly kind: 'input';
       /** 対象セッション識別子 */
       readonly sessionId: SessionId;
@@ -47,7 +47,7 @@ export type SessionActivityEvent =
       readonly at: Instant;
     }
   | {
-      /** セッション消滅 (PTY exit 等) */
+      /** PTY exit によるセッション消滅 */
       readonly kind: 'forgotten';
       /** 対象セッション識別子 */
       readonly sessionId: SessionId;
@@ -55,7 +55,7 @@ export type SessionActivityEvent =
 
 /** セッション単位の活動内部状態 */
 export interface SessionActivityState {
-  /** foreground コマンド実行中か (OSC 633 ;C 後 ;D 前) */
+  /** foreground コマンド実行中か */
   readonly fgRunning: boolean;
   /** 最終出力観測時刻 */
   readonly lastOutputAt: Instant;

@@ -189,12 +189,12 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     vscode.commands.executeCommand('workbench.action.addRootFolder'),
   );
 
-  const extractLaneId = (arg: unknown): LaneId | undefined => {
-    if (typeof arg === 'string') return arg as LaneId;
-    if (arg && typeof arg === 'object') {
-      const obj = arg as { laneId?: unknown; id?: unknown };
-      if (typeof obj.laneId === 'string') return obj.laneId as LaneId;
-      if (typeof obj.id === 'string') return obj.id as LaneId;
+  const extractLaneId = (commandArgument: unknown): LaneId | undefined => {
+    if (typeof commandArgument === 'string') return commandArgument as LaneId;
+    if (commandArgument && typeof commandArgument === 'object') {
+      const fields = commandArgument as { laneId?: unknown; id?: unknown };
+      if (typeof fields.laneId === 'string') return fields.laneId as LaneId;
+      if (typeof fields.id === 'string') return fields.id as LaneId;
     }
     return undefined;
   };

@@ -3,13 +3,9 @@ import { uriToAbsolutePath } from '../../foundation/path';
 import type { LaneViewRebindPort } from '../../lane/ports';
 import type { WorkspaceHostPort } from '../../workspace/ports';
 
-/** Git 拡張のリポジトリ参照（必要部分のみ） */
-type GitRepositoryRef = object;
-
-/** Git 拡張 API（必要部分のみ） */
+/** Git 拡張 API のうち本拡張が依存する最小契約 */
 interface GitApiShape {
-  readonly repositories: readonly GitRepositoryRef[];
-  readonly getRepository: (uri: vscode.Uri) => GitRepositoryRef | null;
+  readonly getRepository: (uri: vscode.Uri) => object | null;
 }
 
 /** Git 拡張 exports（必要部分のみ） */
@@ -18,8 +14,8 @@ interface GitExtensionShape {
 }
 
 /**
- * Git 拡張 API の取得（未導入・未活性なら undefined）
- * @returns Git API、または取得不可で undefined
+ * Git 拡張 API の取得
+ * @returns Git API、未導入や未活性で取得不可なら undefined
  */
 const acquireGitApi = async (): Promise<GitApiShape | undefined> => {
   const ext = vscode.extensions.getExtension<GitExtensionShape>('vscode.git');

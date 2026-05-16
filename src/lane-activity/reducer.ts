@@ -9,20 +9,10 @@ import type {
 } from './model';
 import type { LaneResolverPort } from './ports';
 
-/**
- * 出力途絶を待機中とみなす猶予時間 (ms)。
- * 出力が観測されてから本値以内に追加出力が無ければ、エージェントは
- * 入力待機状態とみなされる。
- */
+/** 出力途絶を入力待機とみなす猶予時間 ms */
 export const ACTIVE_THRESHOLD_MS = 1500;
 
-/**
- * 入力直後の出力をエコーとみなす最小ギャップ (ms)。
- * 入力 (打鍵) から本値未満で観測された出力はエコー (シェル / TUI 由来の
- * 自前再描画) と区別がつかないため、エージェント活動シグナルとして
- * 採用しない。値はエージェントの典型応答開始遅延 (200ms 以上) を
- * 下回ることが必須。
- */
+/** 入力直後の出力をエコーとみなす最小ギャップ ms */
 export const ECHO_GAP_MS = 100;
 
 const ZERO: Instant = 0 as Instant;
@@ -76,14 +66,11 @@ export const reduceLaneActivity = (
 };
 
 /**
- * セッション単位の活動状態の射影。
- * foreground 中で「直近出力が閾値内 AND 入力よりエコーギャップ以上
- * 後に発生」のときのみ working、それ以外の foreground 中は waiting、
- * foreground 外は shell-prompt。
+ * セッション単位の活動状態の射影
  * @param state - セッション状態
  * @param now - 現在時刻
- * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
- * @param echoGapMs - エコーとみなす最小ギャップ (ms)
+ * @param thresholdMs - 出力途絶を入力待機とみなす猶予時間 ms
+ * @param echoGapMs - エコーとみなす最小ギャップ ms
  * @returns セッション活動状態
  */
 export const projectSessionActivity = (
@@ -102,7 +89,7 @@ export const projectSessionActivity = (
 /**
  * セッション活動列のレーン単位集約
  * @param activities - 活動状態列
- * @returns 集約活動状態 (working > waiting > no-agent の順で最大優先)
+ * @returns working > waiting > no-agent の順で最大優先される集約活動状態
  */
 export const aggregateLaneActivity = (activities: readonly SessionActivity[]): LaneActivity => {
   if (activities.some((a) => a === 'agent-working')) return 'agent-working';
@@ -116,8 +103,8 @@ export const aggregateLaneActivity = (activities: readonly SessionActivity[]): L
  * @param resolver - レーン解決ポート
  * @param knownLaneIds - 表示対象レーン識別子列
  * @param now - 現在時刻
- * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
- * @param echoGapMs - エコーとみなす最小ギャップ (ms)
+ * @param thresholdMs - 出力途絶を入力待機とみなす猶予時間 ms
+ * @param echoGapMs - エコーとみなす最小ギャップ ms
  * @returns レーン活動レコード列
  */
 export const projectLaneActivities = (
@@ -133,9 +120,9 @@ export const projectLaneActivities = (
     const laneId = resolver.resolveLaneBySession(sessionId);
     if (!laneId) continue;
     const activity = projectSessionActivity(sessionState, now, thresholdMs, echoGapMs);
-    const arr = byLane.get(laneId) ?? [];
-    arr.push(activity);
-    byLane.set(laneId, arr);
+    const laneActivities = byLane.get(laneId) ?? [];
+    laneActivities.push(activity);
+    byLane.set(laneId, laneActivities);
   }
 
   return [...knownLaneIds].map((laneId) => ({
@@ -145,11 +132,11 @@ export const projectLaneActivities = (
 };
 
 /**
- * セッション全体の射影マップ (差分判定用)
+ * 差分判定向けのセッション全体射影マップ
  * @param state - 射影元状態
  * @param now - 現在時刻
- * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
- * @param echoGapMs - エコーとみなす最小ギャップ (ms)
+ * @param thresholdMs - 出力途絶を入力待機とみなす猶予時間 ms
+ * @param echoGapMs - エコーとみなす最小ギャップ ms
  * @returns セッション活動マップ
  */
 export const projectSessionMap = (
@@ -183,10 +170,10 @@ export const equalSessionMap = (
 };
 
 /**
- * 次に状態遷移が起きる予想時刻 (絶対値) の算出
+ * 次に状態遷移が起きる予想絶対時刻の算出
  * @param state - 現在状態
  * @param now - 現在時刻
- * @param thresholdMs - 出力途絶を待機中とみなす猶予時間 (ms)
+ * @param thresholdMs - 出力途絶を入力待機とみなす猶予時間 ms
  * @returns 次の遷移時刻、無ければ undefined
  */
 export const nextTransitionAt = (

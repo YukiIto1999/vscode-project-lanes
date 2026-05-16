@@ -1,7 +1,7 @@
 import * as nodePath from 'node:path';
 import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
-import type { WorkspaceAnchor, WorkspaceBootstrapResult, WorkspaceFolder } from './model';
+import type { WorkspaceBootstrapResult, WorkspaceFolder } from './model';
 import type {
   CatalogStorePort,
   DirectoryPort,
@@ -66,19 +66,6 @@ export const chooseActiveLane = (
 };
 
 /**
- * アンカー情報の構築
- * @param path - アンカー絶対パス
- * @param toUri - パスから URI への変換
- * @returns アンカー情報
- */
-const buildAnchor = (path: AbsolutePath, toUri: (path: string) => UriString): WorkspaceAnchor => ({
-  name: ANCHOR_DIR_NAME,
-  uri: toUri(path),
-  path,
-  parentPath: nodePath.dirname(path) as AbsolutePath,
-});
-
-/**
  * ワークスペースのブートストラップ
  * @param host - workspaceFolders 操作ポート
  * @param workspaceFile - ワークスペースファイル参照ポート
@@ -114,9 +101,8 @@ export const bootstrapWorkspace = (
 
   if (!activeLane) {
     catalogStore.save([]);
-    const anchor = buildAnchor(anchorDir, toUri);
     const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
-    return { kind: 'ready', context: { key, anchor, canonicalLanes: [] } };
+    return { kind: 'ready', context: { key, canonicalLanes: [] } };
   }
 
   const activePath = uriToAbsolutePath(activeLane.uri);
@@ -144,7 +130,6 @@ export const bootstrapWorkspace = (
 
   catalogStore.save(lanes);
 
-  const anchor = buildAnchor(anchorDir, toUri);
   const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
-  return { kind: 'ready', context: { key, anchor, canonicalLanes: lanes } };
+  return { kind: 'ready', context: { key, canonicalLanes: lanes } };
 };
