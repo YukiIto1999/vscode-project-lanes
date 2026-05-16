@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { LanePromptPort } from '../../lane/ports';
 
 /**
- * VS Code QuickPick / InputBox / WarningMessage を用いた対話アダプターの生成
+ * VS Code QuickPick / InputBox / WarningMessage 経由の対話アダプターの生成
  * @returns ユーザー対話ポート
  */
 export const createPromptAdapter = (): LanePromptPort => ({

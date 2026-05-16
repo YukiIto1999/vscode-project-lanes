@@ -53,7 +53,7 @@ describe('SymlinkOps', () => {
     expect(tmpEntries).toHaveLength(0);
   });
 
-  it('symlink 先が存在しなくても read は参照先文字列を返す（broken link 許容）', () => {
+  it('symlink 先が存在しない broken link でも read は参照先文字列を返す', () => {
     const target = abs('noexist-target');
     const link = abs('link');
     ops.replace(link, target);
