@@ -20,14 +20,14 @@ export interface SymlinkOps {
 }
 
 /**
- * 同ディレクトリ内のユニーク tmp パスの生成
+ * 同ディレクトリ内のユニークなステージング絶対パス生成
  * @param linkPath - 対象 symlink 絶対パス
- * @returns tmp 絶対パス
+ * @returns ステージング用絶対パス
  */
-const tmpPathFor = (linkPath: AbsolutePath): string => {
+const stagingPathFor = (linkPath: AbsolutePath): AbsolutePath => {
   const dir = nodePath.dirname(linkPath);
   const base = nodePath.basename(linkPath);
-  return nodePath.join(dir, `${base}.tmp-${process.pid}-${Date.now()}`);
+  return nodePath.join(dir, `${base}.tmp-${process.pid}-${Date.now()}`) as AbsolutePath;
 };
 
 /**
@@ -44,17 +44,17 @@ export const createSymlinkOps = (): SymlinkOps => ({
   },
 
   replace: (linkPath, targetPath) => {
-    const tmp = tmpPathFor(linkPath);
-    fs.symlinkSync(targetPath, tmp);
+    const stagingPath = stagingPathFor(linkPath);
+    fs.symlinkSync(targetPath, stagingPath);
     try {
-      fs.renameSync(tmp, linkPath);
-    } catch (e) {
+      fs.renameSync(stagingPath, linkPath);
+    } catch (renameError) {
       try {
-        fs.unlinkSync(tmp);
+        fs.unlinkSync(stagingPath);
       } catch {
-        /* tmp は起動ごとに固有 */
+        /* ステージングパスは起動ごとに固有なので残存しても他プロセスと衝突しない */
       }
-      throw e;
+      throw renameError;
     }
   },
 });
