@@ -20,7 +20,8 @@
     "test:watch": "vp test",
     "lint": "vp lint",
     "fmt": "vp fmt",
-    "check": "vp check",
+    "typecheck": "tsc --noEmit",
+    "check": "vp check && npm run typecheck",
     "package": "vsce package"
   },
   "dependencies": {
