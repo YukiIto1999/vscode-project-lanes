@@ -18,7 +18,7 @@ export interface StatusBarAdapter {
  */
 export const createStatusBarAdapter = (): StatusBarAdapter => {
   const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  item.command = 'projectLanes.focus';
+  item.command = 'projectLanes.switchLane';
 
   return {
     render: (vm: StatusBarViewModel) => {

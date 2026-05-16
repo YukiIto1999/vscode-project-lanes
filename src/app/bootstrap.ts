@@ -226,8 +226,9 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     render();
   });
 
-  const focusCommand = vscode.commands.registerCommand('projectLanes.focus', (laneId?: string) =>
-    laneService.focus(laneId as LaneId | undefined).then(() => render()),
+  const switchLaneCommand = vscode.commands.registerCommand(
+    'projectLanes.switchLane',
+    (laneId?: string) => laneService.focus(laneId as LaneId | undefined).then(() => render()),
   );
 
   const closeTerminalsCommand = vscode.commands.registerCommand('projectLanes.closeTerminals', () =>
@@ -256,7 +257,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   });
 
   context.subscriptions.push(
-    focusCommand,
+    switchLaneCommand,
     addFolderCommand,
     renameLaneCommand,
     removeLaneCommand,
