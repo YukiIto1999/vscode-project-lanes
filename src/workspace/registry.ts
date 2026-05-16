@@ -1,5 +1,5 @@
-import type { Disposable, LaneId } from '../foundation/model';
-import type { Lane, LaneCatalog } from '../lane/model';
+import type { Disposable } from '../foundation/model';
+import { type Lane, type LaneCatalog, toLaneId } from '../lane/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import type { WorkspaceFolder } from './model';
 import type { CatalogStorePort } from './ports';
@@ -11,7 +11,7 @@ import type { CatalogStorePort } from './ports';
  */
 export const buildCatalog = (lanes: readonly WorkspaceFolder[]): LaneCatalog => {
   const built: Lane[] = lanes.map((f) => ({
-    id: f.name as LaneId,
+    id: toLaneId(f.name),
     label: f.name,
     rootUri: f.uri,
     rootPath: uriToAbsolutePath(f.uri),

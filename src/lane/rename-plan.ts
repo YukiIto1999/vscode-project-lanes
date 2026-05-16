@@ -1,5 +1,5 @@
 import type { LaneId } from '../foundation/model';
-import type { Lane, LaneCatalog } from './model';
+import { type Lane, type LaneCatalog, toLaneId } from './model';
 
 /** リネーム計画 */
 export type LaneRenamePlan =
@@ -54,6 +54,6 @@ export const planLaneRename = (input: LaneRenameInput): LaneRenamePlan => {
   return {
     kind: 'rename',
     from: target,
-    to: { id: trimmed as LaneId, label: trimmed },
+    to: { id: toLaneId(trimmed), label: trimmed },
   };
 };
