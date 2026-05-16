@@ -120,9 +120,9 @@ export const projectLaneActivities = (
     const laneId = resolver.resolveLaneBySession(sessionId);
     if (!laneId) continue;
     const activity = projectSessionActivity(sessionState, now, thresholdMs, echoGapMs);
-    const arr = byLane.get(laneId) ?? [];
-    arr.push(activity);
-    byLane.set(laneId, arr);
+    const laneActivities = byLane.get(laneId) ?? [];
+    laneActivities.push(activity);
+    byLane.set(laneId, laneActivities);
   }
 
   return [...knownLaneIds].map((laneId) => ({
