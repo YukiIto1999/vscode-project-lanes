@@ -68,14 +68,14 @@ export interface WorkspaceCatalogRegistry {
   readonly absorb: (lanes: readonly WorkspaceFolder[]) => readonly string[];
   /**
    * レーンの改名
-   * @param oldName - 改名前 name (= 旧 LaneId)
-   * @param newName - 改名後 name (= 新 LaneId)
+   * @param oldName - 旧 LaneId を兼ねる改名前 name
+   * @param newName - 新 LaneId を兼ねる改名後 name
    * @returns 実際に変更が発生すれば true
    */
   readonly rename: (oldName: string, newName: string) => boolean;
   /**
    * レーンの除外
-   * @param name - 除外対象 name (= LaneId)
+   * @param name - LaneId を兼ねる除外対象 name
    * @returns 実際に変更が発生すれば true
    */
   readonly remove: (name: string) => boolean;

@@ -84,8 +84,8 @@ const projectBadge = (
   if (!showIndicator) return undefined;
   const waitingCount = activities.filter((a) => a.activity === 'agent-waiting').length;
   if (waitingCount === 0) return undefined;
-  const noun = waitingCount === 1 ? 'lane is' : 'lanes are';
-  return { value: waitingCount, tooltip: `${waitingCount} ${noun} waiting for input` };
+  const subject = waitingCount === 1 ? 'lane is' : 'lanes are';
+  return { value: waitingCount, tooltip: `${waitingCount} ${subject} waiting for input` };
 };
 
 /**

@@ -3,17 +3,12 @@ import type { WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
 import { executeActiveLinkSwap, planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
-import type {
-  Lane,
-  LaneCatalog,
-  LaneFocusPlan,
-  LaneServiceSnapshot,
-  LaneSessionStore,
-} from './model';
+import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
 import type {
   EditorPort,
   LanePromptPort,
   LaneSelectionStorePort,
+  LaneSessionStore,
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
