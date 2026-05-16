@@ -1,5 +1,6 @@
 import type { LaneId } from '../foundation/model';
-import type { EditorSnapshot, LaneSessionStore } from './model';
+import type { EditorSnapshot } from './model';
+import type { LaneSessionStore } from './ports';
 
 /**
  * インメモリ実装のエディタ状態ストア生成

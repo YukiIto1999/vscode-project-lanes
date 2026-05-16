@@ -29,7 +29,7 @@ interface StepResult {
   readonly state: ParserState;
   /** 通常出力が観測されたか */
   readonly emittedOutput: boolean;
-  /** 確定した OSC 633 イベント (無ければ undefined) */
+  /** 確定した OSC 633 イベント、未確定で undefined */
   readonly emittedFg?: Osc633Event | undefined;
 }
 
@@ -141,7 +141,7 @@ export const parseChunk = (
   chunk: string,
 ): { readonly state: ParserState; readonly events: readonly Osc633Event[] } => {
   const events: Osc633Event[] = [];
-  let cur = state;
+  let currentState = state;
   let outputPending = false;
 
   const flushOutput = (): void => {
@@ -150,9 +150,9 @@ export const parseChunk = (
     outputPending = false;
   };
 
-  for (const c of chunk) {
-    const result = step(cur, c);
-    cur = result.state;
+  for (const character of chunk) {
+    const result = step(currentState, character);
+    currentState = result.state;
     if (result.emittedOutput) {
       outputPending = true;
       continue;
@@ -162,5 +162,5 @@ export const parseChunk = (
   }
 
   flushOutput();
-  return { state: cur, events };
+  return { state: currentState, events };
 };
