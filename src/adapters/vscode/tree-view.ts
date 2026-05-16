@@ -16,8 +16,8 @@ const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
   item.resourceUri = vscode.Uri.parse(vm.resourceUri);
   item.contextValue = 'projectLane';
   item.command = {
-    command: 'projectLanes.focus',
-    title: 'Focus',
+    command: 'projectLanes.switchLane',
+    title: 'Switch Lane',
     arguments: [vm.laneId],
   };
   return item;
