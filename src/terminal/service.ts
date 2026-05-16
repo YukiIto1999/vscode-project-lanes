@@ -25,7 +25,7 @@ export interface TerminalServiceDeps {
 export interface RequestedSession {
   /** 新規セッション識別子 */
   readonly sessionId: SessionId;
-  /** 接続用シェルハンドル */
+  /** Pseudoterminal に接続するシェルハンドル */
   readonly handle: ShellSessionHandle;
 }
 
@@ -37,9 +37,9 @@ export interface TerminalService {
    */
   readonly revealLane: (lane: Lane) => void;
   /**
-   * 指定レーンへの新規セッション起動と接続用ハンドル取得
+   * 指定レーンへの新規セッション起動とシェルハンドル取得
    * @param lane - 対象レーン
-   * @returns 新規セッション識別子と接続用ハンドル
+   * @returns 新規セッション識別子と Pseudoterminal 接続用シェルハンドル
    */
   readonly requestSession: (lane: Lane) => RequestedSession;
   /**
@@ -135,7 +135,7 @@ export const createTerminalService = (deps: TerminalServiceDeps): TerminalServic
   /**
    * セッションの生成、ハンドル登録、終了監視の登録
    * @param spec - セッション仕様
-   * @returns 接続用ハンドル
+   * @returns Pseudoterminal 接続用シェルハンドル
    */
   const spawnSession = (spec: TerminalSessionSpec): ShellSessionHandle => {
     const handle = shellFactory.create(spec);

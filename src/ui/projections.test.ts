@@ -73,7 +73,7 @@ describe('projectUi', () => {
     expect(result.statusBar.text).toBe('$(layers) web');
   });
 
-  it('バッジは waiting レーン数のみカウント (working は含めない)', () => {
+  it('バッジは waiting レーン数のみカウントし working は含めない', () => {
     const lane: LaneServiceSnapshot = {
       catalog: makeCatalog(['web', 'api', 'cli']),
       activeLaneId: 'web' as LaneId,
@@ -89,7 +89,7 @@ describe('projectUi', () => {
     expect(result.badge!.tooltip).toBe('2 lanes are waiting for input');
   });
 
-  it('waiting が無ければバッジ無し (working のみは通知不要)', () => {
+  it('waiting が無ければ working のみでもバッジ無し', () => {
     const lane: LaneServiceSnapshot = {
       catalog: makeCatalog(['web']),
       activeLaneId: 'web' as LaneId,

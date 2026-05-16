@@ -17,7 +17,7 @@ describe('planActiveLinkSwap', () => {
     expect(planActiveLinkSwap(linkPath, from, to)).toEqual({ linkPath, from, to });
   });
 
-  it('from が undefined でも plan を返す（初回 swap）', () => {
+  it('初回 swap のため from が undefined でも plan を返す', () => {
     const to = '/p/b' as AbsolutePath;
     expect(planActiveLinkSwap(linkPath, undefined, to)).toEqual({ linkPath, from: undefined, to });
   });
