@@ -30,14 +30,14 @@
 
 ## コマンド
 
-| コマンド                                 | 説明                                                                 |
-| ---------------------------------------- | -------------------------------------------------------------------- |
-| `Project Lanes: Focus`                   | レーンに切替                                                         |
-| `Project Lanes: Add Folder to Workspace` | フォルダをレーンとしてワークスペースに追加（`addRootFolder` に委譲） |
-| `Project Lanes: Reload Lanes`            | `workspaceFolders` / symlink / カタログを見直し registry を再構築    |
-| `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                     |
-| `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）           |
-| `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                       |
+| コマンド                                 | 説明                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------- |
+| `Project Lanes: Focus`                   | レーンに切替                                                      |
+| `Project Lanes: Add Folder to Workspace` | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加      |
+| `Project Lanes: Reload Lanes`            | `workspaceFolders` / symlink / カタログを見直し registry を再構築 |
+| `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                  |
+| `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）        |
+| `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                    |
 
 ## 設定
 

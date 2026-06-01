@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as nodePath from 'node:path';
 import type { AbsolutePath, Instant, LaneId, SessionId, UriString } from '../foundation/model';
+import { baseName, parentDirectory, uriToAbsolutePath } from '../foundation/path';
 import { createConfigAdapter } from '../adapters/vscode/config';
 import { createCatalogStoreAdapter, createSelectionStoreAdapter } from '../adapters/vscode/storage';
 import { createEditorAdapter } from '../adapters/vscode/editors';
@@ -177,9 +178,21 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     collapseFoldersToLink(workspaceHost, action.collapsedFolder);
   });
 
-  const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', () =>
-    vscode.commands.executeCommand('workbench.action.addRootFolder'),
-  );
+  const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', async () => {
+    const activeId = laneService.snapshot().activeLaneId;
+    const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
+    const defaultDirectory = activeLane
+      ? parentDirectory(activeLane.rootPath)
+      : fileInfo.directoryPath;
+    const picked = await prompt.pickFoldersToAdd(defaultDirectory);
+    if (picked.length === 0) return;
+    const existing = workspaceHost.readFolders();
+    workspaceHost.applyMutation({
+      start: existing.length,
+      deleteCount: 0,
+      folders: picked.map((uri) => ({ uri, name: baseName(uriToAbsolutePath(uri)) })),
+    });
+  });
 
   /**
    * VS Code コマンドコールバック引数から LaneId を取り出す
