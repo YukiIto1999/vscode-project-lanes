@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'node:fs';
+import * as nodePath from 'node:path';
+import type { AbsolutePath } from '../../foundation/model';
 import { uriToAbsolutePath } from '../../foundation/path';
 import type { LaneViewRebindPort } from '../../lane/ports';
 import type { WorkspaceHostPort } from '../../workspace/ports';
@@ -35,6 +38,14 @@ const acquireGitApi = async (): Promise<GitApiShape | undefined> => {
 };
 
 /**
+ * レーンルートが git 作業ツリーかの判定
+ * @param rootPath - レーンルート絶対パス
+ * @returns git リポジトリなら true
+ */
+const isGitWorktree = (rootPath: AbsolutePath): boolean =>
+  fs.existsSync(nodePath.join(rootPath, '.git'));
+
+/**
  * VS Code ビュー再走査アダプターの生成
  * @param workspaceHost - workspaceFolders 操作ポート
  * @returns ビュー再走査ポート
@@ -57,6 +68,9 @@ export const createLaneViewRebindAdapter = (
 
     const api = await acquireGitApi();
     if (!api) return;
+
+    // git.close による closedRepositories への永続登録回避
+    if (!isGitWorktree(activeLane.rootPath)) return;
 
     const folderUri = vscode.Uri.parse(head.uri);
     if (api.getRepository(folderUri)) {
