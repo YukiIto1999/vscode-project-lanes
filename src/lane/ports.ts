@@ -1,4 +1,4 @@
-import type { LaneId, WorkspaceKey } from '../foundation/model';
+import type { AbsolutePath, LaneId, UriString, WorkspaceKey } from '../foundation/model';
 import type { EditorSnapshot, Lane } from './model';
 
 /** レーン別エディタ状態の保存ストア */
@@ -123,4 +123,10 @@ export interface LanePromptPort {
   readonly confirmRemoval: (lane: Lane) => Promise<boolean>;
   /** アクティブレーン削除を試みた際の警告 */
   readonly warnActiveLaneRemoval: () => void;
+  /**
+   * 追加フォルダ選択ダイアログ
+   * @param defaultDirectory - 初期表示ディレクトリ
+   * @returns 選択フォルダの URI 列、取消で空配列
+   */
+  readonly pickFoldersToAdd: (defaultDirectory: AbsolutePath) => Promise<readonly UriString[]>;
 }
