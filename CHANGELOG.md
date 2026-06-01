@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.9] - 2026-06-02
+
+### Changed
+
+- `Project Lanes: Add Folder to Workspace` now opens its own folder picker rooted at the active lane's parent directory instead of delegating to `workbench.action.addRootFolder`, whose dialog defaulted into the `.lanes-root/active` symlink (the active lane itself). Picked folders are still added through the existing `onDidChangeWorkspaceFolders` → reconcile → absorb path, so they become lanes and the workspace collapses back to the single symlink folder
+
 ## [0.1.8] - 2026-06-01
 
 ### Fixed

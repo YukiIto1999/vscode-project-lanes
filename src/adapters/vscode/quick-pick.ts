@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { UriString } from '../../foundation/model';
 import type { LanePromptPort } from '../../lane/ports';
 
 /**
@@ -44,5 +45,17 @@ export const createPromptAdapter = (): LanePromptPort => ({
     vscode.window.showWarningMessage(
       'Cannot remove the active lane. Switch to another lane first.',
     );
+  },
+
+  pickFoldersToAdd: async (defaultDirectory) => {
+    const picked = await vscode.window.showOpenDialog({
+      title: 'Add Folder to Workspace',
+      openLabel: 'Add Lane',
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: true,
+      defaultUri: vscode.Uri.file(defaultDirectory),
+    });
+    return (picked ?? []).map((uri) => uri.toString() as UriString);
   },
 });
