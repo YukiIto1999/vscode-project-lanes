@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.8] - 2026-06-01
+
+### Fixed
+
+- Switching to a lane that is not a Git repository now shows the standard "Initialize Repository" view in the Source Control panel instead of "Reopen Closed Repository". The lane view-rebind path called `git.close` on every switch, which permanently registers the folder in the Git extension's persisted `closedRepositories` set; for a non-Git target the follow-up `git.openRepository` cannot reopen it, leaving `git.closedRepositoryCount` non-zero and pinning the welcome view. The rebind now skips `git.close` when the target lane has no `.git`, leaving the stale repository to the Git extension's own disposal
+
 ## [0.1.7] - 2026-05-16
 
 ### Changed
