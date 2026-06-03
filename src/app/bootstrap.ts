@@ -195,13 +195,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   });
 
   /**
-   * VS Code コマンドコールバック引数から LaneId を取り出す
-   *
-   * 引数の形は呼び出し経路で異なる。
-   * - コマンドパレットや keybinding 経由: `string` (LaneId 文字列をそのまま渡す)
-   * - TreeView 右クリックメニュー経由: `{ laneId }` または `{ id }` 形を取る vscode.TreeItem
-   *
-   * 対応経路以外は `undefined` を返す。
+   * VS Code コマンド引数からの LaneId 解決
    * @param commandArgument - VS Code が渡すコールバック第一引数
    * @returns 解決された LaneId、解決不可で undefined
    */
