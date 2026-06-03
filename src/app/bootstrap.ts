@@ -16,7 +16,7 @@ import { readLaneTerminalProfile } from '../adapters/vscode/contributions';
 import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
-import { createPromptAdapter } from '../adapters/vscode/quick-pick';
+import { createPromptAdapter } from '../adapters/vscode/prompt';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
 import {
