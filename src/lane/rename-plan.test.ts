@@ -18,10 +18,12 @@ const makeCatalog = (ids: readonly string[]): LaneCatalog => {
 describe('planLaneRename', () => {
   it('対象が存在しなければ noop / no-target', () => {
     const catalog = makeCatalog(['web']);
-    expect(planLaneRename({ targetId: 'missing' as LaneId, newLabel: 'foo', catalog })).toEqual({
-      kind: 'noop',
-      reason: 'no-target',
-    });
+    expect(planLaneRename({ targetId: 'missing' as LaneId, newLabel: 'renamed', catalog })).toEqual(
+      {
+        kind: 'noop',
+        reason: 'no-target',
+      },
+    );
   });
 
   it('trim 後が空文字なら invalid / empty', () => {
