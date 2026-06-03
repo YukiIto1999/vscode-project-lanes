@@ -31,6 +31,7 @@ import { toLaneId } from '../lane/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
 import { createTerminalService } from '../terminal/service';
+import type { SessionIdPort } from '../terminal/ports';
 import { createLaneActivityService } from '../lane-activity/service';
 import { projectLaneActivities } from '../lane-activity/reducer';
 import type { MonotonicClockPort } from '../lane-activity/ports';
@@ -48,6 +49,22 @@ export type BootstrapOutcome =
       /** 無効化理由 */
       readonly reason: WorkspaceDisabledReason;
     };
+
+/**
+ * レーン別連番に基づくセッション ID 採番ポートの生成
+ * @param instanceId - プロセス単位の識別子
+ * @returns セッション ID 採番ポート
+ */
+const createSessionIdSequencer = (instanceId: number): SessionIdPort => {
+  const laneCounters = new Map<LaneId, number>();
+  return {
+    next: (laneId) => {
+      const nextCount = (laneCounters.get(laneId) ?? 0) + 1;
+      laneCounters.set(laneId, nextCount);
+      return `${laneId}:${instanceId}:${nextCount}` as SessionId;
+    },
+  };
+};
 
 /**
  * 拡張機能の組み立てと起動
@@ -95,15 +112,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   });
   const presentation = createTerminalPresentationAdapter({ activitySink: laneActivity.sink });
 
-  const instanceId = process.pid;
-  const laneCounters = new Map<LaneId, number>();
-  const sessionIdPort = {
-    next: (laneId: LaneId): SessionId => {
-      const nextCount = (laneCounters.get(laneId) ?? 0) + 1;
-      laneCounters.set(laneId, nextCount);
-      return `${laneId}:${instanceId}:${nextCount}` as SessionId;
-    },
-  };
+  const sessionIdPort = createSessionIdSequencer(process.pid);
 
   const terminalService = createTerminalService({
     shellFactory,
