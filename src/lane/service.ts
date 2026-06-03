@@ -1,6 +1,7 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
+import { selectByLinkTarget } from '../workspace/scanner';
 import { planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
 import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
@@ -103,9 +104,8 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       selectionStore.save(workspaceKey, undefined);
     }
     if (!activeLaneId && catalog.lanes.length > 0) {
-      const target = link.readTarget();
-      const match = target ? catalog.lanes.find((l) => l.rootPath === target) : undefined;
-      activeLaneId = (match ?? catalog.lanes[0]!).id;
+      const chosen = selectByLinkTarget(catalog.lanes, link.readTarget(), (l) => l.rootPath);
+      activeLaneId = chosen!.id;
       selectionStore.save(workspaceKey, activeLaneId);
     }
   };
