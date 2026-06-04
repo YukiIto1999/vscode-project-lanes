@@ -11,6 +11,9 @@ import {
   reduceLaneActivity,
 } from './reducer';
 
+/** 遷移時刻を確実に超える setTimeout 発火余裕 ms */
+const TIMER_SLACK_MS = 50;
+
 /** レーン活動サービスの依存 */
 export interface LaneActivityServiceDeps {
   /** 単調時刻 */
@@ -78,7 +81,7 @@ export const createLaneActivityService = (deps: LaneActivityServiceDeps): LaneAc
         recompute();
         scheduleNextTransition();
       },
-      transitionAt - now + 50,
+      transitionAt - now + TIMER_SLACK_MS,
     );
   };
 

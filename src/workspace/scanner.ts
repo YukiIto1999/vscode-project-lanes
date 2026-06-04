@@ -47,6 +47,26 @@ export const collectLaneCandidates = (
 };
 
 /**
+ * link target 一致要素の選定、無ければ先頭要素
+ * @param items - 候補要素列
+ * @param currentLinkTarget - 現 symlink target
+ * @param pathOf - 要素からの絶対パス抽出
+ * @returns 選定要素、または候補が空で undefined
+ */
+export const selectByLinkTarget = <T>(
+  items: readonly T[],
+  currentLinkTarget: AbsolutePath | undefined,
+  pathOf: (item: T) => AbsolutePath,
+): T | undefined => {
+  if (items.length === 0) return undefined;
+  if (currentLinkTarget) {
+    const matching = items.find((item) => pathOf(item) === currentLinkTarget);
+    if (matching) return matching;
+  }
+  return items[0];
+};
+
+/**
  * アクティブレーンの選定
  * @param lanes - レーン候補列
  * @param currentLinkTarget - 現 symlink target
@@ -55,14 +75,8 @@ export const collectLaneCandidates = (
 export const chooseActiveLane = (
   lanes: readonly WorkspaceFolder[],
   currentLinkTarget: AbsolutePath | undefined,
-): WorkspaceFolder | undefined => {
-  if (lanes.length === 0) return undefined;
-  if (currentLinkTarget) {
-    const matching = lanes.find((l) => uriToAbsolutePath(l.uri) === currentLinkTarget);
-    if (matching) return matching;
-  }
-  return lanes[0];
-};
+): WorkspaceFolder | undefined =>
+  selectByLinkTarget(lanes, currentLinkTarget, (l) => uriToAbsolutePath(l.uri));
 
 /**
  * workspaceFolders を symlink folder 1 件へ縮退させる副作用境界

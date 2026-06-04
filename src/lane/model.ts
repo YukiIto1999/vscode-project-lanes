@@ -2,9 +2,6 @@ import type { AbsolutePath, LaneId, UriString } from '../foundation/model';
 
 /**
  * ラベルから LaneId への変換
- *
- * 本リポジトリでは `Lane.id === Lane.label` の不変条件を取り、表示ラベルがそのまま識別子を兼ねる。
- * すべての LaneId 生成は本関数を経由し、`as LaneId` の散在を防ぐ。
  * @param label - 表示ラベル
  * @returns 同一文字列の LaneId
  */
