@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.10] - 2026-06-04
+
+### Added
+
+- `CONTRIBUTING.md` documenting the branch, commit, merge, and release workflow.
+
+### Fixed
+
+- README Commands table now lists the lane-switch command under its shipped name `Project Lanes: Switch Lane` instead of the old `Project Lanes: Focus`.
+
+### Changed
+
+- Internal refactoring with no behavioral change: active-lane selection consolidated into one helper, the terminal session-id sequencer extracted from bootstrap, the prompt adapter file renamed, a timer-slack literal named as a constant, and comments tightened to the project conventions.
+
 ## [0.1.9] - 2026-06-02
 
 ### Changed
