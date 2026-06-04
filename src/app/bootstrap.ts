@@ -16,7 +16,7 @@ import { readLaneTerminalProfile } from '../adapters/vscode/contributions';
 import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
-import { createPromptAdapter } from '../adapters/vscode/quick-pick';
+import { createPromptAdapter } from '../adapters/vscode/prompt';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
 import {
@@ -31,6 +31,7 @@ import { toLaneId } from '../lane/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
 import { createTerminalService } from '../terminal/service';
+import type { SessionIdPort } from '../terminal/ports';
 import { createLaneActivityService } from '../lane-activity/service';
 import { projectLaneActivities } from '../lane-activity/reducer';
 import type { MonotonicClockPort } from '../lane-activity/ports';
@@ -48,6 +49,22 @@ export type BootstrapOutcome =
       /** 無効化理由 */
       readonly reason: WorkspaceDisabledReason;
     };
+
+/**
+ * レーン別連番に基づくセッション ID 採番ポートの生成
+ * @param instanceId - プロセス単位の識別子
+ * @returns セッション ID 採番ポート
+ */
+const createSessionIdSequencer = (instanceId: number): SessionIdPort => {
+  const laneCounters = new Map<LaneId, number>();
+  return {
+    next: (laneId) => {
+      const nextCount = (laneCounters.get(laneId) ?? 0) + 1;
+      laneCounters.set(laneId, nextCount);
+      return `${laneId}:${instanceId}:${nextCount}` as SessionId;
+    },
+  };
+};
 
 /**
  * 拡張機能の組み立てと起動
@@ -95,15 +112,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   });
   const presentation = createTerminalPresentationAdapter({ activitySink: laneActivity.sink });
 
-  const instanceId = process.pid;
-  const laneCounters = new Map<LaneId, number>();
-  const sessionIdPort = {
-    next: (laneId: LaneId): SessionId => {
-      const nextCount = (laneCounters.get(laneId) ?? 0) + 1;
-      laneCounters.set(laneId, nextCount);
-      return `${laneId}:${instanceId}:${nextCount}` as SessionId;
-    },
-  };
+  const sessionIdPort = createSessionIdSequencer(process.pid);
 
   const terminalService = createTerminalService({
     shellFactory,
@@ -195,13 +204,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   });
 
   /**
-   * VS Code コマンドコールバック引数から LaneId を取り出す
-   *
-   * 引数の形は呼び出し経路で異なる。
-   * - コマンドパレットや keybinding 経由: `string` (LaneId 文字列をそのまま渡す)
-   * - TreeView 右クリックメニュー経由: `{ laneId }` または `{ id }` 形を取る vscode.TreeItem
-   *
-   * 対応経路以外は `undefined` を返す。
+   * VS Code コマンド引数からの LaneId 解決
    * @param commandArgument - VS Code が渡すコールバック第一引数
    * @returns 解決された LaneId、解決不可で undefined
    */

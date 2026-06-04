@@ -32,7 +32,7 @@ The switch is a view change — background terminals keep running because the wo
 
 | Command                                  | Description                                                                          |
 | ---------------------------------------- | ------------------------------------------------------------------------------------ |
-| `Project Lanes: Focus`                   | Switch to a lane                                                                     |
+| `Project Lanes: Switch Lane`             | Switch to a lane                                                                     |
 | `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent    |
 | `Project Lanes: Reload Lanes`            | Re-scan `workspaceFolders` / symlink target / catalog store and rebuild the registry |
 | `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                    |

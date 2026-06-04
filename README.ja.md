@@ -32,7 +32,7 @@
 
 | コマンド                                 | 説明                                                              |
 | ---------------------------------------- | ----------------------------------------------------------------- |
-| `Project Lanes: Focus`                   | レーンに切替                                                      |
+| `Project Lanes: Switch Lane`             | レーンに切替                                                      |
 | `Project Lanes: Add Folder to Workspace` | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加      |
 | `Project Lanes: Reload Lanes`            | `workspaceFolders` / symlink / カタログを見直し registry を再構築 |
 | `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                  |
