@@ -38,6 +38,8 @@
 | `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                  |
 | `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）        |
 | `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                    |
+| `Project Lanes: Find in Lanes`           | 全レーンを横断して ripgrep でファイル内容を検索し一致箇所へ移動   |
+| `Project Lanes: Go to File in Lanes`     | 全レーンを横断してファイルを絞り込み開く                          |
 
 ## 設定
 
