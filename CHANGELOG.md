@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.11] - 2026-06-23
+
+### Added
+
+- `Project Lanes: Find in Lanes` and `Project Lanes: Go to File in Lanes` commands. Both search across every lane's real root with bundled ripgrep — including lanes that are not the active one and therefore outside the workspace — present results in a Quick Pick grouped by lane, and switch to the chosen lane before opening the file. `Find in Lanes` does a literal, smart-case content search; `Go to File in Lanes` lists files for incremental fuzzy filtering.
+
+### Changed
+
+- Updated `vite-plus` to 0.1.24 to resolve dependency vulnerabilities.
+
 ## [0.1.10] - 2026-06-04
 
 ### Added
