@@ -38,6 +38,8 @@ The switch is a view change — background terminals keep running because the wo
 | `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                    |
 | `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)     |
 | `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                       |
+| `Project Lanes: Find in Lanes`           | Search file contents across all lanes with ripgrep and jump to a match               |
+| `Project Lanes: Go to File in Lanes`     | Fuzzy-find a file across all lanes and open it                                       |
 
 ## Settings
 
