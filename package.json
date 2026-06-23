@@ -25,6 +25,7 @@
     "package": "vsce package"
   },
   "dependencies": {
+    "@vscode/ripgrep": "^1.18.0",
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
