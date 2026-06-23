@@ -89,6 +89,16 @@
         "command": "projectLanes.toggleActivityIndicator",
         "title": "Toggle Activity Indicator",
         "category": "Project Lanes"
+      },
+      {
+        "command": "projectLanes.findInLanes",
+        "title": "Find in Lanes",
+        "category": "Project Lanes"
+      },
+      {
+        "command": "projectLanes.goToFileInLanes",
+        "title": "Go to File in Lanes",
+        "category": "Project Lanes"
       }
     ],
     "menus": {
