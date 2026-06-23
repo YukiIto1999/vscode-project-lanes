@@ -36,6 +36,9 @@ import { createLaneActivityService } from '../lane-activity/service';
 import { projectLaneActivities } from '../lane-activity/reducer';
 import type { MonotonicClockPort } from '../lane-activity/ports';
 import { projectUi } from '../ui/projections';
+import { createRipgrepSearchAdapter } from '../adapters/search/ripgrep';
+import { createSearchUiAdapter } from '../adapters/vscode/search-pick';
+import { createLaneSearchService } from '../search/service';
 
 /** ブートストラップ結果 */
 export type BootstrapOutcome =
@@ -142,6 +145,14 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     editorStore,
   });
   laneService.initialize();
+
+  const laneSearchService = createLaneSearchService({
+    getCatalog: () => registry.snapshot(),
+    search: createRipgrepSearchAdapter(),
+    ui: createSearchUiAdapter(),
+    fileOpen: editor,
+    focus: (laneId) => laneService.focus(laneId),
+  });
 
   const treeView = createTreeViewAdapter();
   const statusBar = createStatusBarAdapter();
@@ -260,6 +271,15 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     () => config.toggleActivityIndicator(),
   );
 
+  const findInLanesCommand = vscode.commands.registerCommand('projectLanes.findInLanes', () =>
+    laneSearchService.findInLanes(),
+  );
+
+  const goToFileInLanesCommand = vscode.commands.registerCommand(
+    'projectLanes.goToFileInLanes',
+    () => laneSearchService.goToFileInLanes(),
+  );
+
   const profileProvider = vscode.window.registerTerminalProfileProvider(laneProfile.id, {
     provideTerminalProfile: () => {
       const activeLaneId = laneService.snapshot().activeLaneId;
@@ -289,6 +309,8 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     reloadLanesCommand,
     closeTerminalsCommand,
     toggleActivityIndicatorCommand,
+    findInLanesCommand,
+    goToFileInLanesCommand,
     profileProvider,
     terminalCloseHandler,
     workspaceFoldersHandler,
