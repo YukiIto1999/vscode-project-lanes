@@ -58,4 +58,10 @@ export const createPromptAdapter = (): LanePromptPort => ({
     });
     return (picked ?? []).map((uri) => uri.toString() as UriString);
   },
+
+  warnAddFolderFailed: () => {
+    vscode.window.showWarningMessage(
+      'Failed to add the folder to the workspace. Please try again.',
+    );
+  },
 });
