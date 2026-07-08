@@ -59,7 +59,7 @@ export const createLaneViewRebindAdapter = (
     if (!head) return;
 
     if (head.name !== activeLane.label) {
-      workspaceHost.applyMutation({
+      await workspaceHost.applyMutation({
         start: 0,
         deleteCount: 1,
         folders: [{ uri: head.uri, name: activeLane.label }],

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.12] - 2026-07-08
+
+### Fixed
+
+- `Add Folder to Workspace` could silently do nothing. VS Code's `updateWorkspaceFolders` returns `false` and fires no `onDidChangeWorkspaceFolders` event when it is called again before a prior call has settled, and every call site (`addFolderCommand`, the `onDidChangeWorkspaceFolders` reconcile handler's collapse-back-to-symlink step, and the lane-switch view rebind) ignored the return value and never waited for settlement. `WorkspaceHostPort.applyMutation` now returns `Promise<boolean>` and queues folder mutations so each one waits for the previous one to settle — either the change event firing or a bounded timeout, since changing the first workspace folder can restart the extension host without the event ever firing. `addFolderCommand` now warns the user when a mutation is rejected instead of failing silently.
+
 ## [0.1.11] - 2026-06-23
 
 ### Added

@@ -82,13 +82,14 @@ export const chooseActiveLane = (
  * workspaceFolders を symlink folder 1 件へ縮退させる副作用境界
  * @param host - workspaceFolders 操作ポート
  * @param linkFolder - 縮退後の単一フォルダ
+ * @returns 変更が確定すれば true、VS Code に拒否されれば false
  */
 export const collapseFoldersToLink = (
   host: WorkspaceHostPort,
   linkFolder: WorkspaceFolder,
-): void => {
+): Promise<boolean> => {
   const folders = host.readFolders();
-  host.applyMutation({
+  return host.applyMutation({
     start: 0,
     deleteCount: folders.length,
     folders: [linkFolder],
@@ -105,14 +106,14 @@ export const collapseFoldersToLink = (
  * @param toUri - パスから URI への変換
  * @returns ブートストラップ結果
  */
-export const bootstrapWorkspace = (
+export const bootstrapWorkspace = async (
   host: WorkspaceHostPort,
   fileInfo: WorkspaceFileInfo,
   catalogStore: CatalogStorePort,
   directory: DirectoryPort,
   link: WorkspaceLinkPort,
   toUri: (path: string) => UriString,
-): WorkspaceBootstrapResult => {
+): Promise<WorkspaceBootstrapResult> => {
   const anchorDir = nodePath.join(fileInfo.directoryPath, ANCHOR_DIR_NAME) as AbsolutePath;
   if (!directory.ensureDirectory(anchorDir)) {
     return { kind: 'disabled', reason: 'missing-anchor' };
@@ -147,7 +148,7 @@ export const bootstrapWorkspace = (
     !isLinkFolder(rawFolders[0]!, linkPath) ||
     rawFolders[0]!.name !== activeLane.name;
 
-  if (needsFolderUpdate) collapseFoldersToLink(host, linkFolder);
+  if (needsFolderUpdate) await collapseFoldersToLink(host, linkFolder);
 
   catalogStore.save(lanes);
 
