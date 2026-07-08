@@ -11,8 +11,9 @@ export interface WorkspaceHostPort {
   /**
    * フォルダ列への変更適用
    * @param mutation - 変更操作
+   * @returns 変更が確定すれば true、VS Code に拒否されれば false
    */
-  readonly applyMutation: (mutation: FolderMutation) => void;
+  readonly applyMutation: (mutation: FolderMutation) => Promise<boolean>;
 }
 
 /** アクティブレーン symlink の操作ポート */

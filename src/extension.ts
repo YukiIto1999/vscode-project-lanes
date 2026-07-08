@@ -5,8 +5,8 @@ import { bootstrapRuntime } from './app/bootstrap';
  * 拡張機能の活性化エントリ
  * @param context - VS Code 拡張コンテキスト
  */
-export const activate = (context: vscode.ExtensionContext): void => {
-  const outcome = bootstrapRuntime(context);
+export const activate = async (context: vscode.ExtensionContext): Promise<void> => {
+  const outcome = await bootstrapRuntime(context);
   if (outcome.kind === 'ready') return;
 
   if (outcome.reason === 'missing-anchor') {

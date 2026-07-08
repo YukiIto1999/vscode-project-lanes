@@ -74,7 +74,9 @@ const createSessionIdSequencer = (instanceId: number): SessionIdPort => {
  * @param context - VS Code 拡張コンテキスト
  * @returns ブートストラップ結果
  */
-export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOutcome => {
+export const bootstrapRuntime = async (
+  context: vscode.ExtensionContext,
+): Promise<BootstrapOutcome> => {
   const workspaceHost = createWorkspaceHostAdapter();
   const workspaceFile = createWorkspaceFileAdapter();
   const directory = createDirectoryAdapter();
@@ -86,7 +88,14 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
   const linkPath = nodePath.join(fileInfo.directoryPath, '.lanes-root', 'active') as AbsolutePath;
   const link = createWorkspaceLinkAdapter(linkPath);
 
-  const result = bootstrapWorkspace(workspaceHost, fileInfo, catalogStore, directory, link, toUri);
+  const result = await bootstrapWorkspace(
+    workspaceHost,
+    fileInfo,
+    catalogStore,
+    directory,
+    link,
+    toUri,
+  );
   if (result.kind === 'disabled') return { kind: 'disabled', reason: result.reason };
 
   const { context: wsContext } = result;
@@ -182,7 +191,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     if (lane) terminalService.revealLane(lane);
   }
 
-  const workspaceFoldersHandler = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+  const workspaceFoldersHandler = vscode.workspace.onDidChangeWorkspaceFolders(async () => {
     const activeId = laneService.snapshot().activeLaneId;
     const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
     const action = reconcileUserChange({
@@ -195,7 +204,7 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     if (action.kind === 'noop') return;
 
     registry.absorb(action.additions);
-    collapseFoldersToLink(workspaceHost, action.collapsedFolder);
+    await collapseFoldersToLink(workspaceHost, action.collapsedFolder);
   });
 
   const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', async () => {
@@ -207,11 +216,12 @@ export const bootstrapRuntime = (context: vscode.ExtensionContext): BootstrapOut
     const picked = await prompt.pickFoldersToAdd(defaultDirectory);
     if (picked.length === 0) return;
     const existing = workspaceHost.readFolders();
-    workspaceHost.applyMutation({
+    const accepted = await workspaceHost.applyMutation({
       start: existing.length,
       deleteCount: 0,
       folders: picked.map((uri) => ({ uri, name: baseName(uriToAbsolutePath(uri)) })),
     });
+    if (!accepted) prompt.warnAddFolderFailed();
   });
 
   /**

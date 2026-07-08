@@ -129,4 +129,6 @@ export interface LanePromptPort {
    * @returns 選択フォルダの URI 列、取消で空配列
    */
   readonly pickFoldersToAdd: (defaultDirectory: AbsolutePath) => Promise<readonly UriString[]>;
+  /** フォルダ追加の反映失敗時の警告 */
+  readonly warnAddFolderFailed: () => void;
 }
