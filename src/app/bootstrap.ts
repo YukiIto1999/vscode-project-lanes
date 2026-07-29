@@ -184,11 +184,15 @@ export const bootstrapRuntime = async (
   const activityDisposable = laneActivity.onChange(render);
   const registryDisposable = registry.onChange(render);
   const configDisposable = config.onDidChange(() => render());
-  const reportAsyncFailure = (error: unknown): void => {
+  const reportAsyncFailure = async (error: unknown): Promise<void> => {
     console.error('Project Lanes operation failed.', error);
-    void vscode.window.showErrorMessage(
-      'Project Lanes operation failed. See the Developer Tools console for details.',
-    );
+    try {
+      await vscode.window.showErrorMessage(
+        'Project Lanes operation failed. See the Developer Tools console for details.',
+      );
+    } catch (notificationError) {
+      console.error('Project Lanes error notification failed.', notificationError);
+    }
   };
 
   render();
