@@ -686,13 +686,12 @@ test('a normal VS Code launch timeout escalates from SIGINT to SIGKILL and waits
         spawn() {
           return child;
         },
-        timeoutMilliseconds: 45_000,
       },
     ),
-    /VS Code launch timed out after 45000ms/,
+    /VS Code launch timed out after 120000ms/,
   );
   assert.deepEqual(events, [
-    'schedule-45000',
+    'schedule-120000',
     'kill-SIGINT',
     'schedule-5000',
     'kill-SIGKILL',
