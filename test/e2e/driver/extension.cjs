@@ -50,50 +50,51 @@ const runDriver = async ({
   processApi = process,
   vscodeApi = require('vscode'),
 } = {}) => {
-  const markerPath = requiredEnvironmentValue(environment, E2E_RESULT_PATH_KEY);
-  const suitePath = requiredEnvironmentValue(environment, E2E_SUITE_PATH_KEY);
-  const resultIdentity = JSON.parse(requiredEnvironmentValue(environment, E2E_RUN_KEY));
-  let result;
+  let driverError;
 
   try {
-    let message;
-    const suite = loadSuite(suitePath);
-    await suite.run({
-      environment,
-      vscodeApi,
-      log(value) {
-        message = value;
-      },
-    });
-    result = {
-      ...resultIdentity,
-      status: 'PASS',
-      message: message ?? `E2E PASS: ${resultIdentity.scenario} (${resultIdentity.phase})`,
-    };
-  } catch (error) {
-    result = {
-      ...resultIdentity,
-      status: 'FAIL',
-      error: serializeError(error),
-    };
-  }
+    const markerPath = requiredEnvironmentValue(environment, E2E_RESULT_PATH_KEY);
+    const suitePath = requiredEnvironmentValue(environment, E2E_SUITE_PATH_KEY);
+    const resultIdentity = JSON.parse(requiredEnvironmentValue(environment, E2E_RUN_KEY));
+    let result;
 
-  let markerError;
-  try {
+    try {
+      let message;
+      const suite = loadSuite(suitePath);
+      await suite.run({
+        environment,
+        vscodeApi,
+        log(value) {
+          message = value;
+        },
+      });
+      result = {
+        ...resultIdentity,
+        status: 'PASS',
+        message: message ?? `E2E PASS: ${resultIdentity.scenario} (${resultIdentity.phase})`,
+      };
+    } catch (error) {
+      result = {
+        ...resultIdentity,
+        status: 'FAIL',
+        error: serializeError(error),
+      };
+    }
+
     writeResultMarker({ fileSystem, markerPath, processApi, result });
   } catch (error) {
-    markerError = error;
+    driverError = error;
   }
 
   try {
     await vscodeApi.commands.executeCommand('workbench.action.quit');
   } catch (quitError) {
-    if (markerError) {
-      throw new AggregateError([markerError, quitError], 'E2E driver shutdown failed');
+    if (driverError) {
+      throw new AggregateError([driverError, quitError], 'E2E driver shutdown failed');
     }
     throw quitError;
   }
-  if (markerError) throw markerError;
+  if (driverError) throw driverError;
 };
 
 const activate = () => runDriver();
