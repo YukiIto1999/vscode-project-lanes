@@ -81,20 +81,21 @@ export const chooseActiveLane = (
 /**
  * workspaceFolders を symlink folder 1 件へ縮退させる副作用境界
  * @param host - workspaceFolders 操作ポート
+ * @param expectedFolders - 変更計画時の workspaceFolders
  * @param linkFolder - 縮退後の単一フォルダ
  * @returns 変更が確定すれば true、VS Code に拒否されれば false
  */
 export const collapseFoldersToLink = (
   host: WorkspaceHostPort,
+  expectedFolders: readonly WorkspaceFolder[],
   linkFolder: WorkspaceFolder,
-): Promise<boolean> => {
-  const folders = host.readFolders();
-  return host.applyMutation({
+): Promise<boolean> =>
+  host.applyMutation({
+    expectedFolders,
     start: 0,
-    deleteCount: folders.length,
+    deleteCount: expectedFolders.length,
     folders: [linkFolder],
   });
-};
 
 /**
  * ワークスペースのブートストラップ
@@ -151,7 +152,7 @@ export const bootstrapWorkspace = async (
     rawFolders[0]!.name !== activeLane.name;
 
   if (needsFolderUpdate) {
-    const accepted = await collapseFoldersToLink(host, linkFolder);
+    const accepted = await collapseFoldersToLink(host, rawFolders, linkFolder);
     if (!accepted) {
       return { kind: 'disabled', reason: 'workspace-folder-mutation-rejected' };
     }
