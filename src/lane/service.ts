@@ -183,7 +183,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         activeLaneId = plan.to.id;
         selectionStore.save(workspaceKey, activeLaneId);
       }
-      registry.rename(plan.from.label, plan.to.label);
+      await registry.rename(plan.from.label, plan.to.label);
 
       if (activeLaneId === plan.to.id) {
         const newLane = getCatalog().byId.get(plan.to.id);
@@ -207,7 +207,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
       await terminal.closeLane(plan.target.id);
       editorStore.clear(plan.target.id);
-      registry.remove(plan.target.label);
+      await registry.remove(plan.target.label);
     },
 
     snapshot: () => ({ catalog: getCatalog(), activeLaneId }),

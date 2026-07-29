@@ -203,7 +203,7 @@ export const bootstrapRuntime = async (
     });
     if (action.kind === 'noop') return;
 
-    registry.absorb(action.additions);
+    await registry.absorb(action.additions);
     await collapseFoldersToLink(workspaceHost, action.collapsedFolder);
   });
 
@@ -249,14 +249,14 @@ export const bootstrapRuntime = async (
     (arg?: unknown) => laneService.removeLane(extractLaneId(arg)),
   );
 
-  const reloadLanesCommand = vscode.commands.registerCommand('projectLanes.reloadLanes', () => {
+  const reloadLanesCommand = vscode.commands.registerCommand('projectLanes.reloadLanes', async () => {
     const newLanes = collectLaneCandidates(
       workspaceHost.readFolders(),
       catalogStore.load(),
       link.linkPath,
     );
     const previousActiveId = laneService.snapshot().activeLaneId;
-    registry.replace(newLanes);
+    await registry.replace(newLanes);
     laneService.initialize();
     const nextActiveId = laneService.snapshot().activeLaneId;
     if (nextActiveId && nextActiveId !== previousActiveId) {
