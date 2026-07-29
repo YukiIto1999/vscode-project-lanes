@@ -40,4 +40,33 @@ describe('runAsyncBoundary', () => {
     expect(report).toHaveBeenCalledOnce();
     expect(report).toHaveBeenCalledWith(failure);
   });
+
+  it('operation の reject 時は async reporter の完了まで待つ', async () => {
+    const failure = new Error('operation failed');
+    const reporterStarted = deferred();
+    const reporterCompletion = deferred();
+    let completed = false;
+    let reportedError: unknown;
+
+    const running = runAsyncBoundary(
+      async () => {
+        throw failure;
+      },
+      async (error) => {
+        reportedError = error;
+        reporterStarted.resolve();
+        await reporterCompletion.promise;
+      },
+    ).then(() => {
+      completed = true;
+    });
+
+    await reporterStarted.promise;
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    reporterCompletion.resolve();
+    await running;
+    expect(reportedError).toBe(failure);
+  });
 });
