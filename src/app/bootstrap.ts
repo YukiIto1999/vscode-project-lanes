@@ -40,6 +40,7 @@ import { createRipgrepSearchAdapter } from '../adapters/search/ripgrep';
 import { createSearchUiAdapter } from '../adapters/vscode/search-pick';
 import { createLaneSearchService } from '../search/service';
 import { runAsyncBoundary } from './async-boundary';
+import { createAsyncFailureReporter } from './async-failure-reporter';
 
 /** ブートストラップ結果 */
 export type BootstrapOutcome =
@@ -184,16 +185,13 @@ export const bootstrapRuntime = async (
   const activityDisposable = laneActivity.onChange(render);
   const registryDisposable = registry.onChange(render);
   const configDisposable = config.onDidChange(() => render());
-  const reportAsyncFailure = async (error: unknown): Promise<void> => {
-    console.error('Project Lanes operation failed.', error);
-    try {
-      await vscode.window.showErrorMessage(
+  const reportAsyncFailure = createAsyncFailureReporter({
+    log: (message, error) => console.error(message, error),
+    notify: () =>
+      vscode.window.showErrorMessage(
         'Project Lanes operation failed. See the Developer Tools console for details.',
-      );
-    } catch (notificationError) {
-      console.error('Project Lanes error notification failed.', notificationError);
-    }
-  };
+      ),
+  });
 
   render();
   const initialLane = laneService.snapshot().activeLaneId;
