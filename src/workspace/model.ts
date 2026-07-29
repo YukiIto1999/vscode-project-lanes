@@ -35,7 +35,11 @@ export interface WorkspaceContext {
 }
 
 /** ワークスペース無効化の理由 */
-export type WorkspaceDisabledReason = 'no-workspace-file' | 'missing-anchor';
+export type WorkspaceDisabledReason =
+  | 'no-workspace-file'
+  | 'missing-lane-source'
+  | 'missing-anchor'
+  | 'workspace-folder-mutation-rejected';
 
 /** ブートストラップ結果 */
 export type WorkspaceBootstrapResult =
