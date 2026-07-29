@@ -28,6 +28,11 @@ const createProcessCleanupRegistry = (
 ) => {
   const activeCleanups = new Set();
   const activeTerminations = new Set();
+  const cleanupRegistry = {
+    activeCleanups,
+    activeTerminations,
+    terminationRequested: false,
+  };
   const cleanupAll = () => {
     for (const cleanup of activeCleanups) {
       try {
@@ -44,6 +49,7 @@ const createProcessCleanupRegistry = (
 
   processApi.once('exit', cleanupAll);
   processApi.once('SIGTERM', () => {
+    cleanupRegistry.terminationRequested = true;
     const terminations = [...activeTerminations].map((terminate) => terminate());
     if (terminations.length === 0) {
       cleanupAndReraise();
@@ -51,7 +57,7 @@ const createProcessCleanupRegistry = (
     }
     return Promise.allSettled(terminations).then(cleanupAndReraise);
   });
-  return { activeCleanups, activeTerminations };
+  return cleanupRegistry;
 };
 
 const getProcessCleanupRegistry = (processApi) => {
@@ -288,6 +294,7 @@ const runScenario = async (
     const runId = createRunId();
     const launches = scenario.launches ?? [undefined];
     for (const [launchIndex, launch] of launches.entries()) {
+      if (cleanupRegistry.terminationRequested) break;
       const resultIdentity = {
         runId,
         scenario: scenario.name,
