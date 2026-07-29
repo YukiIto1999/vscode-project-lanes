@@ -6,7 +6,22 @@ const scenarios = Object.freeze([
   Object.freeze({
     name: 'empty-workspace',
     workspaceFixture: path.join(__dirname, 'fixtures', 'empty.code-workspace'),
-    extensionTestsPath: path.join(__dirname, 'suite', 'empty-workspace.cjs'),
+    suitePath: path.join(__dirname, 'suite', 'empty-workspace.cjs'),
+  }),
+  Object.freeze({
+    name: 'workspace-bootstrap',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'workspace-bootstrap'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'workspace-bootstrap',
+      'workspace-bootstrap.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'workspace-bootstrap.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'restart' }),
+    ]),
   }),
 ]);
 
