@@ -176,14 +176,14 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       const plan = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
       if (plan.kind !== 'rename') return;
 
-      // registry.rename の onChange→render より前に terminal・editor・selection を rekey する不変条件
-      terminalRekey.rekeyLane(plan.from.id, plan.to.id);
-      editorStore.rekey(plan.from.id, plan.to.id);
-      if (activeLaneId === plan.from.id) {
-        activeLaneId = plan.to.id;
-        selectionStore.save(workspaceKey, activeLaneId);
-      }
-      registry.rename(plan.from.label, plan.to.label);
+      await registry.rename(plan.from.label, plan.to.label, () => {
+        terminalRekey.rekeyLane(plan.from.id, plan.to.id);
+        editorStore.rekey(plan.from.id, plan.to.id);
+        if (activeLaneId === plan.from.id) {
+          activeLaneId = plan.to.id;
+          selectionStore.save(workspaceKey, activeLaneId);
+        }
+      });
 
       if (activeLaneId === plan.to.id) {
         const newLane = getCatalog().byId.get(plan.to.id);
@@ -205,9 +205,13 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       const confirmed = await prompt.confirmRemoval(plan.target);
       if (!confirmed) return;
 
-      await terminal.closeLane(plan.target.id);
-      editorStore.clear(plan.target.id);
-      registry.remove(plan.target.label);
+      await registry.remove(plan.target.label, async () => {
+        try {
+          await terminal.closeLane(plan.target.id);
+        } finally {
+          editorStore.clear(plan.target.id);
+        }
+      });
     },
 
     snapshot: () => ({ catalog: getCatalog(), activeLaneId }),

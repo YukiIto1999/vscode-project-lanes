@@ -18,6 +18,8 @@ export interface WorkspaceFileInfo {
 
 /** ワークスペースフォルダ変更操作 */
 export interface FolderMutation {
+  /** 変更計画時の workspaceFolders */
+  readonly expectedFolders: readonly WorkspaceFolder[];
   /** 操作開始インデックス */
   readonly start: number;
   /** 削除件数 */
@@ -35,7 +37,11 @@ export interface WorkspaceContext {
 }
 
 /** ワークスペース無効化の理由 */
-export type WorkspaceDisabledReason = 'no-workspace-file' | 'missing-anchor';
+export type WorkspaceDisabledReason =
+  | 'no-workspace-file'
+  | 'missing-lane-source'
+  | 'missing-anchor'
+  | 'workspace-folder-mutation-rejected';
 
 /** ブートストラップ結果 */
 export type WorkspaceBootstrapResult =

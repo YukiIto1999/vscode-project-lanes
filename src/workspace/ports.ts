@@ -11,7 +11,7 @@ export interface WorkspaceHostPort {
   /**
    * フォルダ列への変更適用
    * @param mutation - 変更操作
-   * @returns 変更が確定すれば true、VS Code に拒否されれば false
+   * @returns 変更が確定すれば true、期待状態との不一致または VS Code の拒否で false
    */
   readonly applyMutation: (mutation: FolderMutation) => Promise<boolean>;
 }
@@ -62,7 +62,7 @@ export interface CatalogStorePort {
    * カタログの保存
    * @param folders - 永続化対象のレーン列
    */
-  readonly save: (folders: readonly WorkspaceFolder[]) => void;
+  readonly save: (folders: readonly WorkspaceFolder[]) => Promise<void>;
 }
 
 /** ワークスペース設定ポート */
