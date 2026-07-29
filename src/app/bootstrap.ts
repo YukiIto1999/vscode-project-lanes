@@ -204,8 +204,9 @@ export const bootstrapRuntime = async (
     void runAsyncBoundary(async () => {
       const activeId = laneService.snapshot().activeLaneId;
       const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
+      const rawFolders = workspaceHost.readFolders();
       const action = reconcileUserChange({
-        rawFolders: workspaceHost.readFolders(),
+        rawFolders,
         currentLanes: registry.folders(),
         linkPath: link.linkPath,
         activeLabel: activeLane?.label ?? 'Project Lanes',
@@ -214,7 +215,7 @@ export const bootstrapRuntime = async (
       if (action.kind === 'noop') return;
 
       await registry.absorb(action.additions);
-      await collapseFoldersToLink(workspaceHost, action.collapsedFolder);
+      await collapseFoldersToLink(workspaceHost, rawFolders, action.collapsedFolder);
     }, reportAsyncFailure);
   });
 
@@ -228,6 +229,7 @@ export const bootstrapRuntime = async (
     if (picked.length === 0) return;
     const existing = workspaceHost.readFolders();
     const accepted = await workspaceHost.applyMutation({
+      expectedFolders: existing,
       start: existing.length,
       deleteCount: 0,
       folders: picked.map((uri) => ({ uri, name: baseName(uriToAbsolutePath(uri)) })),

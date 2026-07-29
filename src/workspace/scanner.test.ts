@@ -113,6 +113,15 @@ describe('chooseActiveLane', () => {
 });
 
 describe('bootstrapWorkspace', () => {
+  const sameFolders = (
+    left: readonly WorkspaceFolder[],
+    right: readonly WorkspaceFolder[],
+  ): boolean =>
+    left.length === right.length &&
+    left.every(
+      (folder, index) => folder.uri === right[index]!.uri && folder.name === right[index]!.name,
+    );
+
   const makeHost = (
     folders: WorkspaceFolder[],
     accepted = true,
@@ -125,6 +134,7 @@ describe('bootstrapWorkspace', () => {
       applyMutation: async (m) => {
         events?.push('mutation');
         mutations.push(m);
+        if (!sameFolders(current, m.expectedFolders)) return false;
         if (!accepted) return false;
         const next = [...current];
         next.splice(m.start, m.deleteCount, ...m.folders);
@@ -132,7 +142,14 @@ describe('bootstrapWorkspace', () => {
         return true;
       },
     };
-    return { port, mutations, snapshot: () => current };
+    return {
+      port,
+      mutations,
+      replaceFolders: (next: WorkspaceFolder[]) => {
+        current = next;
+      },
+      snapshot: () => current,
+    };
   };
 
   const makeLink = (
@@ -312,6 +329,55 @@ describe('bootstrapWorkspace', () => {
     expect(events).toEqual(['save', 'anchor', 'link', 'mutation']);
     expect(store.saved()).toEqual(raw);
   });
+
+  it.each([
+    [
+      '追加',
+      [mkFolder('web', '/home/user/web')],
+      [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')],
+    ],
+    [
+      '削除',
+      [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')],
+      [mkFolder('web', '/home/user/web')],
+    ],
+  ])(
+    'catalog 保存待機中に folders が%sされれば初期 snapshot の縮退を拒否',
+    async (_change, raw, changed) => {
+      const events: string[] = [];
+      const pending = deferred();
+      const host = makeHost(raw, true, events);
+      const link = makeLink(undefined, events);
+      const store = makeCatalogStore([], () => pending.promise, events);
+
+      const bootstrapping = bootstrapWorkspace(
+        host.port,
+        fileInfo,
+        store.port,
+        makeDirectory(true, events),
+        link.port,
+        toUri,
+      );
+      await Promise.resolve();
+      expect(events).toEqual(['save']);
+
+      host.replaceFolders(changed);
+      pending.resolve();
+
+      await expect(bootstrapping).resolves.toEqual({
+        kind: 'disabled',
+        reason: 'workspace-folder-mutation-rejected',
+      });
+      expect(events).toEqual(['save', 'anchor', 'link', 'mutation']);
+      expect(store.saved()).toEqual(raw);
+      expect(link.target).toBe('/home/user/web');
+      expect(host.snapshot()).toEqual(changed);
+      expect(host.mutations[0]).toMatchObject({
+        expectedFolders: raw,
+        deleteCount: raw.length,
+      });
+    },
+  );
 
   it('catalog 保存失敗を伝播し、後続副作用を実行しない', async () => {
     const events: string[] = [];

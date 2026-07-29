@@ -10,6 +10,7 @@ import type {
 } from '../../workspace/ports';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
+import { createQueuedWorkspaceHost } from './workspace-host';
 
 /**
  * onDidChangeWorkspaceFolders 発火待ちの上限
@@ -50,28 +51,23 @@ const applySingleMutation = (mutation: FolderMutation): Promise<boolean> => {
   });
 };
 
+/** VS Code workspaceFolders のport表現への変換 */
+const readWorkspaceFolders = (): readonly WorkspaceFolder[] =>
+  (vscode.workspace.workspaceFolders ?? []).map((folder) => ({
+    uri: folder.uri.toString() as UriString,
+    name: folder.name,
+  }));
+
 /**
  * VS Code ワークスペースフォルダ操作アダプターの生成
  * updateWorkspaceFolders は発火待ちせず連続呼び出すと後続が黙って拒否される(VS Code API 仕様)ため直列化する
  * @returns workspaceFolders 操作ポート
  */
-export const createWorkspaceHostAdapter = (): WorkspaceHostPort => {
-  let queue: Promise<unknown> = Promise.resolve();
-
-  return {
-    readFolders: (): readonly WorkspaceFolder[] =>
-      (vscode.workspace.workspaceFolders ?? []).map((f) => ({
-        uri: f.uri.toString() as UriString,
-        name: f.name,
-      })),
-
-    applyMutation: (mutation) => {
-      const result = queue.then(() => applySingleMutation(mutation));
-      queue = result;
-      return result;
-    },
-  };
-};
+export const createWorkspaceHostAdapter = (): WorkspaceHostPort =>
+  createQueuedWorkspaceHost({
+    readFolders: readWorkspaceFolders,
+    update: applySingleMutation,
+  });
 
 /**
  * VS Code ワークスペースファイル参照アダプターの生成
