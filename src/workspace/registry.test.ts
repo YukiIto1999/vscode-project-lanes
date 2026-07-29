@@ -28,10 +28,12 @@ const makeStore = (
 
 const deferred = () => {
   let resolve!: () => void;
-  const promise = new Promise<void>((resolvePromise) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 };
 
 describe('buildCatalog', () => {
@@ -165,7 +167,10 @@ describe('createCatalogRegistry', () => {
   it('保存完了前は状態と listener を更新しない', async () => {
     const initial = [mkFolder('web', '/home/user/web')];
     const pending = deferred();
-    const registry = createCatalogRegistry(initial, makeStore(undefined, () => pending.promise));
+    const registry = createCatalogRegistry(
+      initial,
+      makeStore(undefined, () => pending.promise),
+    );
     const seen: LaneCatalog[] = [];
     registry.onChange((catalog) => seen.push(catalog));
     const next = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
@@ -197,5 +202,98 @@ describe('createCatalogRegistry', () => {
     expect(registry.folders()).toEqual(initial);
     expect(registry.snapshot().lanes.map((lane) => lane.label)).toEqual(['web']);
     expect(seen).toHaveLength(0);
+  });
+
+  it('concurrent absorb を直列保存し、最新 folders へ両方を追加', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const firstSave = deferred();
+    const secondSave = deferred();
+    const savedNames: string[][] = [];
+    let activeSaves = 0;
+    let maxActiveSaves = 0;
+    const store = makeStore(undefined, async (folders) => {
+      savedNames.push(folders.map((folder) => folder.name));
+      activeSaves += 1;
+      maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+      await (savedNames.length === 1 ? firstSave.promise : secondSave.promise);
+      activeSaves -= 1;
+    });
+    const registry = createCatalogRegistry(initial, store);
+
+    const addingApi = registry.absorb([mkFolder('api', '/home/user/api')]);
+    const addingDocs = registry.absorb([mkFolder('docs', '/home/user/docs')]);
+    await Promise.resolve();
+
+    expect(savedNames).toEqual([['web', 'api']]);
+    expect(maxActiveSaves).toBe(1);
+
+    firstSave.resolve();
+    await expect(addingApi).resolves.toEqual(['api']);
+    await Promise.resolve();
+    expect(savedNames).toEqual([
+      ['web', 'api'],
+      ['web', 'api', 'docs'],
+    ]);
+
+    secondSave.resolve();
+    await expect(addingDocs).resolves.toEqual(['docs']);
+    expect(registry.folders().map((folder) => folder.name)).toEqual(['web', 'api', 'docs']);
+    expect(maxActiveSaves).toBe(1);
+  });
+
+  it('concurrent same replace の後続を queue 内で noop にする', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const pending = deferred();
+    let saveCount = 0;
+    const registry = createCatalogRegistry(
+      initial,
+      makeStore(undefined, async () => {
+        saveCount += 1;
+        await pending.promise;
+      }),
+    );
+    const seen: LaneCatalog[] = [];
+    registry.onChange((catalog) => seen.push(catalog));
+    const next = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
+
+    const first = registry.replace(next);
+    const second = registry.replace(next);
+    await Promise.resolve();
+    expect(saveCount).toBe(1);
+
+    pending.resolve();
+    await expect(Promise.all([first, second])).resolves.toEqual([true, false]);
+    expect(saveCount).toBe(1);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('先行 save reject 後も後続 mutation を実行', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const failure = new Error('save failed');
+    const firstSave = deferred();
+    let saveCount = 0;
+    const registry = createCatalogRegistry(
+      initial,
+      makeStore(undefined, async () => {
+        saveCount += 1;
+        if (saveCount === 1) await firstSave.promise;
+      }),
+    );
+
+    const addingApi = registry.absorb([mkFolder('api', '/home/user/api')]);
+    const addingDocs = registry.absorb([mkFolder('docs', '/home/user/docs')]);
+    const firstFailure = addingApi.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    await Promise.resolve();
+    expect(saveCount).toBe(1);
+
+    firstSave.reject(failure);
+    await expect(firstFailure).resolves.toBe(failure);
+    await expect(addingDocs).resolves.toEqual(['docs']);
+    expect(registry.folders().map((folder) => folder.name)).toEqual(['web', 'docs']);
+    expect(saveCount).toBe(2);
   });
 });

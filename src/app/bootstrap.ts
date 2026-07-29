@@ -39,6 +39,7 @@ import { projectUi } from '../ui/projections';
 import { createRipgrepSearchAdapter } from '../adapters/search/ripgrep';
 import { createSearchUiAdapter } from '../adapters/vscode/search-pick';
 import { createLaneSearchService } from '../search/service';
+import { runAsyncBoundary } from './async-boundary';
 
 /** ブートストラップ結果 */
 export type BootstrapOutcome =
@@ -183,6 +184,12 @@ export const bootstrapRuntime = async (
   const activityDisposable = laneActivity.onChange(render);
   const registryDisposable = registry.onChange(render);
   const configDisposable = config.onDidChange(() => render());
+  const reportAsyncFailure = (error: unknown): void => {
+    console.error('Project Lanes operation failed.', error);
+    void vscode.window.showErrorMessage(
+      'Project Lanes operation failed. See the Developer Tools console for details.',
+    );
+  };
 
   render();
   const initialLane = laneService.snapshot().activeLaneId;
@@ -191,20 +198,22 @@ export const bootstrapRuntime = async (
     if (lane) terminalService.revealLane(lane);
   }
 
-  const workspaceFoldersHandler = vscode.workspace.onDidChangeWorkspaceFolders(async () => {
-    const activeId = laneService.snapshot().activeLaneId;
-    const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
-    const action = reconcileUserChange({
-      rawFolders: workspaceHost.readFolders(),
-      currentLanes: registry.folders(),
-      linkPath: link.linkPath,
-      activeLabel: activeLane?.label ?? 'Project Lanes',
-      linkUri: toUri(link.linkPath),
-    });
-    if (action.kind === 'noop') return;
+  const workspaceFoldersHandler = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    void runAsyncBoundary(async () => {
+      const activeId = laneService.snapshot().activeLaneId;
+      const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
+      const action = reconcileUserChange({
+        rawFolders: workspaceHost.readFolders(),
+        currentLanes: registry.folders(),
+        linkPath: link.linkPath,
+        activeLabel: activeLane?.label ?? 'Project Lanes',
+        linkUri: toUri(link.linkPath),
+      });
+      if (action.kind === 'noop') return;
 
-    await registry.absorb(action.additions);
-    await collapseFoldersToLink(workspaceHost, action.collapsedFolder);
+      await registry.absorb(action.additions);
+      await collapseFoldersToLink(workspaceHost, action.collapsedFolder);
+    }, reportAsyncFailure);
   });
 
   const addFolderCommand = vscode.commands.registerCommand('projectLanes.addFolder', async () => {
@@ -241,30 +250,34 @@ export const bootstrapRuntime = async (
 
   const renameLaneCommand = vscode.commands.registerCommand(
     'projectLanes.renameLane',
-    (arg?: unknown) => laneService.renameLane(extractLaneId(arg)),
+    (arg?: unknown) =>
+      runAsyncBoundary(() => laneService.renameLane(extractLaneId(arg)), reportAsyncFailure),
   );
 
   const removeLaneCommand = vscode.commands.registerCommand(
     'projectLanes.removeLane',
-    (arg?: unknown) => laneService.removeLane(extractLaneId(arg)),
+    (arg?: unknown) =>
+      runAsyncBoundary(() => laneService.removeLane(extractLaneId(arg)), reportAsyncFailure),
   );
 
-  const reloadLanesCommand = vscode.commands.registerCommand('projectLanes.reloadLanes', async () => {
-    const newLanes = collectLaneCandidates(
-      workspaceHost.readFolders(),
-      catalogStore.load(),
-      link.linkPath,
-    );
-    const previousActiveId = laneService.snapshot().activeLaneId;
-    await registry.replace(newLanes);
-    laneService.initialize();
-    const nextActiveId = laneService.snapshot().activeLaneId;
-    if (nextActiveId && nextActiveId !== previousActiveId) {
-      const lane = registry.snapshot().byId.get(nextActiveId);
-      if (lane) terminalService.revealLane(lane);
-    }
-    render();
-  });
+  const reloadLanesCommand = vscode.commands.registerCommand('projectLanes.reloadLanes', () =>
+    runAsyncBoundary(async () => {
+      const newLanes = collectLaneCandidates(
+        workspaceHost.readFolders(),
+        catalogStore.load(),
+        link.linkPath,
+      );
+      const previousActiveId = laneService.snapshot().activeLaneId;
+      await registry.replace(newLanes);
+      laneService.initialize();
+      const nextActiveId = laneService.snapshot().activeLaneId;
+      if (nextActiveId && nextActiveId !== previousActiveId) {
+        const lane = registry.snapshot().byId.get(nextActiveId);
+        if (lane) terminalService.revealLane(lane);
+      }
+      render();
+    }, reportAsyncFailure),
+  );
 
   const switchLaneCommand = vscode.commands.registerCommand(
     'projectLanes.switchLane',
