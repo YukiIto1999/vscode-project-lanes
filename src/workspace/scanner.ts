@@ -114,24 +114,26 @@ export const bootstrapWorkspace = async (
   link: WorkspaceLinkPort,
   toUri: (path: string) => UriString,
 ): Promise<WorkspaceBootstrapResult> => {
+  const linkPath = link.linkPath;
+  const rawFolders = host.readFolders();
+  const stored = catalogStore.load();
+  const currentLinkTarget = link.readTarget();
+  const lanes = collectLaneCandidates(rawFolders, stored, linkPath);
+
+  if (stored === undefined && lanes.length === 0) {
+    return { kind: 'disabled', reason: 'missing-lane-source' };
+  }
+
+  await catalogStore.save(lanes);
+
   const anchorDir = nodePath.join(fileInfo.directoryPath, ANCHOR_DIR_NAME) as AbsolutePath;
   if (!directory.ensureDirectory(anchorDir)) {
     return { kind: 'disabled', reason: 'missing-anchor' };
   }
 
-  const linkPath = link.linkPath;
-  const rawFolders = host.readFolders();
-  const stored = catalogStore.load();
-  const currentLinkTarget = link.readTarget();
-
-  const lanes = collectLaneCandidates(rawFolders, stored, linkPath);
+  const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
   const activeLane = chooseActiveLane(lanes, currentLinkTarget);
-
-  if (!activeLane) {
-    await catalogStore.save([]);
-    const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
-    return { kind: 'ready', context: { key, canonicalLanes: [] } };
-  }
+  if (!activeLane) return { kind: 'ready', context: { key, canonicalLanes: [] } };
 
   const activePath = uriToAbsolutePath(activeLane.uri);
 
@@ -148,10 +150,12 @@ export const bootstrapWorkspace = async (
     !isLinkFolder(rawFolders[0]!, linkPath) ||
     rawFolders[0]!.name !== activeLane.name;
 
-  if (needsFolderUpdate) await collapseFoldersToLink(host, linkFolder);
+  if (needsFolderUpdate) {
+    const accepted = await collapseFoldersToLink(host, linkFolder);
+    if (!accepted) {
+      return { kind: 'disabled', reason: 'workspace-folder-mutation-rejected' };
+    }
+  }
 
-  await catalogStore.save(lanes);
-
-  const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
   return { kind: 'ready', context: { key, canonicalLanes: lanes } };
 };

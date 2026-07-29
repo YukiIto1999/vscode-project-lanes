@@ -14,6 +14,12 @@ export const activate = async (context: vscode.ExtensionContext): Promise<void> 
       'Project Lanes: Failed to create the .lanes-root anchor. Check write permission for the workspace file directory.',
     );
   }
+
+  if (outcome.reason === 'workspace-folder-mutation-rejected') {
+    vscode.window.showWarningMessage(
+      'Project Lanes: VS Code rejected the workspace folder update. Reopen the workspace and try again.',
+    );
+  }
 };
 
 /** 拡張機能の非活性化エントリ */
