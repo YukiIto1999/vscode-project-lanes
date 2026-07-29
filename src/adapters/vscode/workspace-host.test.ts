@@ -127,8 +127,11 @@ describe('createQueuedWorkspaceHost', () => {
       update,
     });
 
-    await expect(host.applyMutation(mutation(current))).rejects.toBe(failure);
-    await expect(host.applyMutation(mutation(current))).resolves.toBe(true);
+    const first = host.applyMutation(mutation(current));
+    const second = host.applyMutation(mutation(current));
+
+    await expect(first).rejects.toBe(failure);
+    await expect(second).resolves.toBe(true);
     expect(update).toHaveBeenCalledTimes(2);
   });
 });
