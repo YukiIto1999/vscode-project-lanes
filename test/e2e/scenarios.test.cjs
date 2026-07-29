@@ -734,6 +734,81 @@ test('SIGTERM waits for active child termination before cleaning scenario roots'
   assert.deepEqual(events, ['terminate', 'child-close', 'cleanup', 'reraise-246-SIGTERM']);
 });
 
+test('SIGTERM latched during a successful launch prevents the next launch before cleanup', async () => {
+  const handlers = new Map();
+  const events = [];
+  const processApi = {
+    pid: 357,
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill(pid, signal) {
+      events.push(`reraise-${pid}-${signal}`);
+    },
+  };
+  const fileSystem = createFixtureFileSystem('/tmp/project-lanes-e2e-sigterm-race', {
+    existsSync() {
+      return false;
+    },
+    readFileSync(markerPath) {
+      const phase = markerPath.endsWith('launch-0.json') ? 'bootstrap' : 'restart';
+      return JSON.stringify({
+        runId: 'sigterm-race',
+        scenario: 'workspace-bootstrap',
+        phase,
+        status: 'PASS',
+        message: `E2E PASS: ${phase}`,
+      });
+    },
+    rmSync() {
+      events.push('cleanup');
+    },
+  });
+  const firstChild = new EventEmitter();
+  firstChild.pid = 468;
+  firstChild.kill = (signal) => {
+    events.push(`launch-1-kill-${signal}`);
+    queueMicrotask(() => {
+      events.push('launch-1-close');
+      firstChild.emit('close', 0, null);
+    });
+  };
+  let launchCount = 0;
+  const runPromise = runScenario(
+    workspaceBootstrapScenario,
+    createScenarioDependencies('/tmp/project-lanes-e2e-sigterm-race', {
+      createRunId: () => 'sigterm-race',
+      fileSystem,
+      processApi,
+      launchVSCode: (options) => {
+        launchCount += 1;
+        events.push(`launch-${launchCount}-spawn`);
+        if (launchCount > 1) return Promise.resolve();
+        return launchVSCodeProcess(options, {
+          fileSystem,
+          log() {},
+          processApi,
+          spawn() {
+            return firstChild;
+          },
+        });
+      },
+    }),
+  );
+
+  const signalHandling = handlers.get('SIGTERM')();
+  await Promise.all([runPromise, signalHandling]);
+
+  assert.equal(launchCount, 1);
+  assert.deepEqual(events, [
+    'launch-1-spawn',
+    'launch-1-kill-SIGINT',
+    'launch-1-close',
+    'cleanup',
+    'reraise-357-SIGTERM',
+  ]);
+});
+
 test('the driver extension activates on startup without defining an extension test path', () => {
   const manifest = require('./driver/package.json');
 
@@ -760,14 +835,13 @@ test('the driver writes a success marker atomically before quitting VS Code', as
   await runDriver({
     environment,
     fileSystem: {
-      existsSync(target) {
-        assert.equal(target, markerPath);
-        return false;
-      },
-      renameSync(source, destination) {
-        operations.push(['rename', source, destination]);
+      linkSync(source, destination) {
+        operations.push(['link', source, destination]);
         files.set(destination, files.get(source));
-        files.delete(source);
+      },
+      unlinkSync(target) {
+        operations.push(['unlink', target]);
+        files.delete(target);
       },
       writeFileSync(target, contents, options) {
         operations.push(['write', target, options]);
@@ -795,7 +869,8 @@ test('the driver writes a success marker atomically before quitting VS Code', as
 
   assert.deepEqual(operations, [
     ['write', '/tmp/launch-0.json.tmp-135', { encoding: 'utf8', flag: 'wx' }],
-    ['rename', '/tmp/launch-0.json.tmp-135', '/tmp/launch-0.json'],
+    ['link', '/tmp/launch-0.json.tmp-135', '/tmp/launch-0.json'],
+    ['unlink', '/tmp/launch-0.json.tmp-135'],
     ['command', 'workbench.action.quit'],
   ]);
   assert.deepEqual(JSON.parse(files.get(markerPath)), {
@@ -824,11 +899,10 @@ test('the driver records a suite failure before quitting VS Code', async () => {
       PROJECT_LANES_E2E_SUITE_PATH: '/suite/workspace-bootstrap.cjs',
     },
     fileSystem: {
-      existsSync() {
-        return false;
-      },
-      renameSync(source, destination) {
+      linkSync(source, destination) {
         files.set(destination, files.get(source));
+      },
+      unlinkSync(source) {
         files.delete(source);
       },
       writeFileSync(target, contents) {
@@ -859,6 +933,140 @@ test('the driver records a suite failure before quitting VS Code', async () => {
   assert.equal(marker.status, 'FAIL');
   assert.equal(marker.error.message, 'suite failed');
   assert.match(marker.error.stack, /Error: suite failed/);
+  assert.deepEqual(commands, ['workbench.action.quit']);
+});
+
+test('the driver never replaces a marker published by a concurrent writer', async () => {
+  const { runDriver } = require('./driver/extension.cjs');
+  const markerPath = '/tmp/launch-concurrent.json';
+  const firstMarker = JSON.stringify({
+    runId: 'run-concurrent',
+    scenario: 'workspace-bootstrap',
+    phase: 'bootstrap',
+    status: 'FAIL',
+    error: { message: 'first writer failed' },
+  });
+  const files = new Map();
+  const commands = [];
+
+  await assert.rejects(
+    runDriver({
+      environment: {
+        PROJECT_LANES_E2E_RESULT_PATH: markerPath,
+        PROJECT_LANES_E2E_RUN: JSON.stringify({
+          runId: 'run-concurrent',
+          scenario: 'workspace-bootstrap',
+          phase: 'bootstrap',
+        }),
+        PROJECT_LANES_E2E_SUITE_PATH: '/suite/workspace-bootstrap.cjs',
+      },
+      fileSystem: {
+        linkSync(source, destination) {
+          if (files.has(destination)) {
+            const error = new Error('marker already exists');
+            error.code = 'EEXIST';
+            throw error;
+          }
+          files.set(destination, files.get(source));
+        },
+        unlinkSync(target) {
+          files.delete(target);
+        },
+        writeFileSync(target, contents) {
+          files.set(target, contents);
+          files.set(markerPath, firstMarker);
+        },
+      },
+      loadSuite() {
+        return {
+          async run(options) {
+            options.log('E2E PASS: second writer');
+          },
+        };
+      },
+      processApi: { pid: 579 },
+      vscodeApi: {
+        commands: {
+          async executeCommand(command) {
+            commands.push(command);
+          },
+        },
+      },
+    }),
+    { code: 'EEXIST' },
+  );
+
+  assert.equal(files.get(markerPath), firstMarker);
+  assert.equal(files.has(`${markerPath}.tmp-579`), false);
+  assert.deepEqual(commands, ['workbench.action.quit']);
+});
+
+test('the driver reports publish and temporary marker cleanup failures together', async () => {
+  const { runDriver } = require('./driver/extension.cjs');
+  const markerPath = '/tmp/launch-cleanup-failure.json';
+  const firstMarker = JSON.stringify({
+    runId: 'run-cleanup-failure',
+    scenario: 'workspace-bootstrap',
+    phase: 'bootstrap',
+    status: 'FAIL',
+    error: { message: 'first writer failed' },
+  });
+  const publishError = Object.assign(new Error('marker already exists'), {
+    code: 'EEXIST',
+  });
+  const cleanupError = Object.assign(new Error('temporary marker cleanup denied'), {
+    code: 'EACCES',
+  });
+  const files = new Map();
+  const commands = [];
+
+  await assert.rejects(
+    runDriver({
+      environment: {
+        PROJECT_LANES_E2E_RESULT_PATH: markerPath,
+        PROJECT_LANES_E2E_RUN: JSON.stringify({
+          runId: 'run-cleanup-failure',
+          scenario: 'workspace-bootstrap',
+          phase: 'bootstrap',
+        }),
+        PROJECT_LANES_E2E_SUITE_PATH: '/suite/workspace-bootstrap.cjs',
+      },
+      fileSystem: {
+        linkSync() {
+          throw publishError;
+        },
+        unlinkSync() {
+          throw cleanupError;
+        },
+        writeFileSync(target, contents) {
+          files.set(target, contents);
+          files.set(markerPath, firstMarker);
+        },
+      },
+      loadSuite() {
+        return {
+          async run(options) {
+            options.log('E2E PASS: second writer');
+          },
+        };
+      },
+      processApi: { pid: 680 },
+      vscodeApi: {
+        commands: {
+          async executeCommand(command) {
+            commands.push(command);
+          },
+        },
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors, [publishError, cleanupError]);
+      return true;
+    },
+  );
+
+  assert.equal(files.get(markerPath), firstMarker);
   assert.deepEqual(commands, ['workbench.action.quit']);
 });
 

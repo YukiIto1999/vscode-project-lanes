@@ -18,16 +18,29 @@ const serializeError = (error) => ({
 });
 
 const writeResultMarker = ({ fileSystem, markerPath, processApi, result }) => {
-  if (fileSystem.existsSync(markerPath)) {
-    throw new Error(`E2E result marker already exists: ${markerPath}`);
-  }
-
   const temporaryMarkerPath = `${markerPath}.tmp-${processApi.pid}`;
   fileSystem.writeFileSync(temporaryMarkerPath, JSON.stringify(result), {
     encoding: 'utf8',
     flag: 'wx',
   });
-  fileSystem.renameSync(temporaryMarkerPath, markerPath);
+  let publishError;
+  try {
+    fileSystem.linkSync(temporaryMarkerPath, markerPath);
+  } catch (error) {
+    publishError = error;
+  }
+  try {
+    fileSystem.unlinkSync(temporaryMarkerPath);
+  } catch (cleanupError) {
+    if (publishError) {
+      throw new AggregateError(
+        [publishError, cleanupError],
+        'E2E marker publish and cleanup failed',
+      );
+    }
+    throw cleanupError;
+  }
+  if (publishError) throw publishError;
 };
 
 const runDriver = async ({
