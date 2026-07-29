@@ -815,6 +815,78 @@ test('the driver extension activates on startup without defining an extension te
   assert.deepEqual(manifest.activationEvents, ['onStartupFinished']);
 });
 
+test('the driver quits when a required initialization environment variable is missing', async () => {
+  const { runDriver } = require('./driver/extension.cjs');
+  const commands = [];
+
+  await assert.rejects(
+    runDriver({
+      environment: {
+        PROJECT_LANES_E2E_RUN: JSON.stringify({
+          runId: 'run-driver-missing-marker',
+          scenario: 'workspace-bootstrap',
+          phase: 'bootstrap',
+        }),
+        PROJECT_LANES_E2E_SUITE_PATH: '/suite/workspace-bootstrap.cjs',
+      },
+      fileSystem: {
+        writeFileSync() {
+          throw new Error('marker must not be written without its path');
+        },
+      },
+      loadSuite() {
+        throw new Error('suite must not load after initialization fails');
+      },
+      vscodeApi: {
+        commands: {
+          async executeCommand(command) {
+            commands.push(command);
+          },
+        },
+      },
+    }),
+    /Missing E2E environment variable: PROJECT_LANES_E2E_RESULT_PATH/,
+  );
+
+  assert.deepEqual(commands, ['workbench.action.quit']);
+});
+
+test('the driver quits and preserves a malformed result identity error', async () => {
+  const { runDriver } = require('./driver/extension.cjs');
+  const commands = [];
+
+  await assert.rejects(
+    runDriver({
+      environment: {
+        PROJECT_LANES_E2E_RESULT_PATH: '/tmp/launch-malformed-identity.json',
+        PROJECT_LANES_E2E_RUN: '{',
+        PROJECT_LANES_E2E_SUITE_PATH: '/suite/workspace-bootstrap.cjs',
+      },
+      fileSystem: {
+        writeFileSync() {
+          throw new Error('marker must not be written without a valid result identity');
+        },
+      },
+      loadSuite() {
+        throw new Error('suite must not load after initialization fails');
+      },
+      vscodeApi: {
+        commands: {
+          async executeCommand(command) {
+            commands.push(command);
+          },
+        },
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof SyntaxError);
+      return true;
+    },
+  );
+
+  assert.deepEqual(commands, ['workbench.action.quit']);
+});
+
 test('the driver writes a success marker atomically before quitting VS Code', async () => {
   const { runDriver } = require('./driver/extension.cjs');
   const markerPath = '/tmp/launch-0.json';
