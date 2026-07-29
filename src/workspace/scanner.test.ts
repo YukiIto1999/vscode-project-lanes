@@ -138,7 +138,7 @@ describe('bootstrapWorkspace', () => {
     let stored: readonly WorkspaceFolder[] | undefined = initial;
     const port: CatalogStorePort = {
       load: () => stored,
-      save: (folders) => {
+      save: async (folders) => {
         stored = folders;
       },
     };

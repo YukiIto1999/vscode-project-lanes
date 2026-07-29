@@ -62,7 +62,7 @@ export interface CatalogStorePort {
    * カタログの保存
    * @param folders - 永続化対象のレーン列
    */
-  readonly save: (folders: readonly WorkspaceFolder[]) => void;
+  readonly save: (folders: readonly WorkspaceFolder[]) => Promise<void>;
 }
 
 /** ワークスペース設定ポート */

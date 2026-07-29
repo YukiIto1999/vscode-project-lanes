@@ -128,7 +128,7 @@ export const bootstrapWorkspace = async (
   const activeLane = chooseActiveLane(lanes, currentLinkTarget);
 
   if (!activeLane) {
-    catalogStore.save([]);
+    await catalogStore.save([]);
     const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
     return { kind: 'ready', context: { key, canonicalLanes: [] } };
   }
@@ -150,7 +150,7 @@ export const bootstrapWorkspace = async (
 
   if (needsFolderUpdate) await collapseFoldersToLink(host, linkFolder);
 
-  catalogStore.save(lanes);
+  await catalogStore.save(lanes);
 
   const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
   return { kind: 'ready', context: { key, canonicalLanes: lanes } };

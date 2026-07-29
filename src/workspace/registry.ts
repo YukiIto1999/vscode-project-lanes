@@ -59,26 +59,26 @@ export interface WorkspaceCatalogRegistry {
    * @param lanes - 置換後のレーン列
    * @returns 実際に変更が発生すれば true
    */
-  readonly replace: (lanes: readonly WorkspaceFolder[]) => boolean;
+  readonly replace: (lanes: readonly WorkspaceFolder[]) => Promise<boolean>;
   /**
    * 未知レーンの追記
    * @param lanes - 追記候補のレーン列
    * @returns 新規追加されたレーン名の列
    */
-  readonly absorb: (lanes: readonly WorkspaceFolder[]) => readonly string[];
+  readonly absorb: (lanes: readonly WorkspaceFolder[]) => Promise<readonly string[]>;
   /**
    * レーンの改名
    * @param oldName - 旧 LaneId を兼ねる改名前 name
    * @param newName - 新 LaneId を兼ねる改名後 name
    * @returns 実際に変更が発生すれば true
    */
-  readonly rename: (oldName: string, newName: string) => boolean;
+  readonly rename: (oldName: string, newName: string) => Promise<boolean>;
   /**
    * レーンの除外
    * @param name - LaneId を兼ねる除外対象 name
    * @returns 実際に変更が発生すれば true
    */
-  readonly remove: (name: string) => boolean;
+  readonly remove: (name: string) => Promise<boolean>;
 }
 
 /**
@@ -95,10 +95,10 @@ export const createCatalogRegistry = (
   let catalog = buildCatalog(folders);
   const listeners = new Set<(c: LaneCatalog) => void>();
 
-  const commit = (next: readonly WorkspaceFolder[]): void => {
+  const commit = async (next: readonly WorkspaceFolder[]): Promise<void> => {
+    await store.save(next);
     folders = next;
     catalog = buildCatalog(folders);
-    store.save(folders);
     for (const listener of listeners) listener(catalog);
   };
 
@@ -109,30 +109,30 @@ export const createCatalogRegistry = (
       listeners.add(listener);
       return { dispose: () => listeners.delete(listener) };
     },
-    replace: (next) => {
+    replace: async (next) => {
       if (sameFolders(folders, next)) return false;
-      commit(next);
+      await commit(next);
       return true;
     },
-    absorb: (incoming) => {
+    absorb: async (incoming) => {
       const known = new Set(folders.map((f) => f.name));
       const additions = incoming.filter((f) => !known.has(f.name));
       if (additions.length === 0) return [];
-      commit([...folders, ...additions]);
+      await commit([...folders, ...additions]);
       return additions.map((f) => f.name);
     },
-    rename: (oldName, newName) => {
+    rename: async (oldName, newName) => {
       if (oldName === newName) return false;
       const idx = folders.findIndex((f) => f.name === oldName);
       if (idx < 0) return false;
       const next = folders.map((f, i) => (i === idx ? { ...f, name: newName } : f));
-      commit(next);
+      await commit(next);
       return true;
     },
-    remove: (name) => {
+    remove: async (name) => {
       const next = folders.filter((f) => f.name !== name);
       if (next.length === folders.length) return false;
-      commit(next);
+      await commit(next);
       return true;
     },
   };
