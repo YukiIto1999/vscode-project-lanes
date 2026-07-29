@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.vsix
+.worktrees/
 .mcp.json
 .claude/
 CLAUDE.md
