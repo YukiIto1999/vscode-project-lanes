@@ -1,0 +1,14 @@
+{
+  "name": "project-lanes-e2e-driver",
+  "displayName": "Project Lanes E2E Driver",
+  "version": "0.0.0",
+  "private": true,
+  "publisher": "project-lanes-e2e",
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "engines": {
+    "vscode": "^1.101.0"
+  }
+}

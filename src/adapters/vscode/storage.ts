@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import type * as vscode from 'vscode';
 import type { LaneId, UriString } from '../../foundation/model';
 import type { LaneSelectionStorePort } from '../../lane/ports';
 import type { WorkspaceFolder } from '../../workspace/model';
@@ -37,11 +37,11 @@ export const createCatalogStoreAdapter = (workspaceState: vscode.Memento): Catal
     if (!raw) return undefined;
     return raw.map((f): WorkspaceFolder => ({ uri: f.uri as UriString, name: f.name }));
   },
-  save: (folders) => {
+  save: async (folders) => {
     const serialized: readonly StoredFolder[] = folders.map((f) => ({
       uri: f.uri as string,
       name: f.name,
     }));
-    workspaceState.update(CATALOG_KEY, serialized);
+    await workspaceState.update(CATALOG_KEY, serialized);
   },
 });
