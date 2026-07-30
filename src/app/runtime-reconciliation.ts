@@ -1,5 +1,4 @@
 import type { LaneId } from '../foundation/model';
-import type { Lane } from '../lane/model';
 import {
   ActiveLaneReconciliationError,
   type ActiveLaneReconciliationResult,
@@ -12,14 +11,8 @@ export interface RuntimeReconcilerDeps {
   readonly reconcileWorkspaceFolders: () => Promise<WorkspaceFolderReconciliationResult>;
   /** active lane の再整合 */
   readonly reconcileActiveLane: () => Promise<ActiveLaneReconciliationResult>;
-  /** 現 active lane ID の取得 */
-  readonly getActiveLaneId: () => LaneId | undefined;
-  /** lane ID から lane の取得 */
-  readonly getLane: (laneId: LaneId) => Lane | undefined;
-  /** lane root が terminal を起動できる状態か判定 */
-  readonly isLaneAvailable: (lane: Lane) => boolean;
-  /** active lane terminal の表示 */
-  readonly revealLane: (lane: Lane) => Promise<void>;
+  /** 再整合時の変更先が現在も active なら terminal を表示 */
+  readonly revealActiveLaneIfCurrent: (laneId: LaneId) => Promise<void>;
   /** UI の再描画 */
   readonly render: () => void;
   /** commit 後の cache 保存失敗通知 */
@@ -54,10 +47,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
   const {
     reconcileWorkspaceFolders,
     reconcileActiveLane,
-    getActiveLaneId,
-    getLane,
-    isLaneAvailable,
-    revealLane,
+    revealActiveLaneIfCurrent,
     render,
     reportPendingCache,
     reportWorkspaceMutationRejected,
@@ -65,7 +55,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
 
   return {
     reconcile: async () => {
-      const previousActiveId = getActiveLaneId();
+      let activeLaneToReveal: LaneId | undefined;
       try {
         const workspaceResult = await reconcileWorkspaceFolders();
         if (workspaceResult.kind === 'rejected') {
@@ -75,6 +65,9 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
 
         try {
           const activeResult = await reconcileActiveLane();
+          if (activeResult.activeLaneChanged && activeResult.changedToLaneId) {
+            activeLaneToReveal = activeResult.changedToLaneId;
+          }
           if (activeResult.cache === 'pending') {
             await reportPendingCache(activeResult.error);
           }
@@ -83,11 +76,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
           await reportWorkspaceMutationRejected(error);
         }
       } finally {
-        const nextActiveId = getActiveLaneId();
-        if (nextActiveId && nextActiveId !== previousActiveId) {
-          const activeLane = getLane(nextActiveId);
-          if (activeLane && isLaneAvailable(activeLane)) await revealLane(activeLane);
-        }
+        if (activeLaneToReveal) await revealActiveLaneIfCurrent(activeLaneToReveal);
         render();
       }
     },

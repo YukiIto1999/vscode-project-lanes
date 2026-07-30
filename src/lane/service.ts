@@ -48,8 +48,8 @@ export interface LaneServiceDeps {
   readonly rootAvailability: LaneRootAvailabilityPort;
 }
 
-/** アクティブレーン再整合の結果 */
-export type ActiveLaneReconciliationResult =
+/** アクティブレーン再整合で確定した状態 */
+type ActiveLaneReconciliationState =
   | {
       /** active lane を持たない状態 */
       readonly kind: 'empty' | 'inactive';
@@ -74,6 +74,34 @@ export type ActiveLaneReconciliationResult =
       readonly cache: 'pending';
       readonly error: unknown;
     };
+
+/** queue 内で判定したアクティブレーン再整合の結果 */
+export type ActiveLaneReconciliationResult =
+  | (Extract<ActiveLaneReconciliationState, { readonly kind: 'active' }> &
+      (
+        | {
+            /** この再整合自身は active lane を変更していない */
+            readonly activeLaneChanged: false;
+          }
+        | {
+            /** この再整合自身が active lane を変更した */
+            readonly activeLaneChanged: true;
+            /** queue 内で確定した変更先 */
+            readonly changedToLaneId: LaneId;
+          }
+      ))
+  | (Exclude<ActiveLaneReconciliationState, { readonly kind: 'active' }> &
+      (
+        | {
+            /** この再整合自身は active lane を変更していない */
+            readonly activeLaneChanged: false;
+          }
+        | {
+            /** この再整合自身が active lane を持たない状態へ変更した */
+            readonly activeLaneChanged: true;
+            readonly changedToLaneId: undefined;
+          }
+      ));
 
 /** active lane 再整合の commit 前失敗理由 */
 export type ActiveLaneReconciliationFailureReason =
@@ -106,6 +134,11 @@ export interface LaneService {
    * @returns レーン確定と cache 保存の状態
    */
   readonly reconcileActiveLane: () => Promise<ActiveLaneReconciliationResult>;
+  /**
+   * 指定レーンが現在も active なら最新状態で terminal を表示
+   * @param expectedLaneId - 再整合時に確定した active lane ID
+   */
+  readonly revealActiveLaneIfCurrent: (expectedLaneId: LaneId) => Promise<void>;
   /** 共通 queue 内で commit 後の未完了処理を再試行 */
   readonly finalizePendingOperations: () => Promise<void>;
   /**
@@ -259,7 +292,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
   const executeActiveLaneReconciliation = async (
     preferredLaneId?: LaneId,
-  ): Promise<ActiveLaneReconciliationResult> => {
+  ): Promise<ActiveLaneReconciliationState> => {
     await finalizePendingOperations();
 
     const catalog = getCatalog();
@@ -282,7 +315,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       availabilityByLaneId,
     });
 
-    const preserveLinkedLane = async (): Promise<ActiveLaneReconciliationResult> => {
+    const preserveLinkedLane = async (): Promise<ActiveLaneReconciliationState> => {
       if (!linkedLane) throw new Error('linked-lane-missing');
       activeLaneId = linkedLane.id;
       if (cachedSelection?.kind === 'v2' && cachedSelection.laneId === linkedLane.id) {
@@ -389,10 +422,29 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
   };
 
   const reconcileActiveLane = (): Promise<ActiveLaneReconciliationResult> =>
-    operationQueue.enqueue(executeActiveLaneReconciliation);
+    operationQueue.enqueue(async () => {
+      const previousActiveLaneId = activeLaneId;
+      const result = await executeActiveLaneReconciliation();
+      if (activeLaneId === previousActiveLaneId) {
+        return { ...result, activeLaneChanged: false };
+      }
+      if (result.kind === 'active') {
+        if (!activeLaneId) throw new Error('active-lane-reconciliation-state-mismatch');
+        return { ...result, activeLaneChanged: true, changedToLaneId: activeLaneId };
+      }
+      return { ...result, activeLaneChanged: true, changedToLaneId: undefined };
+    });
 
   return {
     reconcileActiveLane,
+    revealActiveLaneIfCurrent: (expectedLaneId) =>
+      operationQueue.enqueue(async () => {
+        if (activeLaneId !== expectedLaneId) return;
+        const activeLane = getCatalog().byId.get(expectedLaneId);
+        if (activeLane && rootAvailability.inspect(activeLane.rootPath) === 'available') {
+          await terminal.revealLane(activeLane);
+        }
+      }),
     finalizePendingOperations,
 
     focus: async (laneId) => {
