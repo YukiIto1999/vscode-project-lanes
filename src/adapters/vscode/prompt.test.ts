@@ -5,6 +5,7 @@ import type { Lane } from '../../lane/model';
 const vscode = vi.hoisted(() => ({
   executeCommand: vi.fn(),
   file: vi.fn((path: string) => ({ path, toString: () => `file://${path}` })),
+  showInputBox: vi.fn(),
   showOpenDialog: vi.fn(),
   showQuickPick: vi.fn(),
   showWarningMessage: vi.fn(),
@@ -19,7 +20,7 @@ vi.mock('vscode', () => ({
   },
   Uri: { file: vscode.file },
   window: {
-    showInputBox: vi.fn(),
+    showInputBox: vscode.showInputBox,
     showOpenDialog: vscode.showOpenDialog,
     showQuickPick: vscode.showQuickPick,
     showWarningMessage: vscode.showWarningMessage,
@@ -55,6 +56,73 @@ describe('createPromptAdapter pickLane', () => {
       { label: 'same', description: '/projects/api', laneId: 'opaque-api' },
       { label: 'docs', laneId: 'opaque-docs' },
     ]);
+  });
+});
+
+describe('createPromptAdapter promptRename', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Development かつ E2E payload/run marker があれば private driver command を使う', async () => {
+    vscode.executeCommand.mockResolvedValue('lane-beta');
+    const prompt = createPromptAdapter({
+      extensionMode: 2,
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'transaction' }),
+        PROJECT_LANES_E2E_RUN: JSON.stringify({ runId: 'e2e-1' }),
+      },
+    });
+
+    await expect(prompt.promptRename('lane-b', () => undefined)).resolves.toBe('lane-beta');
+
+    expect(vscode.executeCommand).toHaveBeenCalledWith('projectLanes.e2e.renameLane', {
+      current: 'lane-b',
+    });
+    expect(vscode.showInputBox).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'Production',
+      extensionMode: 1,
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: '{}',
+        PROJECT_LANES_E2E_RUN: '{}',
+      },
+    },
+    {
+      name: 'Test',
+      extensionMode: 3,
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: '{}',
+        PROJECT_LANES_E2E_RUN: '{}',
+      },
+    },
+    {
+      name: 'payload marker なし',
+      extensionMode: 2,
+      environment: { PROJECT_LANES_E2E_RUN: '{}' },
+    },
+    {
+      name: 'run marker なし',
+      extensionMode: 2,
+      environment: { PROJECT_LANES_E2E_PAYLOAD: '{}' },
+    },
+  ])('$name では native input box を使う', async ({ extensionMode, environment }) => {
+    vscode.showInputBox.mockResolvedValue('lane-beta');
+    const prompt = createPromptAdapter({ extensionMode, environment });
+    const validate = vi.fn(() => undefined);
+
+    await expect(prompt.promptRename('lane-b', validate)).resolves.toBe('lane-beta');
+
+    expect(vscode.showInputBox).toHaveBeenCalledWith({
+      title: 'Rename Lane',
+      value: 'lane-b',
+      valueSelection: [0, 6],
+      validateInput: expect.any(Function),
+    });
+    expect(vscode.executeCommand).not.toHaveBeenCalled();
   });
 });
 

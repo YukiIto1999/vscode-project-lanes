@@ -90,6 +90,17 @@ export interface LaneTerminalPort {
    */
   readonly revealLane: (lane: Lane) => Promise<void>;
   /**
+   * 指定レーンの表示面を現在の表示名で再生成
+   * @param lane - 対象レーン
+   * @returns 再生成完了の Promise
+   */
+  readonly refreshLane: (lane: Lane) => Promise<void>;
+  /**
+   * 保留中の表示面更新を失敗した段階から再開
+   * @returns 再開完了の Promise
+   */
+  readonly finalizePendingPresentations: () => Promise<void>;
+  /**
    * 指定レーンのターミナルを破棄
    * @param laneId - 対象レーン識別子
    * @returns 破棄完了の Promise

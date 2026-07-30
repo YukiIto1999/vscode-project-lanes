@@ -6,8 +6,6 @@ export interface TerminalSessionSpec {
   readonly id: SessionId;
   /** 所属レーン識別子 */
   readonly laneId: LaneId;
-  /** 表示タイトル */
-  readonly title: string;
   /** 作業ディレクトリ絶対パス */
   readonly cwdPath: AbsolutePath;
   /** シェル絶対パス */
@@ -18,8 +16,6 @@ export interface TerminalSessionSpec {
 export interface TerminalSessionRecord {
   /** セッション仕様 */
   readonly spec: TerminalSessionSpec;
-  /** 生存状態 */
-  readonly alive: boolean;
   /** バインド済みターミナル識別子 */
   readonly terminalId: TerminalId | undefined;
 }
