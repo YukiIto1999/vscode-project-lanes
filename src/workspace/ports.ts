@@ -1,4 +1,5 @@
 import type { AbsolutePath } from '../foundation/model';
+import type { LaneRootAvailability } from '../lane/model';
 import type { FolderMutation, WorkspaceFileInfo, WorkspaceFolder } from './model';
 
 /** ワークスペースフォルダ操作ポート */
@@ -51,6 +52,16 @@ export interface DirectoryPort {
    * @returns 存在化に成功すれば true
    */
   readonly ensureDirectory: (path: AbsolutePath) => boolean;
+}
+
+/** レーンルート利用可否の検査ポート */
+export interface LaneRootAvailabilityPort {
+  /**
+   * レーンルートの現在状態を検査
+   * @param path - 対象絶対パス
+   * @returns filesystem 由来の利用可否
+   */
+  readonly inspect: (path: AbsolutePath) => LaneRootAvailability;
 }
 
 /** レーンカタログ永続化ポート */
