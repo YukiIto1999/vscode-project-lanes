@@ -758,6 +758,28 @@ describe('createLaneService interaction boundary', () => {
     expect(h.editorClose).not.toHaveBeenCalled();
   });
 
+  it('queue 待機中に focus target root が missing になった場合は tabs を閉じない', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    let availability: LaneRootAvailability = 'available';
+    const h = createHarness({
+      operationQueue,
+      inspectRoot: () => availability,
+    });
+
+    const focusing = h.service.focus('api' as LaneId);
+    availability = 'missing';
+    gate.resolve();
+    await holding;
+
+    await expect(focusing).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'root-unavailable',
+    });
+    expect(h.editorClose).not.toHaveBeenCalled();
+  });
+
   it('reconciliation-required を dirty editor として警告しない', async () => {
     const warnDirtyEditors = vi.fn();
     const h = createHarness({
