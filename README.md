@@ -27,22 +27,22 @@ Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Ini
   - Shows `working` / `waiting` / `no-agent` per lane, including lanes that aren't currently active
   - Detection is a generic heuristic over OSC 633 shell integration (bash / zsh) and real-time PTY output observation; not specific to any agent
 - Lane management
-  - Add and reload lanes from title-bar icons on the Lanes panel
+  - Add folders as lanes and reconcile the active lane from title-bar icons on the Lanes panel
   - Rename or remove a lane via right-click on the lane item. Rename preserves the lane's terminal sessions; remove rejects the active lane and never touches the folder on disk
 
 ## Commands
 
-| Command                                  | Description                                                                          |
-| ---------------------------------------- | ------------------------------------------------------------------------------------ |
-| `Project Lanes: Initialize Workspace`    | Convert the current workspace into a managed Project Lanes workspace                 |
-| `Project Lanes: Switch Lane`             | Switch to a lane                                                                     |
-| `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent    |
-| `Project Lanes: Reload Lanes`            | Re-scan `workspaceFolders` / symlink target / catalog store and rebuild the registry |
-| `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                    |
-| `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)     |
-| `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                       |
-| `Project Lanes: Find in Lanes`           | Search file contents across all lanes with ripgrep and jump to a match               |
-| `Project Lanes: Go to File in Lanes`     | Fuzzy-find a file across all lanes and open it                                       |
+| Command                                  | Description                                                                       |
+| ---------------------------------------- | --------------------------------------------------------------------------------- |
+| `Project Lanes: Initialize Workspace`    | Convert the current workspace into a managed Project Lanes workspace              |
+| `Project Lanes: Switch Lane`             | Switch to a lane                                                                  |
+| `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent |
+| `Project Lanes: Reload Lanes`            | Absorb added workspace folders and reconcile the active link and selection cache  |
+| `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                 |
+| `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)  |
+| `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                    |
+| `Project Lanes: Find in Lanes`           | Search file contents across all lanes with ripgrep and jump to a match            |
+| `Project Lanes: Go to File in Lanes`     | Fuzzy-find a file across all lanes and open it                                    |
 
 ## Settings
 

@@ -1,5 +1,5 @@
 import * as nodePath from 'node:path';
-import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
+import type { AbsolutePath, WorkspaceKey } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import type { WorkspaceBootstrapResult, WorkspaceFileInfo, WorkspaceFolder } from './model';
 import type {
@@ -47,38 +47,6 @@ export const collectLaneCandidates = (
 };
 
 /**
- * link target 一致要素の選定、無ければ先頭要素
- * @param items - 候補要素列
- * @param currentLinkTarget - 現 symlink target
- * @param pathOf - 要素からの絶対パス抽出
- * @returns 選定要素、または候補が空で undefined
- */
-export const selectByLinkTarget = <T>(
-  items: readonly T[],
-  currentLinkTarget: AbsolutePath | undefined,
-  pathOf: (item: T) => AbsolutePath,
-): T | undefined => {
-  if (items.length === 0) return undefined;
-  if (currentLinkTarget) {
-    const matching = items.find((item) => pathOf(item) === currentLinkTarget);
-    if (matching) return matching;
-  }
-  return items[0];
-};
-
-/**
- * アクティブレーンの選定
- * @param lanes - レーン候補列
- * @param currentLinkTarget - 現 symlink target
- * @returns 選定レーン、または候補が空のとき undefined
- */
-export const chooseActiveLane = (
-  lanes: readonly WorkspaceFolder[],
-  currentLinkTarget: AbsolutePath | undefined,
-): WorkspaceFolder | undefined =>
-  selectByLinkTarget(lanes, currentLinkTarget, (l) => uriToAbsolutePath(l.uri));
-
-/**
  * workspaceFolders を symlink folder 1 件へ縮退させる副作用境界
  * @param host - workspaceFolders 操作ポート
  * @param expectedFolders - 変更計画時の workspaceFolders
@@ -103,22 +71,19 @@ export const collapseFoldersToLink = (
  * @param fileInfo - 確定済みワークスペースファイル情報
  * @param catalogStore - カタログ永続化ポート
  * @param directory - ディレクトリ操作ポート
- * @param link - symlink 操作ポート
- * @param toUri - パスから URI への変換
+ * @param link - symlink の所在
  * @returns ブートストラップ結果
  */
 export const bootstrapWorkspace = async (
-  host: WorkspaceHostPort,
+  host: Pick<WorkspaceHostPort, 'readFolders'>,
   fileInfo: WorkspaceFileInfo,
   catalogStore: CatalogStorePort,
   directory: DirectoryPort,
-  link: WorkspaceLinkPort,
-  toUri: (path: string) => UriString,
+  link: Pick<WorkspaceLinkPort, 'linkPath'>,
 ): Promise<WorkspaceBootstrapResult> => {
   const linkPath = link.linkPath;
   const rawFolders = host.readFolders();
   const stored = catalogStore.load();
-  const currentLinkTarget = link.readTarget();
   const lanes = collectLaneCandidates(rawFolders, stored, linkPath);
 
   if (stored === undefined && lanes.length === 0) {
@@ -133,30 +98,5 @@ export const bootstrapWorkspace = async (
   }
 
   const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
-  const activeLane = chooseActiveLane(lanes, currentLinkTarget);
-  if (!activeLane) return { kind: 'ready', context: { key, canonicalLanes: [] } };
-
-  const activePath = uriToAbsolutePath(activeLane.uri);
-
-  if (currentLinkTarget !== activePath) {
-    link.swap(activePath);
-  }
-
-  const linkFolder: WorkspaceFolder = {
-    uri: toUri(linkPath),
-    name: activeLane.name,
-  };
-  const needsFolderUpdate =
-    rawFolders.length !== 1 ||
-    !isLinkFolder(rawFolders[0]!, linkPath) ||
-    rawFolders[0]!.name !== activeLane.name;
-
-  if (needsFolderUpdate) {
-    const accepted = await collapseFoldersToLink(host, rawFolders, linkFolder);
-    if (!accepted) {
-      return { kind: 'disabled', reason: 'workspace-folder-mutation-rejected' };
-    }
-  }
-
   return { kind: 'ready', context: { key, canonicalLanes: lanes } };
 };

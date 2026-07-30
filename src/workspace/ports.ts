@@ -30,6 +30,8 @@ export interface WorkspaceLinkPort {
    * @param target - 新しい参照先絶対パス
    */
   readonly swap: (target: AbsolutePath) => void;
+  /** symlink の削除。未作成は成功、非 symlink または削除失敗では例外 */
+  readonly clear: () => void;
 }
 
 /** ワークスペースファイル参照ポート */
