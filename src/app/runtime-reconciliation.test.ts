@@ -52,7 +52,7 @@ describe('createRuntimeReconciler', () => {
       reconcileWorkspaceFolders: async () => ({ kind: 'rejected' }),
       reconcileActiveLane: async () => {
         events.push('active');
-        return { kind: 'empty' };
+        return { kind: 'empty', cache: 'saved' };
       },
       getActiveLaneId: () => 'web' as LaneId,
       getLane: () => lane('web'),
@@ -82,7 +82,7 @@ describe('createRuntimeReconciler', () => {
       reconcileWorkspaceFolders: async () => Promise.reject(failure),
       reconcileActiveLane: async () => {
         events.push('active');
-        return { kind: 'empty' };
+        return { kind: 'empty', cache: 'saved' };
       },
       getActiveLaneId: () => 'web' as LaneId,
       getLane: () => lane('web'),
@@ -203,5 +203,35 @@ describe('createRuntimeReconciler', () => {
     await reconciler.reconcile();
 
     expect(events).toEqual(['render']);
+  });
+
+  it('inactive の pending cache を通知し terminal を再表示せず render する', async () => {
+    const failure = new Error('selection clear failed');
+    const events: string[] = [];
+    let activeLaneId: LaneId | undefined = 'web' as LaneId;
+    const reconciler = createRuntimeReconciler({
+      reconcileWorkspaceFolders: async () => ({ kind: 'noop' }),
+      reconcileActiveLane: async () => {
+        activeLaneId = undefined;
+        return { kind: 'inactive', cache: 'pending', error: failure };
+      },
+      getActiveLaneId: () => activeLaneId,
+      getLane: (laneId) => lane(laneId),
+      revealLane: async () => {
+        events.push('reveal');
+      },
+      render: () => {
+        events.push('render');
+      },
+      reportPendingCache: async (error) => {
+        expect(error).toBe(failure);
+        events.push('pending');
+      },
+      reportWorkspaceMutationRejected: async () => undefined,
+    });
+
+    await reconciler.reconcile();
+
+    expect(events).toEqual(['pending', 'render']);
   });
 });

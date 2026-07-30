@@ -15,6 +15,7 @@ import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import {
   createDirectoryAdapter,
+  createLaneRootAvailabilityAdapter,
   createWorkspaceFileAdapter,
   createWorkspaceHostAdapter,
   createWorkspaceSettingsAdapter,
@@ -238,6 +239,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const editor = createEditorAdapter();
     const selectionStore = createSelectionStoreAdapter(extensionContext.workspaceState);
     const prompt = createPromptAdapter();
+    const rootAvailability = createLaneRootAvailabilityAdapter();
     const extensionPath = extensionContext.extensionPath as AbsolutePath;
     const clock: MonotonicClockPort = { now: () => Date.now() as Instant };
     const laneActivity = createLaneActivityService({ clock });
@@ -277,10 +279,11 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       registry,
       terminalRekey: { rekeyLane: (oldId, newId) => terminalService.rekeyLane(oldId, newId) },
       editorStore: createLaneSessionStore(),
+      rootAvailability,
       operationQueue,
     });
     const initialReconciliation = await laneService.reconcileActiveLane();
-    if (initialReconciliation.kind === 'active' && initialReconciliation.cache === 'pending') {
+    if (initialReconciliation.cache === 'pending') {
       await reportAsyncFailure(initialReconciliation.error);
     }
 
