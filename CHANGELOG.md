@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.13] - 2026-07-30
+
+### Added
+
+- Added `projectLanes.initializationMode`. New workspaces remain unchanged until `Project Lanes: Initialize Workspace` is run by default; set the option to `automatic` to initialize them during extension startup. Already managed workspaces are repaired during startup in either mode. (432f88c)
+
+### Fixed
+
+- Catalog updates now wait for the workspace-state update to complete and serialize overlapping writes. Failed initialization and lane operations surface the error without committing a partial in-memory state. (6c3253e)
+- Lane switching now serializes workspace mutations and restores the previous active link, editor state, terminal visibility, and selection cache if a later step fails. (7581f92)
+- Startup and `Reload Lanes` now reconcile the catalog, workspace folders, active link, and selection cache through the same transaction. A missing active link is recovered deterministically, while unexpected files at the reserved path are preserved and reported. (1ff25a8)
+- Legacy workspace-folder anchors are now recognized by absolute URI and removed from saved workspace state during reconciliation. (70ffc47)
+
 ## [0.1.12] - 2026-07-08
 
 ### Fixed
