@@ -191,12 +191,6 @@ describe('managed runtime の共通 operation queue', () => {
     expect(reload).not.toMatch(/registry\.replace/);
   });
 
-  it('active lane 再整合の完了を待って runtime を公開する', () => {
-    expect(managedRuntime).toMatch(/const createManagedRuntime = async/);
-    expect(managedRuntime).toMatch(/await laneService\.reconcileActiveLane\(\);/);
-    expect(managedRuntime).not.toMatch(/laneService\.initialize\(\)/);
-  });
-
   it('post-commit cache failure を通知しても startup と Reload の描画を継続する', () => {
     const startup = managedRuntime.slice(
       managedRuntime.indexOf('const laneService = createLaneService'),
@@ -236,6 +230,36 @@ describe('managed runtime の共通 operation queue', () => {
     expect(searchCommands).toMatch(
       /'projectLanes\.goToFileInLanes': \(\) =>\s*runAsyncBoundary\(\(\) => laneSearchService\.goToFileInLanes\(\), reportAsyncFailure\)/,
     );
+  });
+});
+
+describe('workspace bootstrap と active lane 再整合の責務境界', () => {
+  const scanner = readSource(nodePath.join(SRC_ROOT, 'workspace/scanner.ts'));
+  const bootstrap = readSource(nodePath.join(SRC_ROOT, 'app/bootstrap.ts'));
+  const signatureEndMarker = '): Promise<WorkspaceBootstrapResult> => {';
+  const bootstrapWorkspaceIndex = scanner.indexOf('export const bootstrapWorkspace');
+  const signatureEndIndex = scanner.indexOf(signatureEndMarker, bootstrapWorkspaceIndex);
+  const bootstrapWorkspaceSignature = scanner.slice(
+    bootstrapWorkspaceIndex,
+    signatureEndIndex + signatureEndMarker.length,
+  );
+  const managedRuntimeIndex = bootstrap.indexOf('const createManagedRuntime');
+  const bootstrapRuntimeIndex = bootstrap.indexOf('export const bootstrapRuntime');
+  const managedRuntime = bootstrap.slice(managedRuntimeIndex, bootstrapRuntimeIndex);
+
+  it('bootstrapWorkspace は catalog 収集に必要な読み取り機能だけを受け取る', () => {
+    expect(bootstrapWorkspaceIndex).toBeGreaterThan(-1);
+    expect(signatureEndIndex).toBeGreaterThan(bootstrapWorkspaceIndex);
+    expect(bootstrapWorkspaceSignature).toMatch(/host: Pick<WorkspaceHostPort, 'readFolders'>/);
+    expect(bootstrapWorkspaceSignature).toMatch(/link: Pick<WorkspaceLinkPort, 'linkPath'>/);
+  });
+
+  it('startup は active lane 再整合の完了を待って runtime を公開する', () => {
+    expect(managedRuntimeIndex).toBeGreaterThan(-1);
+    expect(bootstrapRuntimeIndex).toBeGreaterThan(managedRuntimeIndex);
+    expect(managedRuntime).toMatch(/const createManagedRuntime = async/);
+    expect(managedRuntime).toMatch(/await laneService\.reconcileActiveLane\(\);/);
+    expect(managedRuntime).not.toMatch(/laneService\.initialize\(\)/);
   });
 });
 
