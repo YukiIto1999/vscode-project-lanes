@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "path": "lane-a",
+    },
+    {
+      "path": "lane-b",
+    },
+  ],
+  "settings": {
+    "terminal.integrated.defaultProfile.linux": "bash",
+    "terminal.integrated.enablePersistentSessions": true,
+  },
+}
