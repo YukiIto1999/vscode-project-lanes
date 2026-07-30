@@ -96,7 +96,8 @@ export const createDirectoryAdapter = (): DirectoryPort => ({
   ensureDirectory: (path) => {
     try {
       fs.mkdirSync(path, { recursive: true });
-      return true;
+      const stats = fs.lstatSync(path);
+      return stats.isDirectory() && !stats.isSymbolicLink();
     } catch {
       return false;
     }
