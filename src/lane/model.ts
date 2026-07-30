@@ -61,7 +61,15 @@ export type LaneFocusPlan =
       /** 実行阻害 */
       readonly kind: 'blocked';
       /** 阻害理由 */
-      readonly reason: 'dirty-editors';
+      readonly reason: 'dirty-editors' | 'reconciliation-required';
+    }
+  | {
+      /** 切替失敗 */
+      readonly kind: 'failed';
+      /** 失敗理由 */
+      readonly reason: 'transition-failed';
+      /** transition または補償の失敗原因 */
+      readonly error: unknown;
     }
   | {
       /** 切替実行 */

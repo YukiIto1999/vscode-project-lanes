@@ -27,6 +27,7 @@ import type {
   SessionId,
   UriString,
 } from '../foundation/model';
+import { createOperationQueue } from '../foundation/operation-queue';
 import { baseName, parentDirectory, uriToAbsolutePath } from '../foundation/path';
 import { projectLaneActivities } from '../lane-activity/reducer';
 import type { MonotonicClockPort } from '../lane-activity/ports';
@@ -203,7 +204,7 @@ const reportInitializationOutcome = async (outcome: InitializationOutcome): Prom
  * @param deps - runtime の依存
  * @returns コマンド実装と破棄処理
  */
-const createManagedRuntime = (deps: ManagedRuntimeDeps): ManagedRuntime => {
+const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRuntime> => {
   const {
     extensionContext,
     workspaceContext,
@@ -225,6 +226,7 @@ const createManagedRuntime = (deps: ManagedRuntimeDeps): ManagedRuntime => {
 
   try {
     const registry = createCatalogRegistry(workspaceContext.canonicalLanes, catalogStore);
+    const operationQueue = createOperationQueue();
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
     const editor = createEditorAdapter();
     const selectionStore = createSelectionStoreAdapter(extensionContext.workspaceState);
@@ -258,14 +260,15 @@ const createManagedRuntime = (deps: ManagedRuntimeDeps): ManagedRuntime => {
         revealLane: async (lane) => terminalService.revealLane(lane),
         closeLane: async (laneId) => terminalService.closeLane(laneId),
       },
-      viewRebind: createLaneViewRebindAdapter(workspaceHost),
+      viewRebind: createLaneViewRebindAdapter(workspaceHost, toUri(link.linkPath)),
       selectionStore,
       prompt,
       registry,
       terminalRekey: { rekeyLane: (oldId, newId) => terminalService.rekeyLane(oldId, newId) },
       editorStore: createLaneSessionStore(),
+      operationQueue,
     });
-    laneService.initialize();
+    await laneService.initialize();
 
     const laneSearchService = createLaneSearchService({
       getCatalog: () => registry.snapshot(),
@@ -311,22 +314,27 @@ const createManagedRuntime = (deps: ManagedRuntimeDeps): ManagedRuntime => {
 
     track(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
-        void runAsyncBoundary(async () => {
-          const activeId = laneService.snapshot().activeLaneId;
-          const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
-          const rawFolders = workspaceHost.readFolders();
-          const action = reconcileUserChange({
-            rawFolders,
-            currentLanes: registry.folders(),
-            linkPath: link.linkPath,
-            activeLabel: activeLane?.label ?? 'Project Lanes',
-            linkUri: toUri(link.linkPath),
-          });
-          if (action.kind === 'noop') return;
+        void runAsyncBoundary(
+          () =>
+            operationQueue.enqueue(async () => {
+              await laneService.finalizePendingOperations();
+              const activeId = laneService.snapshot().activeLaneId;
+              const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
+              const rawFolders = workspaceHost.readFolders();
+              const action = reconcileUserChange({
+                rawFolders,
+                currentLanes: registry.folders(),
+                linkPath: link.linkPath,
+                activeLabel: activeLane?.label ?? 'Project Lanes',
+                linkUri: toUri(link.linkPath),
+              });
+              if (action.kind === 'noop') return;
 
-          await registry.absorb(action.additions);
-          await collapseFoldersToLink(workspaceHost, rawFolders, action.collapsedFolder);
-        }, reportAsyncFailure);
+              await registry.absorb(action.additions);
+              await collapseFoldersToLink(workspaceHost, rawFolders, action.collapsedFolder);
+            }),
+          reportAsyncFailure,
+        );
       }),
     );
 
@@ -378,29 +386,40 @@ const createManagedRuntime = (deps: ManagedRuntimeDeps): ManagedRuntime => {
       'projectLanes.removeLane': ([argument]) =>
         runAsyncBoundary(() => laneService.removeLane(extractLaneId(argument)), reportAsyncFailure),
       'projectLanes.reloadLanes': () =>
-        runAsyncBoundary(async () => {
-          const newLanes = collectLaneCandidates(
-            workspaceHost.readFolders(),
-            catalogStore.load(),
-            link.linkPath,
-          );
-          const previousActiveId = laneService.snapshot().activeLaneId;
-          await registry.replace(newLanes);
-          laneService.initialize();
-          const nextActiveId = laneService.snapshot().activeLaneId;
-          if (nextActiveId && nextActiveId !== previousActiveId) {
-            const lane = registry.snapshot().byId.get(nextActiveId);
-            if (lane) terminalService.revealLane(lane);
-          }
-          render();
-        }, reportAsyncFailure),
+        runAsyncBoundary(
+          () =>
+            operationQueue.enqueue(async () => {
+              await laneService.finalizePendingOperations();
+              const newLanes = collectLaneCandidates(
+                workspaceHost.readFolders(),
+                catalogStore.load(),
+                link.linkPath,
+              );
+              const previousActiveId = laneService.snapshot().activeLaneId;
+              await registry.replace(newLanes);
+              await laneService.initialize();
+              const nextActiveId = laneService.snapshot().activeLaneId;
+              if (nextActiveId && nextActiveId !== previousActiveId) {
+                const lane = registry.snapshot().byId.get(nextActiveId);
+                if (lane) terminalService.revealLane(lane);
+              }
+              render();
+            }),
+          reportAsyncFailure,
+        ),
       'projectLanes.switchLane': ([laneId]) =>
-        laneService
-          .focus(typeof laneId === 'string' ? toLaneId(laneId) : undefined)
-          .then(() => render()),
+        runAsyncBoundary(async () => {
+          const result = await laneService.focus(
+            typeof laneId === 'string' ? toLaneId(laneId) : undefined,
+          );
+          render();
+          if (result.kind === 'failed') throw result.error;
+        }, reportAsyncFailure),
       'projectLanes.closeTerminals': () => laneService.closeActiveLaneTerminals(),
-      'projectLanes.findInLanes': () => laneSearchService.findInLanes(),
-      'projectLanes.goToFileInLanes': () => laneSearchService.goToFileInLanes(),
+      'projectLanes.findInLanes': () =>
+        runAsyncBoundary(() => laneSearchService.findInLanes(), reportAsyncFailure),
+      'projectLanes.goToFileInLanes': () =>
+        runAsyncBoundary(() => laneSearchService.goToFileInLanes(), reportAsyncFailure),
     };
 
     return { commands, disposable: { dispose } };
@@ -471,11 +490,11 @@ export const bootstrapRuntime = async (
       initializedResources = resources;
       return result;
     },
-    startRuntime: (workspaceContext) => {
+    startRuntime: async (workspaceContext) => {
       const resources = initializedResources;
       if (!resources) throw new Error('Project Lanes initialization resources are unavailable.');
 
-      const runtime = createManagedRuntime({
+      const runtime = await createManagedRuntime({
         extensionContext: context,
         workspaceContext,
         workspaceHost,

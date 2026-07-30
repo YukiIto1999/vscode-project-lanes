@@ -13,8 +13,8 @@ const CATALOG_KEY = 'projectLanes.catalog' as const;
  */
 export const createSelectionStoreAdapter = (memento: vscode.Memento): LaneSelectionStorePort => ({
   load: (key) => memento.get<LaneId>(key),
-  save: (key, laneId) => {
-    memento.update(key, laneId);
+  save: async (key, laneId) => {
+    await memento.update(key, laneId);
   },
 });
 
