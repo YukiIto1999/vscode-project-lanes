@@ -344,9 +344,11 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       await reportAsyncFailure(initialReconciliation.error);
     }
 
+    const search = createRipgrepSearchAdapter();
+    track(search.disposable);
     const laneSearchService = createLaneSearchService({
       getCatalog: () => registry.snapshot(),
-      search: createRipgrepSearchAdapter(),
+      search,
       ui: createSearchUiAdapter(() => registry.snapshot().lanes),
       fileOpen: editor,
       focus: (laneId) => laneService.focus(laneId),
