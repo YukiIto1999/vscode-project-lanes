@@ -5,14 +5,18 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { resolveCliArgsFromVSCodeExecutablePath } = require('@vscode/test-electron');
 
 const DEFAULT_CACHE_PATH = '/tmp/vscode-project-lanes-vscode-test-cache';
+const E2E_EXPECTED_EXTENSIONS_DIR_KEY = 'PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR';
+const E2E_EXPECTED_VERSION_KEY = 'PROJECT_LANES_E2E_EXPECTED_VERSION';
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const E2E_RESULT_PATH_KEY = 'PROJECT_LANES_E2E_RESULT_PATH';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_SUITE_PATH_KEY = 'PROJECT_LANES_E2E_SUITE_PATH';
 const FORCE_KILL_GRACE_MS = 5_000;
 const LAUNCH_TIMEOUT_MS = 120_000;
+const PROJECT_LANES_EXTENSION_ID = 'yukiito1999.project-lanes';
 const VSCODE_VERSION = '1.101.0';
 const extensionDevelopmentPath = path.resolve(__dirname, '..', '..');
 const driverDevelopmentPath = path.join(__dirname, 'driver');
@@ -74,6 +78,213 @@ const buildDownloadOptions = (environment = process.env) => ({
   cachePath: environment.PROJECT_LANES_VSCODE_TEST_CACHE || DEFAULT_CACHE_PATH,
 });
 
+const buildExtensionManagementRequest = ({
+  vscodeExecutablePath,
+  userDataDir,
+  extensionsDir,
+  operationArgs,
+  resolveCliArgs = resolveCliArgsFromVSCodeExecutablePath,
+}) => {
+  const [command, ...cliArgs] = resolveCliArgs(vscodeExecutablePath, {
+    reuseMachineInstall: true,
+  });
+  return {
+    command,
+    args: [
+      ...cliArgs,
+      '--user-data-dir',
+      userDataDir,
+      '--extensions-dir',
+      extensionsDir,
+      ...operationArgs,
+    ],
+  };
+};
+
+const assertListedExtensionVersion = (output, extensionId, expectedVersion) => {
+  const expected = `${extensionId}@${expectedVersion}`;
+  const listed = output.trimEnd() === '' ? [] : output.trimEnd().split(/\r?\n/);
+  if (listed.length !== 1 || listed[0] !== expected) {
+    throw new Error(
+      `Expected installed extensions to equal ${expected}, received ${JSON.stringify(listed)}`,
+    );
+  }
+};
+
+const executeExtensionManagementRequest = (
+  { command, args },
+  { environment = process.env, spawnSync = childProcess.spawnSync } = {},
+) => {
+  const cliEnvironment = { ...environment };
+  delete cliEnvironment.ELECTRON_RUN_AS_NODE;
+  delete cliEnvironment.VSCODE_ESM_ENTRYPOINT;
+  delete cliEnvironment.VSCODE_IPC_HOOK_CLI;
+  cliEnvironment.DONT_PROMPT_WSL_INSTALL = '1';
+  const result = spawnSync(command, args, {
+    encoding: 'utf8',
+    env: cliEnvironment,
+    shell: process.platform === 'win32' && command.endsWith('.cmd'),
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(
+      `VS Code CLI failed (${command} ${args.join(' ')}): ${result.stderr || result.stdout}`,
+    );
+  }
+  return result.stdout;
+};
+
+const installAndVerifyExtension = (
+  {
+    vscodeExecutablePath,
+    userDataDir,
+    extensionsDir,
+    extensionReference,
+    extensionId,
+    expectedVersion,
+    resolveCliArgs,
+  },
+  { executeRequest = executeExtensionManagementRequest } = {},
+) => {
+  const buildRequest = (operationArgs) =>
+    buildExtensionManagementRequest({
+      vscodeExecutablePath,
+      userDataDir,
+      extensionsDir,
+      operationArgs,
+      resolveCliArgs,
+    });
+
+  executeRequest(buildRequest(['--install-extension', extensionReference, '--force']));
+  const listedExtensions = executeRequest(buildRequest(['--list-extensions', '--show-versions']));
+  assertListedExtensionVersion(listedExtensions, extensionId, expectedVersion);
+};
+
+const installCandidateProfiles = (
+  { vscodeExecutablePath, vsixPath, candidateVersion, baselineVersion, profiles },
+  { installExtension = installAndVerifyExtension } = {},
+) => {
+  installExtension({
+    vscodeExecutablePath,
+    ...profiles.fresh,
+    extensionReference: vsixPath,
+    extensionId: PROJECT_LANES_EXTENSION_ID,
+    expectedVersion: candidateVersion,
+  });
+  installExtension({
+    vscodeExecutablePath,
+    ...profiles.upgrade,
+    extensionReference: `${PROJECT_LANES_EXTENSION_ID}@${baselineVersion}`,
+    extensionId: PROJECT_LANES_EXTENSION_ID,
+    expectedVersion: baselineVersion,
+  });
+  installExtension({
+    vscodeExecutablePath,
+    ...profiles.upgrade,
+    extensionReference: vsixPath,
+    extensionId: PROJECT_LANES_EXTENSION_ID,
+    expectedVersion: candidateVersion,
+  });
+};
+
+const runInstalledVSIXVerification = async (
+  { vscodeExecutablePath, vsixPath, candidateVersion, baselineVersion },
+  {
+    createRunId = () => crypto.randomUUID(),
+    environment = process.env,
+    fileSystem = fs,
+    installProfiles = installCandidateProfiles,
+    launchVSCode = launchVSCodeProcess,
+    processApi = process,
+    temporaryDirectory = os.tmpdir(),
+    workspaceFixture = path.join(__dirname, 'fixtures', 'empty.code-workspace'),
+    suitePath = path.join(__dirname, 'suite', 'installed-vsix.cjs'),
+  } = {},
+) => {
+  const cleanupRegistry = getProcessCleanupRegistry(processApi);
+  const temporaryRoot = fileSystem.mkdtempSync(
+    path.join(temporaryDirectory, 'project-lanes-installed-vsix-'),
+  );
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    fileSystem.rmSync(temporaryRoot, { recursive: true, force: true });
+    cleaned = true;
+    cleanupRegistry.activeCleanups.delete(cleanup);
+  };
+  cleanupRegistry.activeCleanups.add(cleanup);
+
+  let verificationError;
+  try {
+    const profiles = {
+      fresh: {
+        userDataDir: path.join(temporaryRoot, 'fresh', 'user-data'),
+        extensionsDir: path.join(temporaryRoot, 'fresh', 'extensions'),
+      },
+      upgrade: {
+        userDataDir: path.join(temporaryRoot, 'upgrade', 'user-data'),
+        extensionsDir: path.join(temporaryRoot, 'upgrade', 'extensions'),
+      },
+    };
+    const workspaceDirectory = path.join(temporaryRoot, 'workspace');
+    const workspacePath = path.join(workspaceDirectory, path.basename(workspaceFixture));
+    for (const profile of Object.values(profiles)) {
+      fileSystem.mkdirSync(profile.userDataDir, { recursive: true });
+      fileSystem.mkdirSync(profile.extensionsDir, { recursive: true });
+    }
+    fileSystem.mkdirSync(workspaceDirectory, { recursive: true });
+    fileSystem.copyFileSync(workspaceFixture, workspacePath);
+
+    installProfiles({
+      vscodeExecutablePath,
+      vsixPath,
+      candidateVersion,
+      baselineVersion,
+      profiles,
+    });
+
+    const runId = createRunId();
+    for (const [profileName, profile] of Object.entries(profiles)) {
+      if (cleanupRegistry.terminationRequested) break;
+      const scenario = {
+        name: `installed-vsix-${profileName}`,
+        suitePath,
+      };
+      await launchVSCode(
+        buildInstalledLaunchOptions({
+          vscodeExecutablePath,
+          scenario,
+          workspacePath,
+          ...profile,
+          markerPath: path.join(temporaryRoot, `${profileName}-result.json`),
+          resultIdentity: {
+            runId,
+            scenario: scenario.name,
+            phase: 'default',
+          },
+          expectedVersion: candidateVersion,
+          environment,
+        }),
+      );
+    }
+  } catch (error) {
+    verificationError = error;
+  }
+
+  try {
+    cleanup();
+  } catch (cleanupError) {
+    if (verificationError) {
+      throw new AggregateError(
+        [verificationError, cleanupError],
+        'Installed VSIX verification and cleanup failed',
+      );
+    }
+    throw cleanupError;
+  }
+  if (verificationError) throw verificationError;
+};
+
 const buildLaunchOptions = ({
   vscodeExecutablePath,
   scenario,
@@ -118,6 +329,50 @@ const buildLaunchOptions = ({
     markerPath,
   };
   return options;
+};
+
+const buildInstalledLaunchOptions = ({
+  vscodeExecutablePath,
+  scenario,
+  workspacePath,
+  userDataDir,
+  extensionsDir,
+  markerPath,
+  resultIdentity,
+  expectedVersion,
+  environment = process.env,
+}) => {
+  const launchEnvironment = { ...environment };
+  delete launchEnvironment.ELECTRON_RUN_AS_NODE;
+  delete launchEnvironment.VSCODE_ESM_ENTRYPOINT;
+  Object.assign(launchEnvironment, {
+    [E2E_EXPECTED_EXTENSIONS_DIR_KEY]: extensionsDir,
+    [E2E_EXPECTED_VERSION_KEY]: expectedVersion,
+    [E2E_RESULT_PATH_KEY]: markerPath,
+    [E2E_RUN_KEY]: JSON.stringify(resultIdentity),
+    [E2E_SUITE_PATH_KEY]: scenario.suitePath,
+  });
+
+  return {
+    command: vscodeExecutablePath,
+    args: [
+      workspacePath,
+      '--user-data-dir',
+      userDataDir,
+      '--extensions-dir',
+      extensionsDir,
+      `--extensionDevelopmentPath=${driverDevelopmentPath}`,
+      '--no-sandbox',
+      '--disable-gpu-sandbox',
+      '--disable-updates',
+      '--skip-welcome',
+      '--skip-release-notes',
+      '--no-cached-data',
+      '--disable-workspace-trust',
+    ],
+    environment: launchEnvironment,
+    markerPath,
+  };
 };
 
 const parseResultMarker = (serialized, expectedIdentity) => {
@@ -335,9 +590,16 @@ const runScenario = async (
 };
 
 module.exports = {
+  assertListedExtensionVersion,
   buildDownloadOptions,
+  buildExtensionManagementRequest,
+  buildInstalledLaunchOptions,
   buildLaunchOptions,
   createProcessCleanupRegistry,
+  executeExtensionManagementRequest,
+  installAndVerifyExtension,
+  installCandidateProfiles,
   launchVSCodeProcess,
+  runInstalledVSIXVerification,
   runScenario,
 };
