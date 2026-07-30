@@ -6,7 +6,6 @@ import { findSessionByTerminalId, initialTerminalState, reduceTerminal } from '.
 const makeSpec = (id: string, laneId: string): TerminalSessionSpec => ({
   id: id as SessionId,
   laneId: laneId as LaneId,
-  title: laneId,
   cwdPath: `/projects/${laneId}` as AbsolutePath,
   shellPath: undefined,
 });
@@ -16,8 +15,10 @@ describe('reduceTerminal', () => {
     const spec = makeSpec('s1', 'web');
     const { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });
 
-    expect(state.sessions.get('s1' as SessionId)).toBeDefined();
-    expect(state.sessions.get('s1' as SessionId)!.alive).toBe(true);
+    expect(state.sessions.get('s1' as SessionId)).toEqual({
+      spec,
+      terminalId: undefined,
+    });
     expect(state.lanes.get('web' as LaneId)!.sessionIds).toEqual(['s1']);
   });
 
@@ -82,15 +83,45 @@ describe('reduceTerminal', () => {
       terminalId: 't1' as TerminalId,
     });
     expect(result.state.sessions.has('s1' as SessionId)).toBe(false);
+    expect(result.state.lanes.has('web' as LaneId)).toBe(false);
     expect(result.effects).toContainEqual({ kind: 'killSession', sessionId: 's1' });
   });
 
-  it('sessionExited で alive を false に更新', () => {
+  it('sessionExited でセッションと空になったレーン記録を削除し kill しない', () => {
     const spec = makeSpec('s1', 'web');
     let { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec });
-    ({ state } = reduceTerminal(state, { kind: 'sessionExited', sessionId: 's1' as SessionId }));
+    const result = reduceTerminal(state, {
+      kind: 'sessionExited',
+      sessionId: 's1' as SessionId,
+    });
 
-    expect(state.sessions.get('s1' as SessionId)!.alive).toBe(false);
+    expect(result.state.sessions.has('s1' as SessionId)).toBe(false);
+    expect(result.state.lanes.has('web' as LaneId)).toBe(false);
+    expect(result.effects).toEqual([]);
+  });
+
+  it('sessionExited で同じレーンの実行中セッションを保持する', () => {
+    const s1 = makeSpec('s1', 'web');
+    const s2 = makeSpec('s2', 'web');
+    let { state } = reduceTerminal(initialTerminalState(), { kind: 'sessionStarted', spec: s1 });
+    ({ state } = reduceTerminal(state, { kind: 'sessionStarted', spec: s2 }));
+    ({ state } = reduceTerminal(state, {
+      kind: 'laneRevealed',
+      laneId: 'web' as LaneId,
+      visibleSessionId: 's1' as SessionId,
+    }));
+
+    const result = reduceTerminal(state, {
+      kind: 'sessionExited',
+      sessionId: 's1' as SessionId,
+    });
+
+    expect([...result.state.sessions.keys()]).toEqual(['s2']);
+    expect(result.state.lanes.get('web' as LaneId)).toEqual({
+      sessionIds: ['s2'],
+      lastVisibleSessionId: undefined,
+    });
+    expect(result.effects).toEqual([]);
   });
 
   it('laneClosed で全セッション削除と副作用生成', () => {

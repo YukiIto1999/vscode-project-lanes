@@ -5,6 +5,7 @@ import type { LanePromptPort } from '../../lane/ports';
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
+const E2E_RENAME_LANE_COMMAND = 'projectLanes.e2e.renameLane';
 
 interface PromptAdapterOptions {
   readonly extensionMode?: vscode.ExtensionMode;
@@ -14,6 +15,15 @@ interface PromptAdapterOptions {
 interface LanePickItem extends vscode.QuickPickItem {
   readonly laneId: LaneId;
 }
+
+/** Development E2E driver の有効状態 */
+const usesE2eDriver = (
+  extensionMode: vscode.ExtensionMode,
+  environment: Readonly<Record<string, string | undefined>>,
+): boolean =>
+  extensionMode === vscode.ExtensionMode.Development &&
+  Boolean(environment[E2E_PAYLOAD_KEY]) &&
+  Boolean(environment[E2E_RUN_KEY]);
 
 /**
  * VS Code QuickPick / InputBox / WarningMessage 経由の対話アダプターの生成
@@ -44,12 +54,16 @@ export const createPromptAdapter = ({
   },
 
   promptRename: async (current, validate) => {
-    const result = await vscode.window.showInputBox({
-      title: 'Rename Lane',
-      value: current,
-      valueSelection: [0, current.length],
-      validateInput: (v) => validate(v),
-    });
+    const result = usesE2eDriver(extensionMode, environment)
+      ? await vscode.commands.executeCommand<string | undefined>(E2E_RENAME_LANE_COMMAND, {
+          current,
+        })
+      : await vscode.window.showInputBox({
+          title: 'Rename Lane',
+          value: current,
+          valueSelection: [0, current.length],
+          validateInput: (v) => validate(v),
+        });
     return result;
   },
 
@@ -92,11 +106,7 @@ export const createPromptAdapter = ({
       canSelectMany: false,
       defaultUri: vscode.Uri.file(defaultDirectory),
     };
-    const useE2eDriver =
-      extensionMode === vscode.ExtensionMode.Development &&
-      Boolean(environment[E2E_PAYLOAD_KEY]) &&
-      Boolean(environment[E2E_RUN_KEY]);
-    const picked = useE2eDriver
+    const picked = usesE2eDriver(extensionMode, environment)
       ? await vscode.commands.executeCommand<vscode.Uri | undefined>(
           E2E_PICK_REPLACEMENT_FOLDER_COMMAND,
           dialogOptions,

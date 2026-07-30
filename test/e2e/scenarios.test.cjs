@@ -3028,6 +3028,31 @@ test('the driver private replacement picker asserts options and returns the relo
   );
 });
 
+test('the driver private lane rename asserts the current label and returns the replacement label', () => {
+  const { registerLaneRenameCommand } = require('./driver/extension.cjs');
+  const registrations = [];
+  const disposable = { dispose() {} };
+  const registered = registerLaneRenameCommand({
+    resultIdentity: {
+      scenario: 'lane-switch-transaction',
+      phase: 'transaction',
+    },
+    vscodeApi: {
+      commands: {
+        registerCommand(command, handler) {
+          registrations.push([command, handler]);
+          return disposable;
+        },
+      },
+    },
+  });
+
+  assert.equal(registered, disposable);
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0][0], 'projectLanes.e2e.renameLane');
+  assert.equal(registrations[0][1]({ current: 'lane-b' }), 'lane-beta');
+});
+
 test('the driver quits when a required initialization environment variable is missing', async () => {
   const { runDriver } = require('./driver/extension.cjs');
   const commands = [];

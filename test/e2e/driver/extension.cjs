@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
+const E2E_RENAME_LANE_COMMAND = 'projectLanes.e2e.renameLane';
 const E2E_RESULT_PATH_KEY = 'PROJECT_LANES_E2E_RESULT_PATH';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_SUITE_PATH_KEY = 'PROJECT_LANES_E2E_SUITE_PATH';
@@ -41,6 +42,20 @@ const registerReplacementPickerCommand = ({ resultIdentity, vscodeApi }) => {
     assert.equal(options.canSelectMany, false);
     assert.equal(path.resolve(options.defaultUri.fsPath), path.resolve(workspaceDirectory));
     return vscodeApi.Uri.file(replacementPath);
+  });
+};
+
+const registerLaneRenameCommand = ({ resultIdentity, vscodeApi }) => {
+  if (
+    resultIdentity.scenario !== 'lane-switch-transaction' ||
+    resultIdentity.phase !== 'transaction'
+  ) {
+    return undefined;
+  }
+
+  return vscodeApi.commands.registerCommand(E2E_RENAME_LANE_COMMAND, ({ current }) => {
+    assert.equal(current, 'lane-b');
+    return 'lane-beta';
   });
 };
 
@@ -89,6 +104,7 @@ const runDriver = async ({
       let message;
       const suite = loadSuite(suitePath);
       const replacementPicker = registerReplacementPickerCommand({ resultIdentity, vscodeApi });
+      const laneRename = registerLaneRenameCommand({ resultIdentity, vscodeApi });
       try {
         await suite.run({
           environment,
@@ -98,6 +114,7 @@ const runDriver = async ({
           },
         });
       } finally {
+        laneRename?.dispose();
         replacementPicker?.dispose();
       }
       result = {
@@ -132,4 +149,10 @@ const runDriver = async ({
 const activate = () => runDriver();
 const deactivate = () => {};
 
-module.exports = { activate, deactivate, registerReplacementPickerCommand, runDriver };
+module.exports = {
+  activate,
+  deactivate,
+  registerLaneRenameCommand,
+  registerReplacementPickerCommand,
+  runDriver,
+};
