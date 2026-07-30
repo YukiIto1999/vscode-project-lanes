@@ -217,6 +217,46 @@ describe('managed runtime の共通 operation queue', () => {
     expect(runtimeReconciler).toMatch(/reportWorkspaceMutationRejected:/);
   });
 
+  it('terminal の全入口は同じ lane root availability guard を使う', () => {
+    const guard = managedRuntime.match(
+      /const isLaneAvailable = \(lane: Lane\): boolean =>[\s\S]*?;/,
+    );
+    expect(guard).not.toBeNull();
+    expect(guard?.[0]).toMatch(/rootAvailability\.inspect\(lane\.rootPath\) === 'available'/);
+
+    const laneService = managedRuntime.slice(
+      managedRuntime.indexOf('const laneService = createLaneService'),
+      managedRuntime.indexOf('const initialReconciliation'),
+    );
+    expect(laneService).toMatch(
+      /revealLane: async \(lane\) => \{[\s\S]*?if \(isLaneAvailable\(lane\)\) await terminalService\.revealLane\(lane\)/,
+    );
+
+    const runtimeReconciler = managedRuntime.slice(
+      managedRuntime.indexOf('const runtimeReconciler = createRuntimeReconciler'),
+      managedRuntime.indexOf('track(laneActivity.onChange'),
+    );
+    expect(runtimeReconciler).toMatch(/isLaneAvailable,/);
+
+    const startup = managedRuntime.slice(
+      managedRuntime.indexOf('const initialLane'),
+      managedRuntime.indexOf('vscode.workspace.onDidChangeWorkspaceFolders'),
+    );
+    expect(startup).toMatch(/if \(lane && isLaneAvailable\(lane\)\)/);
+
+    const profile = managedRuntime.slice(
+      managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
+      managedRuntime.indexOf('vscode.window.onDidCloseTerminal'),
+    );
+    expect(profile).toMatch(/if \(!lane \|\| !isLaneAvailable\(lane\)\) return undefined;/);
+  });
+
+  it('prompt adapter へ runtime の ExtensionMode を渡す', () => {
+    expect(managedRuntime).toMatch(
+      /createPromptAdapter\(\{\s*extensionMode: extensionContext\.extensionMode,\s*\}\)/,
+    );
+  });
+
   it('公開 switch の transition failure を共通失敗境界へ渡す', () => {
     const switchCommand = managedRuntime.slice(
       managedRuntime.indexOf("'projectLanes.switchLane'"),

@@ -1,7 +1,10 @@
 'use strict';
 
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 
+const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
 const E2E_RESULT_PATH_KEY = 'PROJECT_LANES_E2E_RESULT_PATH';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_SUITE_PATH_KEY = 'PROJECT_LANES_E2E_SUITE_PATH';
@@ -16,6 +19,30 @@ const serializeError = (error) => ({
   message: error instanceof Error ? error.message : String(error),
   stack: error instanceof Error ? error.stack : undefined,
 });
+
+const registerReplacementPickerCommand = ({ resultIdentity, vscodeApi }) => {
+  if (
+    resultIdentity.scenario !== 'missing-lane-recovery' ||
+    resultIdentity.phase !== 'locate-and-reconcile'
+  ) {
+    return undefined;
+  }
+
+  const workspaceFile = vscodeApi.workspace.workspaceFile;
+  assert.ok(workspaceFile, 'Expected an open workspace file for replacement picker');
+  const workspaceDirectory = path.dirname(workspaceFile.fsPath);
+  const replacementPath = path.join(workspaceDirectory, 'lane-a-moved');
+
+  return vscodeApi.commands.registerCommand(E2E_PICK_REPLACEMENT_FOLDER_COMMAND, (options) => {
+    assert.equal(options.title, 'Locate Lane Folder');
+    assert.equal(options.openLabel, 'Locate Folder');
+    assert.equal(options.canSelectFiles, false);
+    assert.equal(options.canSelectFolders, true);
+    assert.equal(options.canSelectMany, false);
+    assert.equal(path.resolve(options.defaultUri.fsPath), path.resolve(workspaceDirectory));
+    return vscodeApi.Uri.file(replacementPath);
+  });
+};
 
 const writeResultMarker = ({ fileSystem, markerPath, processApi, result }) => {
   const temporaryMarkerPath = `${markerPath}.tmp-${processApi.pid}`;
@@ -61,13 +88,18 @@ const runDriver = async ({
     try {
       let message;
       const suite = loadSuite(suitePath);
-      await suite.run({
-        environment,
-        vscodeApi,
-        log(value) {
-          message = value;
-        },
-      });
+      const replacementPicker = registerReplacementPickerCommand({ resultIdentity, vscodeApi });
+      try {
+        await suite.run({
+          environment,
+          vscodeApi,
+          log(value) {
+            message = value;
+          },
+        });
+      } finally {
+        replacementPicker?.dispose();
+      }
       result = {
         ...resultIdentity,
         status: 'PASS',
@@ -100,4 +132,4 @@ const runDriver = async ({
 const activate = () => runDriver();
 const deactivate = () => {};
 
-module.exports = { activate, deactivate, runDriver };
+module.exports = { activate, deactivate, registerReplacementPickerCommand, runDriver };
