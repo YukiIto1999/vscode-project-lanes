@@ -27,7 +27,11 @@ const contentHit = (laneId: string): LaneSearchResult => ({
   preview: 'hit',
 });
 
-const focusOk: LaneFocusPlan = { kind: 'focus', from: undefined, to: lane('web') };
+const focusOk = (laneId: string): LaneFocusPlan => ({
+  kind: 'focus',
+  from: undefined,
+  to: lane(laneId),
+});
 const focusBlocked: LaneFocusPlan = { kind: 'blocked', reason: 'dirty-editors' };
 
 const harness = (
@@ -58,7 +62,7 @@ const harness = (
     warnUnavailable,
   };
   const fileOpen: FileOpenPort = { openAt };
-  const focus = async (): Promise<LaneFocusPlan> => over.focusResult ?? focusOk;
+  const focus = async (): Promise<LaneFocusPlan> => over.focusResult ?? focusOk('web');
   return { openAt, warnUnavailable, notifyEmpty, searchContent, search, ui, fileOpen, focus };
 };
 
@@ -112,7 +116,7 @@ describe('createLaneSearchService.findInLanes', () => {
       query: 'foo',
       contentOutcome: { kind: 'results', results: [hit], truncated: false },
       picked: hit,
-      focusResult: focusOk,
+      focusResult: focusOk('api'),
     });
     const service = createLaneSearchService({
       getCatalog: catalog,
@@ -143,6 +147,90 @@ describe('createLaneSearchService.findInLanes', () => {
     await service.findInLanes();
     expect(h.openAt).not.toHaveBeenCalled();
   });
+
+  it('focus が no-target のとき開かない', async () => {
+    const hit = contentHit('api');
+    const h = harness({
+      query: 'foo',
+      contentOutcome: { kind: 'results', results: [hit], truncated: false },
+      picked: hit,
+      focusResult: { kind: 'noop', reason: 'no-target' },
+    });
+    const service = createLaneSearchService({
+      getCatalog: catalog,
+      search: h.search,
+      ui: h.ui,
+      fileOpen: h.fileOpen,
+      focus: h.focus,
+    });
+
+    await service.findInLanes();
+
+    expect(h.openAt).not.toHaveBeenCalled();
+  });
+
+  it('focus が transition-failed のとき原因を通知境界へ返して開かない', async () => {
+    const hit = contentHit('api');
+    const error = new Error('transition failed');
+    const h = harness({
+      query: 'foo',
+      contentOutcome: { kind: 'results', results: [hit], truncated: false },
+      picked: hit,
+      focusResult: { kind: 'failed', reason: 'transition-failed', error },
+    });
+    const service = createLaneSearchService({
+      getCatalog: catalog,
+      search: h.search,
+      ui: h.ui,
+      fileOpen: h.fileOpen,
+      focus: h.focus,
+    });
+
+    await expect(service.findInLanes()).rejects.toBe(error);
+    expect(h.openAt).not.toHaveBeenCalled();
+  });
+
+  it('focus target が検索結果の lane と異なるとき開かない', async () => {
+    const hit = contentHit('api');
+    const h = harness({
+      query: 'foo',
+      contentOutcome: { kind: 'results', results: [hit], truncated: false },
+      picked: hit,
+      focusResult: focusOk('web'),
+    });
+    const service = createLaneSearchService({
+      getCatalog: catalog,
+      search: h.search,
+      ui: h.ui,
+      fileOpen: h.fileOpen,
+      focus: h.focus,
+    });
+
+    await service.findInLanes();
+
+    expect(h.openAt).not.toHaveBeenCalled();
+  });
+
+  it('focus が same-lane のとき現在の lane で開く', async () => {
+    const hit = contentHit('api');
+    const h = harness({
+      query: 'foo',
+      contentOutcome: { kind: 'results', results: [hit], truncated: false },
+      picked: hit,
+      focusResult: { kind: 'noop', reason: 'same-lane' },
+    });
+    const service = createLaneSearchService({
+      getCatalog: catalog,
+      search: h.search,
+      ui: h.ui,
+      fileOpen: h.fileOpen,
+      focus: h.focus,
+    });
+
+    await service.findInLanes();
+
+    expect(h.openAt).toHaveBeenCalledWith('/repo/api/a.ts', { line: 3, column: 5 });
+  });
 });
 
 describe('createLaneSearchService.goToFileInLanes', () => {
@@ -156,7 +244,7 @@ describe('createLaneSearchService.goToFileInLanes', () => {
     const h = harness({
       filesOutcome: { kind: 'results', results: [fileHit], truncated: false },
       picked: fileHit,
-      focusResult: focusOk,
+      focusResult: focusOk('web'),
     });
     const service = createLaneSearchService({
       getCatalog: catalog,
