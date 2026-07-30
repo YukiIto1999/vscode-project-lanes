@@ -131,6 +131,99 @@ const createScenarioDependencies = (temporaryRoot, { fileSystem = {}, ...overrid
   ...overrides,
 });
 
+const createWindowsProcessApi = () => ({
+  pid: 1,
+  platform: 'win32',
+  once() {},
+});
+
+const createControlledScheduler = () => {
+  const scheduled = [];
+  return {
+    cancelTimeout() {},
+    scheduleTimeout(handler, milliseconds) {
+      const task = { handler, milliseconds };
+      scheduled.push(task);
+      return task;
+    },
+    scheduled,
+  };
+};
+
+const startControlledScenario = ({
+  child,
+  createRunId,
+  fileSystem,
+  processApi,
+  spawn = () => child,
+  temporaryRoot,
+}) => {
+  const scheduler = createControlledScheduler();
+  return {
+    runPromise: runScenario(
+      emptyWorkspaceScenario,
+      createScenarioDependencies(temporaryRoot, {
+        createRunId,
+        fileSystem,
+        processApi,
+        launchVSCode: (options) =>
+          launchVSCodeProcess(options, {
+            fileSystem,
+            log() {},
+            processApi,
+            cancelTimeout: scheduler.cancelTimeout,
+            scheduleTimeout: scheduler.scheduleTimeout,
+            spawn,
+          }),
+      }),
+    ),
+    scheduled: scheduler.scheduled,
+  };
+};
+
+const createInstalledVerificationHarness = (
+  temporaryRoot,
+  { readFileSync = () => '', runId = 'installed-preserve' } = {},
+) => {
+  const removed = [];
+  const fileSystem = {
+    mkdtempSync() {
+      return temporaryRoot;
+    },
+    mkdirSync() {},
+    copyFileSync() {},
+    cpSync() {},
+    existsSync() {
+      return false;
+    },
+    readFileSync,
+    rmSync(target) {
+      removed.push(target);
+    },
+  };
+  return {
+    fileSystem,
+    removed,
+    run: (launchVSCode, processApi) =>
+      runInstalledVSIXVerification(
+        {
+          vscodeExecutablePath: '/vscode/code',
+          vsixPath: '/tmp/project-lanes-0.1.14-linux-x64.vsix',
+          candidateVersion: '0.1.14',
+          baselineVersion: '0.1.13',
+        },
+        {
+          createRunId: () => runId,
+          fileSystem,
+          installExtension() {},
+          launchVSCode,
+          processApi,
+          temporaryDirectory: '/tmp',
+        },
+      ),
+  };
+};
+
 const bootstrapResultIdentity = {
   runId: 'run-1',
   scenario: 'workspace-bootstrap',
@@ -1386,6 +1479,117 @@ test('installed VSIX verification launches baseline before upgrading the same pr
   });
 });
 
+test('installed VSIX verification preserves its root when launch termination is unconfirmed', async () => {
+  const handlers = new Map();
+  const processApi = {
+    pid: 147,
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill() {},
+  };
+  const launchError = Object.assign(new Error('termination unconfirmed'), {
+    code: 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED',
+  });
+  const harness = createInstalledVerificationHarness(
+    '/tmp/project-lanes-installed-vsix-unconfirmed',
+  );
+
+  await assert.rejects(
+    harness.run(async () => {
+      throw launchError;
+    }, processApi),
+    (error) => error === launchError,
+  );
+  handlers.get('exit')();
+
+  assert.deepEqual(harness.removed, []);
+});
+
+test('a separate SIGTERM termination failure preserves the installed VSIX root', async (context) => {
+  context.mock.method(console, 'error', () => {});
+  const handlers = new Map();
+  const failedChild = new EventEmitter();
+  failedChild.pid = 174;
+  const installedChild = new EventEmitter();
+  installedChild.pid = 471;
+  let installedGroupAlive = true;
+  const processApi = {
+    pid: 714,
+    platform: 'linux',
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill(pid, signal) {
+      if (pid === -failedChild.pid) {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      }
+      if (pid === -installedChild.pid) {
+        if (signal === 0) {
+          if (installedGroupAlive) return;
+          throw Object.assign(new Error('process group is gone'), { code: 'ESRCH' });
+        }
+        if (signal === 'SIGINT') {
+          installedGroupAlive = false;
+          queueMicrotask(() => installedChild.emit('close', 0, null));
+        }
+        return;
+      }
+      assert.equal(pid, processApi.pid);
+      assert.equal(signal, 'SIGTERM');
+    },
+  };
+  const failingScheduler = createControlledScheduler();
+  const failedLaunch = launchVSCodeProcess(createLaunchRequest(), {
+    cancelTimeout: failingScheduler.cancelTimeout,
+    fileSystem: createResultFileSystem(undefined),
+    processApi,
+    scheduleTimeout: failingScheduler.scheduleTimeout,
+    spawn() {
+      return failedChild;
+    },
+  });
+  void failedLaunch.catch(() => {});
+
+  const harness = createInstalledVerificationHarness(
+    '/tmp/project-lanes-installed-vsix-suppressed',
+    {
+      readFileSync() {
+        return JSON.stringify({
+          runId: 'installed-suppressed',
+          scenario: 'installed-vsix-fresh',
+          phase: 'fresh',
+          status: 'PASS',
+          message: 'E2E PASS: installed root remains active',
+        });
+      },
+      runId: 'installed-suppressed',
+    },
+  );
+  const installedScheduler = createControlledScheduler();
+  let installedLaunchCount = 0;
+  const verification = harness.run((options) => {
+    installedLaunchCount += 1;
+    return launchVSCodeProcess(options, {
+      cancelTimeout: installedScheduler.cancelTimeout,
+      fileSystem: harness.fileSystem,
+      log() {},
+      processApi,
+      scheduleTimeout: installedScheduler.scheduleTimeout,
+      spawn() {
+        return installedChild;
+      },
+    });
+  }, processApi);
+
+  assert.equal(installedLaunchCount, 1);
+  const signalHandling = handlers.get('SIGTERM')();
+  await Promise.all([verification, signalHandling]);
+  handlers.get('exit')();
+
+  assert.deepEqual(harness.removed, []);
+});
+
 test('the installed VSIX entrypoint downloads VS Code and verifies the requested artifact', async () => {
   const { main } = require('./run-vsix.cjs');
   const calls = [];
@@ -1658,6 +1862,100 @@ test('a failed first launch skips the restart launch and cleans the scenario roo
   ]);
 });
 
+test('an unconfirmed timeout termination preserves the scenario root across process exit', async () => {
+  const temporaryRoot = '/tmp/project-lanes-e2e-timeout-termination-unconfirmed';
+  const child = new EventEmitter();
+  child.pid = 147;
+  const handlers = new Map();
+  const removed = [];
+  const fileSystem = createFixtureFileSystem(temporaryRoot, {
+    existsSync() {
+      return false;
+    },
+    rmSync(target) {
+      removed.push(target);
+    },
+  });
+  const processApi = {
+    pid: 741,
+    platform: 'linux',
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill() {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    },
+  };
+
+  const { runPromise, scheduled } = startControlledScenario({
+    child,
+    fileSystem,
+    processApi,
+    temporaryRoot,
+  });
+  scheduled.find((task) => task.milliseconds === 120_000).handler();
+
+  await assert.rejects(runPromise, (error) => {
+    assert.equal(error.code, 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED');
+    assert.match(error.message, /operation not permitted/);
+    return true;
+  });
+  handlers.get('exit')();
+
+  assert.deepEqual(removed, []);
+});
+
+test('a post-SIGKILL confirmation timeout preserves the scenario root across process exit', async () => {
+  const temporaryRoot = '/tmp/project-lanes-e2e-confirmation-timeout';
+  const child = new EventEmitter();
+  child.pid = 258;
+  const handlers = new Map();
+  const removed = [];
+  const fileSystem = createFixtureFileSystem(temporaryRoot, {
+    existsSync() {
+      return false;
+    },
+    rmSync(target) {
+      removed.push(target);
+    },
+  });
+  const processApi = {
+    pid: 852,
+    platform: 'linux',
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill(pid, signal) {
+      assert.equal(pid, -child.pid);
+      if (signal === 'SIGINT') child.emit('close', null, signal);
+    },
+  };
+  const { runPromise, scheduled } = startControlledScenario({
+    child,
+    fileSystem,
+    processApi,
+    temporaryRoot,
+  });
+
+  const timeoutWork = scheduled.find((task) => task.milliseconds === 120_000).handler();
+  scheduled.find((task) => task.milliseconds === 5_000).handler();
+  await Promise.resolve();
+  assert.equal(
+    scheduled.some((task) => task.milliseconds === 50),
+    true,
+  );
+  scheduled.filter((task) => task.milliseconds === 5_000)[1].handler();
+  await timeoutWork;
+  await assert.rejects(runPromise, (error) => {
+    assert.equal(error.code, 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED');
+    assert.match(error.message, /process did not exit within 5000ms after SIGKILL/);
+    return true;
+  });
+  handlers.get('exit')();
+
+  assert.deepEqual(removed, []);
+});
+
 test('a failed second launch still cleans the scenario root once', async () => {
   const temporaryRoot = '/tmp/project-lanes-e2e-second-launch-failure';
   const removed = [];
@@ -1762,6 +2060,16 @@ test('a normal VS Code launch requires process exit zero and a success marker', 
       log(message) {
         messages.push(message);
       },
+      processApi: {
+        pid: 159,
+        platform: 'linux',
+        once() {},
+        kill(pid, signal) {
+          assert.equal(pid, -child.pid);
+          assert.equal(signal, 0);
+          throw Object.assign(new Error('process group is gone'), { code: 'ESRCH' });
+        },
+      },
       spawn(command, args, options) {
         spawned.push({ command, args, options });
         queueMicrotask(() => child.emit('close', 0, null));
@@ -1777,12 +2085,181 @@ test('a normal VS Code launch requires process exit zero and a success marker', 
       command: '/vscode/code',
       args: ['/tmp/workspace.code-workspace'],
       options: {
+        detached: true,
         env: { HOME: '/home/tester' },
         stdio: 'inherit',
       },
     },
   ]);
   assert.deepEqual(messages, ['E2E PASS: normal launch']);
+});
+
+test('a Windows normal close succeeds without process-group probing', async () => {
+  const child = new EventEmitter();
+  child.pid = 654;
+  let markerRead = false;
+
+  await launchVSCodeProcess(createLaunchRequest(), {
+    fileSystem: createResultFileSystem(
+      {
+        ...bootstrapResultIdentity,
+        status: 'PASS',
+        message: 'E2E PASS: Windows normal close',
+      },
+      {
+        readFileSync() {
+          markerRead = true;
+          return JSON.stringify({
+            ...bootstrapResultIdentity,
+            status: 'PASS',
+            message: 'E2E PASS: Windows normal close',
+          });
+        },
+      },
+    ),
+    processApi: {
+      ...createWindowsProcessApi(),
+      kill() {
+        throw new Error('Windows normal close must not probe a process group');
+      },
+    },
+    log() {},
+    spawn(command, args, options) {
+      assert.deepEqual(options, { env: {}, stdio: 'inherit' });
+      queueMicrotask(() => child.emit('close', 0, null));
+      return child;
+    },
+  });
+
+  assert.equal(markerRead, true);
+});
+
+test('a POSIX normal close waits for the remaining process group before marker read and cleanup', async () => {
+  const temporaryRoot = '/tmp/project-lanes-e2e-normal-close-group';
+  const child = new EventEmitter();
+  child.pid = 432;
+  const events = [];
+  let groupAlive = true;
+  const fileSystem = createFixtureFileSystem(temporaryRoot, {
+    existsSync() {
+      return false;
+    },
+    readFileSync() {
+      events.push('marker-read');
+      return JSON.stringify({
+        runId: 'normal-close-group',
+        scenario: 'empty-workspace',
+        phase: 'default',
+        status: 'PASS',
+        message: 'E2E PASS: process group closed',
+      });
+    },
+    rmSync() {
+      events.push('cleanup');
+    },
+  });
+  const processApi = {
+    pid: 234,
+    platform: 'linux',
+    once() {},
+    kill(pid, signal) {
+      assert.equal(pid, -child.pid);
+      if (signal === 0) {
+        events.push(`probe-${groupAlive ? 'alive' : 'gone'}`);
+        if (!groupAlive) {
+          throw Object.assign(new Error('process group is gone'), { code: 'ESRCH' });
+        }
+        return;
+      }
+      events.push(`kill-${signal}`);
+      if (signal === 'SIGKILL') groupAlive = false;
+    },
+  };
+  const { runPromise, scheduled } = startControlledScenario({
+    child,
+    createRunId: () => 'normal-close-group',
+    fileSystem,
+    processApi,
+    spawn() {
+      events.push('spawn');
+      queueMicrotask(() => {
+        events.push('leader-close');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    temporaryRoot,
+  });
+
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(events, ['spawn', 'leader-close', 'probe-alive', 'kill-SIGINT']);
+
+  scheduled.find((task) => task.milliseconds === 5_000).handler();
+  await runPromise;
+
+  assert.deepEqual(events, [
+    'spawn',
+    'leader-close',
+    'probe-alive',
+    'kill-SIGINT',
+    'kill-SIGKILL',
+    'probe-gone',
+    'marker-read',
+    'cleanup',
+  ]);
+});
+
+test('an unconfirmed POSIX normal-close termination preserves the scenario root', async () => {
+  const temporaryRoot = '/tmp/project-lanes-e2e-normal-close-unconfirmed';
+  const child = new EventEmitter();
+  child.pid = 543;
+  const handlers = new Map();
+  const removed = [];
+  const fileSystem = createFixtureFileSystem(temporaryRoot, {
+    existsSync() {
+      return false;
+    },
+    readFileSync() {
+      throw new Error('marker must not be read before process group termination');
+    },
+    rmSync(target) {
+      removed.push(target);
+    },
+  });
+  const processApi = {
+    pid: 345,
+    platform: 'linux',
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill(pid) {
+      assert.equal(pid, -child.pid);
+    },
+  };
+  const { runPromise, scheduled } = startControlledScenario({
+    child,
+    fileSystem,
+    processApi,
+    spawn() {
+      queueMicrotask(() => child.emit('close', 0, null));
+      return child;
+    },
+    temporaryRoot,
+  });
+
+  await Promise.resolve();
+  scheduled.find((task) => task.milliseconds === 5_000).handler();
+  await Promise.resolve();
+  scheduled.filter((task) => task.milliseconds === 5_000)[1].handler();
+  await assert.rejects(runPromise, (error) => {
+    assert.equal(error.code, 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED');
+    assert.match(error.message, /process did not exit within 5000ms after SIGKILL/);
+    return true;
+  });
+  handlers.get('exit')();
+
+  assert.deepEqual(removed, []);
 });
 
 test('a normal VS Code launch rejects a nonzero process exit before reading its marker', async () => {
@@ -1797,6 +2274,7 @@ test('a normal VS Code launch rejects a nonzero process exit before reading its 
           markerRead = true;
         },
       }),
+      processApi: createWindowsProcessApi(),
       spawn() {
         queueMicrotask(() => child.emit('close', 9, null));
         return child;
@@ -1822,6 +2300,7 @@ test('a normal VS Code launch rejects a driver failure marker', async () => {
           stack: 'Error: restart suite failed',
         },
       }),
+      processApi: createWindowsProcessApi(),
       spawn() {
         queueMicrotask(() => child.emit('close', 0, null));
         return child;
@@ -1844,6 +2323,7 @@ test('a normal VS Code launch rejects a marker from another run', async () => {
         status: 'PASS',
         message: 'E2E PASS: stale result',
       }),
+      processApi: createWindowsProcessApi(),
       spawn() {
         queueMicrotask(() => child.emit('close', 0, null));
         return child;
@@ -1878,51 +2358,180 @@ test('a normal VS Code launch rejects a duplicate marker before spawning', async
   assert.equal(spawned, false);
 });
 
-test('a normal VS Code launch timeout escalates from SIGINT to SIGKILL and waits for close', async () => {
+test('POSIX timeout keeps grace after leader close until the process group is gone', async () => {
   const child = new EventEmitter();
   child.pid = 246;
   const events = [];
+  const scheduled = [];
+  let groupAlive = true;
+  child.kill = () => {
+    throw new Error('POSIX termination must signal the process group');
+  };
+  const processApi = {
+    pid: 135,
+    platform: 'linux',
+    once() {},
+    kill(pid, signal) {
+      assert.equal(pid, -child.pid);
+      if (signal === 0) {
+        events.push(`probe-${groupAlive ? 'alive' : 'gone'}`);
+        if (!groupAlive) {
+          const error = new Error('process group is gone');
+          error.code = 'ESRCH';
+          throw error;
+        }
+        return;
+      }
+      events.push(`kill-${pid}-${signal}`);
+      if (signal === 'SIGINT') {
+        events.push('leader-close');
+        child.emit('close', null, signal);
+      }
+      if (signal === 'SIGKILL') {
+        groupAlive = false;
+      }
+    },
+  };
+
+  const launch = launchVSCodeProcess(
+    createLaunchRequest({
+      markerPath: '/tmp/launch-timeout.json',
+    }),
+    {
+      fileSystem: {
+        existsSync() {
+          return false;
+        },
+        readFileSync() {
+          throw new Error('marker must not be read after timeout');
+        },
+      },
+      scheduleTimeout(handler, milliseconds) {
+        const task = { handler, milliseconds };
+        scheduled.push(task);
+        events.push(`schedule-${milliseconds}`);
+        return task;
+      },
+      cancelTimeout(task) {
+        events.push(`cancel-${task.milliseconds}`);
+      },
+      spawn() {
+        return child;
+      },
+      processApi,
+    },
+  );
+  let launchSettled = false;
+  void launch.then(
+    () => {
+      launchSettled = true;
+    },
+    () => {
+      launchSettled = true;
+    },
+  );
+
+  const timeoutWork = scheduled.find((task) => task.milliseconds === 120_000).handler();
+  await Promise.resolve();
+  assert.equal(launchSettled, false);
+  assert.equal(groupAlive, true);
+  assert.deepEqual(events, [
+    'schedule-120000',
+    'kill--246-SIGINT',
+    'leader-close',
+    'probe-alive',
+    'schedule-5000',
+  ]);
+
+  scheduled.find((task) => task.milliseconds === 5_000).handler();
+  await timeoutWork;
+  await assert.rejects(launch, /VS Code launch timed out after 120000ms/);
+  assert.deepEqual(events, [
+    'schedule-120000',
+    'kill--246-SIGINT',
+    'leader-close',
+    'probe-alive',
+    'schedule-5000',
+    'kill--246-SIGKILL',
+    'probe-gone',
+    'cancel-120000',
+  ]);
+});
+
+test('POSIX ESRCH means the group is gone but termination still waits for leader close', async () => {
+  const child = new EventEmitter();
+  child.pid = 753;
+  const events = [];
+  const processApi = {
+    pid: 951,
+    platform: 'linux',
+    once() {},
+    kill(pid, signal) {
+      events.push(`kill-${pid}-${signal}`);
+      if (signal === 'SIGINT') {
+        queueMicrotask(() => child.emit('close', null, signal));
+      }
+      const error = new Error('no such process group');
+      error.code = 'ESRCH';
+      throw error;
+    },
+  };
+
+  const launch = launchVSCodeProcess(createLaunchRequest(), {
+    fileSystem: createResultFileSystem(undefined),
+    processApi,
+    scheduleTimeout(handler, milliseconds) {
+      if (milliseconds === 120_000) queueMicrotask(handler);
+      return milliseconds;
+    },
+    spawn() {
+      return child;
+    },
+  });
+
+  await assert.rejects(launch, /VS Code launch timed out/);
+  assert.deepEqual(events, ['kill--753-SIGINT']);
+});
+
+test('Windows launch keeps the attached child fallback and terminates it directly', async () => {
+  const child = new EventEmitter();
+  child.pid = 864;
+  const events = [];
+  const spawned = [];
+  const processApi = {
+    pid: 975,
+    platform: 'win32',
+    once() {},
+    kill() {
+      throw new Error('Windows fallback must not signal a POSIX process group');
+    },
+  };
   child.kill = (signal) => {
-    events.push(`kill-${signal}`);
-    if (signal === 'SIGKILL') {
-      events.push('child-close');
-      child.emit('close', null, signal);
-    }
+    events.push(`child-kill-${signal}`);
+    if (signal === 'SIGKILL') child.emit('close', null, signal);
   };
 
   await assert.rejects(
-    launchVSCodeProcess(
-      createLaunchRequest({
-        markerPath: '/tmp/launch-timeout.json',
-      }),
-      {
-        fileSystem: {
-          existsSync() {
-            return false;
-          },
-          readFileSync() {
-            throw new Error('marker must not be read after timeout');
-          },
-        },
-        scheduleTimeout(handler, milliseconds) {
-          events.push(`schedule-${milliseconds}`);
-          queueMicrotask(handler);
-          return milliseconds;
-        },
-        spawn() {
-          return child;
-        },
+    launchVSCodeProcess(createLaunchRequest(), {
+      fileSystem: createResultFileSystem(undefined),
+      processApi,
+      scheduleTimeout(handler) {
+        queueMicrotask(handler);
+        return events.length;
       },
-    ),
-    /VS Code launch timed out after 120000ms/,
+      spawn(command, args, options) {
+        spawned.push({ command, args, options });
+        return child;
+      },
+    }),
+    /VS Code launch timed out/,
   );
-  assert.deepEqual(events, [
-    'schedule-120000',
-    'kill-SIGINT',
-    'schedule-5000',
-    'kill-SIGKILL',
-    'child-close',
-  ]);
+
+  assert.deepEqual(spawned[0]?.options, {
+    env: {},
+    stdio: 'inherit',
+  });
+  assert.deepEqual(events, ['child-kill-SIGINT', 'child-kill-SIGKILL']);
 });
 
 test('SIGTERM waits for active child termination before cleaning scenario roots', async () => {
@@ -1955,19 +2564,152 @@ test('SIGTERM waits for active child termination before cleaning scenario roots'
   assert.deepEqual(events, ['terminate']);
   finishTermination();
   await signalHandling;
+  handlers.get('exit')();
 
   assert.deepEqual(events, ['terminate', 'child-close', 'cleanup', 'reraise-246-SIGTERM']);
+});
+
+test('SIGTERM termination failure reports the error and suppresses root cleanup including exit hook', async () => {
+  const handlers = new Map();
+  const events = [];
+  const reportedErrors = [];
+  const failure = new Error('process group termination failed');
+  const processApi = {
+    pid: 642,
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill(pid, signal) {
+      events.push(`reraise-${pid}-${signal}`);
+    },
+  };
+  const cleanupRegistry = createProcessCleanupRegistry(processApi, {
+    reportCleanupError(error) {
+      reportedErrors.push(error);
+      events.push(`report-${error.message}`);
+    },
+  });
+  cleanupRegistry.activeCleanups.add(() => events.push('cleanup'));
+  cleanupRegistry.activeTerminations.add(() => Promise.reject(failure));
+
+  await handlers.get('SIGTERM')();
+  handlers.get('exit')();
+
+  assert.deepEqual(events, ['report-VS Code process termination failed', 'reraise-642-SIGTERM']);
+  assert.equal(reportedErrors[0] instanceof AggregateError, true);
+  assert.equal(reportedErrors[0].code, 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED');
+  assert.deepEqual(reportedErrors[0].errors, [failure]);
+});
+
+test('one SIGTERM termination failure preserves every active scenario root', async (context) => {
+  context.mock.method(console, 'error', () => {});
+  const handlers = new Map();
+  const removed = [];
+  const failedChild = new EventEmitter();
+  failedChild.pid = 164;
+  const successfulChild = new EventEmitter();
+  successfulChild.pid = 461;
+  let successfulGroupAlive = true;
+  const processApi = {
+    pid: 614,
+    platform: 'linux',
+    once(event, handler) {
+      handlers.set(event, handler);
+    },
+    kill(pid, signal) {
+      if (pid === -failedChild.pid) {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      }
+      if (pid === -successfulChild.pid) {
+        if (signal === 0) {
+          if (successfulGroupAlive) return;
+          throw Object.assign(new Error('process group is gone'), { code: 'ESRCH' });
+        }
+        if (signal === 'SIGINT') {
+          successfulGroupAlive = false;
+          queueMicrotask(() => successfulChild.emit('close', 0, null));
+        }
+        return;
+      }
+      assert.equal(pid, processApi.pid);
+      assert.equal(signal, 'SIGTERM');
+    },
+  };
+  const createFileSystem = (temporaryRoot, runId) =>
+    createFixtureFileSystem(temporaryRoot, {
+      existsSync() {
+        return false;
+      },
+      readFileSync() {
+        return JSON.stringify({
+          runId,
+          scenario: 'empty-workspace',
+          phase: 'default',
+          status: 'PASS',
+          message: `E2E PASS: ${runId}`,
+        });
+      },
+      rmSync(target) {
+        removed.push(target);
+      },
+    });
+  const failedFileSystem = createFileSystem('/tmp/project-lanes-e2e-sigterm-failed', 'failed');
+  const successfulFileSystem = createFileSystem(
+    '/tmp/project-lanes-e2e-sigterm-successful',
+    'successful',
+  );
+  const { runPromise: failedRun } = startControlledScenario({
+    child: failedChild,
+    createRunId: () => 'failed',
+    fileSystem: failedFileSystem,
+    processApi,
+    temporaryRoot: '/tmp/project-lanes-e2e-sigterm-failed',
+  });
+  const { runPromise: successfulRun } = startControlledScenario({
+    child: successfulChild,
+    createRunId: () => 'successful',
+    fileSystem: successfulFileSystem,
+    processApi,
+    temporaryRoot: '/tmp/project-lanes-e2e-sigterm-successful',
+  });
+  void failedRun;
+
+  const signalHandling = handlers.get('SIGTERM')();
+  await Promise.all([successfulRun, signalHandling]);
+  handlers.get('exit')();
+
+  assert.deepEqual(removed, []);
 });
 
 test('SIGTERM latched during a successful launch prevents the next launch before cleanup', async () => {
   const handlers = new Map();
   const events = [];
+  const scheduled = [];
+  let groupAlive = true;
   const processApi = {
     pid: 357,
     once(event, handler) {
       handlers.set(event, handler);
     },
     kill(pid, signal) {
+      if (pid < 0) {
+        if (signal === 0) {
+          events.push(`launch-1-probe-${groupAlive ? 'alive' : 'gone'}`);
+          if (groupAlive) return;
+          const error = new Error('process group is gone');
+          error.code = 'ESRCH';
+          throw error;
+        }
+        events.push(`launch-1-kill-${signal}`);
+        if (signal === 'SIGINT') {
+          queueMicrotask(() => {
+            events.push('launch-1-close');
+            firstChild.emit('close', 0, null);
+          });
+        }
+        if (signal === 'SIGKILL') groupAlive = false;
+        return;
+      }
       events.push(`reraise-${pid}-${signal}`);
     },
   };
@@ -1991,12 +2733,8 @@ test('SIGTERM latched during a successful launch prevents the next launch before
   });
   const firstChild = new EventEmitter();
   firstChild.pid = 468;
-  firstChild.kill = (signal) => {
-    events.push(`launch-1-kill-${signal}`);
-    queueMicrotask(() => {
-      events.push('launch-1-close');
-      firstChild.emit('close', 0, null);
-    });
+  firstChild.kill = () => {
+    throw new Error('POSIX termination must signal the process group');
   };
   let launchCount = 0;
   const runPromise = runScenario(
@@ -2013,6 +2751,12 @@ test('SIGTERM latched during a successful launch prevents the next launch before
           fileSystem,
           log() {},
           processApi,
+          scheduleTimeout(handler, milliseconds) {
+            const task = { handler, milliseconds };
+            scheduled.push(task);
+            return task;
+          },
+          cancelTimeout() {},
           spawn() {
             return firstChild;
           },
@@ -2022,6 +2766,16 @@ test('SIGTERM latched during a successful launch prevents the next launch before
   );
 
   const signalHandling = handlers.get('SIGTERM')();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(events, [
+    'launch-1-spawn',
+    'launch-1-kill-SIGINT',
+    'launch-1-close',
+    'launch-1-probe-alive',
+  ]);
+
+  scheduled.find((task) => task.milliseconds === 5_000).handler();
   await Promise.all([runPromise, signalHandling]);
 
   assert.equal(launchCount, 1);
@@ -2029,6 +2783,9 @@ test('SIGTERM latched during a successful launch prevents the next launch before
     'launch-1-spawn',
     'launch-1-kill-SIGINT',
     'launch-1-close',
+    'launch-1-probe-alive',
+    'launch-1-kill-SIGKILL',
+    'launch-1-probe-gone',
     'cleanup',
     'reraise-357-SIGTERM',
   ]);
