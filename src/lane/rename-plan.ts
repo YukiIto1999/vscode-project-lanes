@@ -1,5 +1,5 @@
 import type { LaneId } from '../foundation/model';
-import { type Lane, type LaneCatalog, toLaneId } from './model';
+import type { Lane, LaneCatalog } from './model';
 
 /** リネーム計画 */
 export type LaneRenamePlan =
@@ -13,14 +13,14 @@ export type LaneRenamePlan =
       /** 入力不正 */
       readonly kind: 'invalid';
       /** 不正理由 */
-      readonly reason: 'empty' | 'duplicate';
+      readonly reason: 'empty';
     }
   | {
       /** 改名実行 */
       readonly kind: 'rename';
       /** 改名前レーン */
       readonly from: Lane;
-      /** 改名後の識別、`id = label` の不変条件下で新ラベルから導出する */
+      /** 改名後の識別と表示名 */
       readonly to: { readonly id: LaneId; readonly label: string };
     };
 
@@ -48,12 +48,9 @@ export const planLaneRename = (input: LaneRenameInput): LaneRenamePlan => {
   if (trimmed.length === 0) return { kind: 'invalid', reason: 'empty' };
   if (trimmed === target.label) return { kind: 'noop', reason: 'same-name' };
 
-  const duplicated = catalog.lanes.some((l) => l.id !== targetId && l.label === trimmed);
-  if (duplicated) return { kind: 'invalid', reason: 'duplicate' };
-
   return {
     kind: 'rename',
     from: target,
-    to: { id: toLaneId(trimmed), label: trimmed },
+    to: { id: target.id, label: trimmed },
   };
 };

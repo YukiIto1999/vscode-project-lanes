@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
 import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
@@ -46,7 +47,12 @@ import type {
   WorkspaceDisabledReason,
   WorkspaceFileInfo,
 } from '../workspace/model';
-import type { CatalogStorePort, WorkspaceHostPort, WorkspaceLinkPort } from '../workspace/ports';
+import type {
+  CatalogStorePort,
+  LaneIdFactoryPort,
+  WorkspaceHostPort,
+  WorkspaceLinkPort,
+} from '../workspace/ports';
 import { createWorkspaceFolderReconciler } from '../workspace/reconciler';
 import { createCatalogRegistry } from '../workspace/registry';
 import { bootstrapWorkspace } from '../workspace/scanner';
@@ -60,6 +66,7 @@ import {
   type InitializationStatus,
 } from './initialization-coordinator';
 import { laneRelocationWarningMessage } from './lane-relocation-warning';
+import { resolveLaneCommandTarget } from './lane-command-target';
 import { createManagedCommandProxy } from './managed-command-proxy';
 import type { ConfigPort } from './model';
 import {
@@ -115,6 +122,7 @@ interface ManagedRuntimeDeps {
   readonly workspaceHost: WorkspaceHostPort;
   readonly resources: WorkspaceResources;
   readonly catalogStore: CatalogStorePort;
+  readonly laneIdFactory: LaneIdFactoryPort;
   readonly config: ConfigPort;
   readonly toUri: (path: string) => UriString;
 }
@@ -154,21 +162,6 @@ const createSessionIdSequencer = (instanceId: number): SessionIdPort => {
       return `${laneId}:${instanceId}:${nextCount}` as SessionId;
     },
   };
-};
-
-/**
- * VS Code コマンド引数からの LaneId 解決
- * @param commandArgument - VS Code が渡すコールバック第一引数
- * @returns 解決された LaneId、または undefined
- */
-const extractLaneId = (commandArgument: unknown): LaneId | undefined => {
-  if (typeof commandArgument === 'string') return toLaneId(commandArgument);
-  if (commandArgument && typeof commandArgument === 'object') {
-    const fields = commandArgument as { laneId?: unknown; id?: unknown };
-    if (typeof fields.laneId === 'string') return toLaneId(fields.laneId);
-    if (typeof fields.id === 'string') return toLaneId(fields.id);
-  }
-  return undefined;
 };
 
 /**
@@ -221,6 +214,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     workspaceHost,
     resources,
     catalogStore,
+    laneIdFactory,
     config,
     toUri,
   } = deps;
@@ -235,7 +229,11 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
   };
 
   try {
-    const registry = createCatalogRegistry(workspaceContext.canonicalLanes, catalogStore);
+    const registry = createCatalogRegistry(
+      workspaceContext.canonicalLanes,
+      catalogStore,
+      laneIdFactory,
+    );
     const operationQueue = createOperationQueue();
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
     const editor = createEditorAdapter();
@@ -285,7 +283,6 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       selectionStore,
       prompt,
       registry,
-      terminalRekey: { rekeyLane: (oldId, newId) => terminalService.rekeyLane(oldId, newId) },
       editorStore: createLaneSessionStore(),
       rootAvailability,
       operationQueue,
@@ -298,7 +295,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const laneSearchService = createLaneSearchService({
       getCatalog: () => registry.snapshot(),
       search: createRipgrepSearchAdapter(),
-      ui: createSearchUiAdapter(),
+      ui: createSearchUiAdapter(() => registry.snapshot().lanes),
       fileOpen: editor,
       focus: (laneId) => laneService.focus(laneId),
       rootAvailability,
@@ -422,22 +419,30 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         if (!accepted) prompt.warnAddFolderFailed();
       },
       'projectLanes.renameLane': ([argument]) =>
-        runAsyncBoundary(() => laneService.renameLane(extractLaneId(argument)), reportAsyncFailure),
+        runAsyncBoundary(
+          () => laneService.renameLane(resolveLaneCommandTarget(argument, registry.snapshot())),
+          reportAsyncFailure,
+        ),
       'projectLanes.locateFolder': ([argument]) =>
         runAsyncBoundary(async () => {
-          const result = await laneService.relocateLane(extractLaneId(argument));
+          const result = await laneService.relocateLane(
+            resolveLaneCommandTarget(argument, registry.snapshot()),
+          );
           render();
           const message = laneRelocationWarningMessage(result);
           if (message) await vscode.window.showWarningMessage(message);
         }, reportAsyncFailure),
       'projectLanes.removeLane': ([argument]) =>
-        runAsyncBoundary(() => laneService.removeLane(extractLaneId(argument)), reportAsyncFailure),
+        runAsyncBoundary(
+          () => laneService.removeLane(resolveLaneCommandTarget(argument, registry.snapshot())),
+          reportAsyncFailure,
+        ),
       'projectLanes.reloadLanes': () =>
         runAsyncBoundary(() => runtimeReconciler.reconcile(), reportAsyncFailure),
-      'projectLanes.switchLane': ([laneId]) =>
+      'projectLanes.switchLane': ([argument]) =>
         runAsyncBoundary(async () => {
           const result = await laneService.focus(
-            typeof laneId === 'string' ? toLaneId(laneId) : undefined,
+            resolveLaneCommandTarget(argument, registry.snapshot()),
           );
           render();
           if (result.kind === 'failed') throw result.error;
@@ -470,6 +475,7 @@ export const bootstrapRuntime = async (
   const directory = createDirectoryAdapter();
   const settings = createWorkspaceSettingsAdapter();
   const catalogStore = createCatalogStoreAdapter(context.workspaceState);
+  const laneIdFactory: LaneIdFactoryPort = { next: () => toLaneId(randomUUID()) };
   const laneProfile = readLaneTerminalProfile(context.extension);
   const toUri = (path: string): UriString => vscode.Uri.file(path).toString() as UriString;
   let initializedResources: WorkspaceResources | undefined;
@@ -514,6 +520,7 @@ export const bootstrapRuntime = async (
         directory,
         resources.legacyAnchorUri,
         resources.link,
+        laneIdFactory,
       );
       if (result.kind === 'disabled') return result;
 
@@ -532,6 +539,7 @@ export const bootstrapRuntime = async (
         workspaceHost,
         resources,
         catalogStore,
+        laneIdFactory,
         config,
         toUri,
       });

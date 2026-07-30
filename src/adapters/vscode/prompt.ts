@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import type { UriString } from '../../foundation/model';
+import type { LaneId, UriString } from '../../foundation/model';
 import type { LanePromptPort } from '../../lane/ports';
 
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
@@ -9,6 +9,10 @@ const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFol
 interface PromptAdapterOptions {
   readonly extensionMode?: vscode.ExtensionMode;
   readonly environment?: Readonly<Record<string, string | undefined>>;
+}
+
+interface LanePickItem extends vscode.QuickPickItem {
+  readonly laneId: LaneId;
 }
 
 /**
@@ -21,10 +25,17 @@ export const createPromptAdapter = ({
   environment = process.env,
 }: PromptAdapterOptions = {}): LanePromptPort => ({
   pickLane: async (lanes) => {
-    const picked = await vscode.window.showQuickPick(
-      lanes.map((l) => ({ label: l.label, laneId: l.id })),
-      { title: 'Project Lanes', placeHolder: 'Select a lane to focus' },
+    const labelCounts = new Map<string, number>();
+    for (const lane of lanes) labelCounts.set(lane.label, (labelCounts.get(lane.label) ?? 0) + 1);
+    const items: LanePickItem[] = lanes.map((lane) =>
+      labelCounts.get(lane.label) === 1
+        ? { label: lane.label, laneId: lane.id }
+        : { label: lane.label, description: lane.rootPath, laneId: lane.id },
     );
+    const picked = await vscode.window.showQuickPick(items, {
+      title: 'Project Lanes',
+      placeHolder: 'Select a lane to focus',
+    });
     return picked?.laneId;
   },
 
@@ -47,7 +58,7 @@ export const createPromptAdapter = ({
       `Remove lane "${lane.label}"?`,
       {
         modal: true,
-        detail: 'Removes the lane from the workspace catalog. The folder on disk is not changed.',
+        detail: `Folder: ${lane.rootPath}\n\nRemoves the lane from the workspace catalog. The folder on disk is not changed.`,
       },
       'OK',
     );

@@ -1,6 +1,6 @@
-import type { AbsolutePath } from '../foundation/model';
+import type { AbsolutePath, LaneId } from '../foundation/model';
 import type { LaneRootAvailability } from '../lane/model';
-import type { FolderMutation, WorkspaceFileInfo, WorkspaceFolder } from './model';
+import type { CatalogEntry, FolderMutation, WorkspaceFileInfo, WorkspaceFolder } from './model';
 
 /** ワークスペースフォルダ操作ポート */
 export interface WorkspaceHostPort {
@@ -70,12 +70,21 @@ export interface CatalogStorePort {
    * カタログの読込
    * @returns 永続化済みのレーン列、または未保存で undefined
    */
-  readonly load: () => readonly WorkspaceFolder[] | undefined;
+  readonly load: () => readonly CatalogEntry[] | undefined;
   /**
    * カタログの保存
    * @param folders - 永続化対象のレーン列
    */
-  readonly save: (folders: readonly WorkspaceFolder[]) => Promise<void>;
+  readonly save: (folders: readonly CatalogEntry[]) => Promise<void>;
+}
+
+/** 新規レーンの不透明識別子採番ポート */
+export interface LaneIdFactoryPort {
+  /**
+   * 新しい識別子の取得
+   * @returns 他のレーンと重複しない LaneId
+   */
+  readonly next: () => LaneId;
 }
 
 /** ワークスペース設定ポート */
