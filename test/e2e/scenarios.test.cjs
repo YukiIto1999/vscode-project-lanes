@@ -73,6 +73,22 @@ const activeLaneReconciliationScenario = {
     { phase: 'restore-missing-link' },
   ],
 };
+const missingLaneRecoveryScenario = {
+  name: 'missing-lane-recovery',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'missing-lane-recovery'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'missing-lane-recovery',
+    'missing-lane-recovery.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'missing-lane-recovery.cjs'),
+  launches: [
+    { phase: 'prepare-missing-active' },
+    { phase: 'evacuate-and-remove-link' },
+    { phase: 'restore-from-cache-and-switch' },
+  ],
+};
 const legacyAnchorClassificationScenario = {
   name: 'legacy-anchor-classification',
   fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
@@ -145,6 +161,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
     activeLaneReconciliationScenario,
+    missingLaneRecoveryScenario,
     legacyAnchorClassificationScenario,
   ]);
 });
@@ -346,6 +363,199 @@ test('the restore phase verifies the missing link was recreated from the lane-c 
   });
 
   assert.deepEqual(messages, ['E2E PASS: missing link restored from lane-c selection cache']);
+});
+
+test('the missing-lane recovery suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/missing-lane-recovery.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the prepare-missing-active phase leaves a broken lane-a symlink after moving its directory', async () => {
+  const { run } = require('./suite/missing-lane-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-missing-prepare/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const directories = new Set([laneA, laneB]);
+  const messages = [];
+  const renames = [];
+  let activeTarget = laneA;
+  let linkPresent = true;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'prepare-missing-active' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-a' }],
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(target) {
+        if (target === activeLink) return linkPresent && directories.has(activeTarget);
+        return directories.has(target);
+      },
+      lstatSync(target) {
+        assert.equal(target, activeLink);
+        assert.equal(linkPresent, true);
+        return { isSymbolicLink: () => true };
+      },
+      readlinkSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        assert.equal(linkPresent, true);
+        assert.equal(directories.has(activeTarget), true);
+        return activeTarget;
+      },
+    },
+    renameLaneDirectory(source, destination) {
+      assert.equal(directories.delete(source), true);
+      directories.add(destination);
+      renames.push([source, destination]);
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(renames, [[laneA, movedLaneA]]);
+  assert.equal(activeTarget, laneA);
+  assert.equal(linkPresent, true);
+  assert.deepEqual(messages, ['E2E PASS: active lane-a moved while its symlink remained broken']);
+});
+
+test('the evacuate-and-remove-link phase waits for lane-b before restoring lane-a and removing the link', async () => {
+  const { run } = require('./suite/missing-lane-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-missing-evacuate/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const directories = new Set([movedLaneA, laneB]);
+  const messages = [];
+  const renames = [];
+  let linkPresent = true;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'evacuate-and-remove-link' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-b' }],
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(target) {
+        if (target === activeLink) return linkPresent;
+        return directories.has(target);
+      },
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        assert.equal(linkPresent, true);
+        return laneB;
+      },
+    },
+    renameLaneDirectory(source, destination) {
+      assert.equal(directories.delete(source), true);
+      directories.add(destination);
+      renames.push([source, destination]);
+    },
+    removeActiveLink() {
+      linkPresent = false;
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(renames, [[movedLaneA, laneA]]);
+  assert.equal(directories.has(laneA), true);
+  assert.equal(directories.has(movedLaneA), false);
+  assert.equal(linkPresent, false);
+  assert.deepEqual(messages, ['E2E PASS: lane-b evacuation persisted before active link removal']);
+});
+
+test('the restore-from-cache-and-switch phase restores lane-b before switching to available lane-a', async () => {
+  const { run } = require('./suite/missing-lane-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-missing-restore/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const commands = [];
+  const messages = [];
+  let activeTarget = laneB;
+  const workspace = {
+    workspaceFile: {
+      fsPath: path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+    },
+    workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-b' }],
+  };
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'restore-from-cache-and-switch' }),
+    },
+    vscodeApi: {
+      workspace,
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.switchLane' && laneId === 'lane-a') {
+            activeTarget = laneA;
+            workspace.workspaceFolders = [{ uri: { fsPath: activeLink }, name: 'lane-a' }];
+          }
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-a']]);
+  assert.equal(activeTarget, laneA);
+  assert.deepEqual(messages, ['E2E PASS: lane-b restored from cache before switching to lane-a']);
 });
 
 test('the empty-workspace suite verifies activation and reports success', async () => {
