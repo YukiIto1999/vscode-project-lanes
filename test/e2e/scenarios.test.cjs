@@ -73,6 +73,17 @@ const activeLaneReconciliationScenario = {
     { phase: 'restore-missing-link' },
   ],
 };
+const legacyAnchorClassificationScenario = {
+  name: 'legacy-anchor-classification',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'legacy-anchor-classification',
+    'legacy-anchor-classification.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'legacy-anchor-classification.cjs'),
+};
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
   workspaceFixture: '/fixtures/empty.code-workspace',
@@ -134,6 +145,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
     activeLaneReconciliationScenario,
+    legacyAnchorClassificationScenario,
   ]);
 });
 
@@ -1458,6 +1470,54 @@ test('the workspace-bootstrap phase accepts host cancellation after reaching lan
   });
 
   assert.deepEqual(messages, ['E2E PASS: workspace bootstrap initialized lane-a']);
+});
+
+test('the legacy-anchor classification suite stops after the classified workspace state is reached', async () => {
+  const { run } = require('./suite/legacy-anchor-classification.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-legacy-anchor/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const realLane = path.join(workspaceDirectory, 'real-lane');
+  const commands = [];
+  const messages = [];
+
+  await run({
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'legacy-anchor-classification.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: '.lanes-root' }],
+      },
+      extensions: {
+        getExtension() {
+          return {
+            async activate() {
+              throw new Error('Activating extension failed: Canceled.');
+            },
+          };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(linkPath) {
+        assert.equal(linkPath, activeLink);
+        return realLane;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, []);
+  assert.deepEqual(messages, [
+    'E2E PASS: legacy anchor URI excluded and same-name real lane retained',
+  ]);
 });
 
 test('the workspace-bootstrap restart phase switches using the restored public lane catalog', async () => {

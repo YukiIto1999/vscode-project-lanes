@@ -1,5 +1,5 @@
 import * as nodePath from 'node:path';
-import type { AbsolutePath, WorkspaceKey } from '../foundation/model';
+import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import type { WorkspaceBootstrapResult, WorkspaceFileInfo, WorkspaceFolder } from './model';
 import type {
@@ -23,23 +23,29 @@ export const isLinkFolder = (folder: WorkspaceFolder, linkPath: AbsolutePath): b
 /**
  * 旧アンカーフォルダの判定
  * @param folder - 判定対象フォルダ
+ * @param legacyAnchorUri - 旧アンカーの絶対 URI
  * @returns 旧アンカーなら true
  */
-export const isLegacyAnchor = (folder: WorkspaceFolder): boolean => folder.name === ANCHOR_DIR_NAME;
+export const isLegacyAnchor = (folder: WorkspaceFolder, legacyAnchorUri: UriString): boolean =>
+  folder.uri === legacyAnchorUri;
 
 /**
  * レーン候補の純粋抽出
  * @param rawFolders - workspaceFolders の現状
  * @param stored - 永続化されたカタログ
  * @param linkPath - symlink 絶対パス
+ * @param legacyAnchorUri - 旧アンカーの絶対 URI
  * @returns レーン候補列
  */
 export const collectLaneCandidates = (
   rawFolders: readonly WorkspaceFolder[],
   stored: readonly WorkspaceFolder[] | undefined,
   linkPath: AbsolutePath,
+  legacyAnchorUri: UriString,
 ): readonly WorkspaceFolder[] => {
-  const real = rawFolders.filter((f) => !isLinkFolder(f, linkPath) && !isLegacyAnchor(f));
+  const real = rawFolders.filter(
+    (folder) => !isLinkFolder(folder, linkPath) && !isLegacyAnchor(folder, legacyAnchorUri),
+  );
   if (!stored || stored.length === 0) return real;
   const known = new Set(stored.map((s) => s.uri));
   const additions = real.filter((f) => !known.has(f.uri));
@@ -71,6 +77,7 @@ export const collapseFoldersToLink = (
  * @param fileInfo - 確定済みワークスペースファイル情報
  * @param catalogStore - カタログ永続化ポート
  * @param directory - ディレクトリ操作ポート
+ * @param legacyAnchorUri - 旧アンカーの絶対 URI
  * @param link - symlink の所在
  * @returns ブートストラップ結果
  */
@@ -79,12 +86,13 @@ export const bootstrapWorkspace = async (
   fileInfo: WorkspaceFileInfo,
   catalogStore: CatalogStorePort,
   directory: DirectoryPort,
+  legacyAnchorUri: UriString,
   link: Pick<WorkspaceLinkPort, 'linkPath'>,
 ): Promise<WorkspaceBootstrapResult> => {
   const linkPath = link.linkPath;
   const rawFolders = host.readFolders();
   const stored = catalogStore.load();
-  const lanes = collectLaneCandidates(rawFolders, stored, linkPath);
+  const lanes = collectLaneCandidates(rawFolders, stored, linkPath, legacyAnchorUri);
 
   if (stored === undefined && lanes.length === 0) {
     return { kind: 'disabled', reason: 'missing-lane-source' };

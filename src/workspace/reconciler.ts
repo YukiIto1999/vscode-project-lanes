@@ -31,6 +31,8 @@ export interface ReconcileInput {
   readonly activeLabel: string;
   /** symlink folder の URI */
   readonly linkUri: WorkspaceFolder['uri'];
+  /** 旧アンカーの絶対 URI */
+  readonly legacyAnchorUri: WorkspaceFolder['uri'];
 }
 
 /** workspace folder 再整合の結果 */
@@ -66,6 +68,8 @@ export interface WorkspaceFolderReconcilerDeps {
   readonly linkPath: AbsolutePath;
   /** active link URI */
   readonly linkUri: WorkspaceFolder['uri'];
+  /** 旧アンカーの絶対 URI */
+  readonly legacyAnchorUri: WorkspaceFolder['uri'];
 }
 
 /** workspace folder 再整合 */
@@ -83,13 +87,15 @@ export interface WorkspaceFolderReconciler {
  * @returns 応答アクション
  */
 export const reconcileUserChange = (input: ReconcileInput): ReconciliationAction => {
-  const { rawFolders, currentLanes, linkPath, activeLabel, linkUri } = input;
+  const { rawFolders, currentLanes, linkPath, activeLabel, linkUri, legacyAnchorUri } = input;
 
   if (rawFolders.length === 1 && isLinkFolder(rawFolders[0]!, linkPath)) {
     return { kind: 'noop' };
   }
 
-  const nonSystem = rawFolders.filter((f) => !isLinkFolder(f, linkPath) && !isLegacyAnchor(f));
+  const nonSystem = rawFolders.filter(
+    (folder) => !isLinkFolder(folder, linkPath) && !isLegacyAnchor(folder, legacyAnchorUri),
+  );
   const known = new Set(currentLanes.map((f) => f.uri));
   const additions = nonSystem.filter((f) => !known.has(f.uri));
 
@@ -117,6 +123,7 @@ export const createWorkspaceFolderReconciler = (
     finalizePendingOperations,
     linkPath,
     linkUri,
+    legacyAnchorUri,
   } = deps;
 
   return {
@@ -130,6 +137,7 @@ export const createWorkspaceFolderReconciler = (
           linkPath,
           activeLabel: getActiveLabel(),
           linkUri,
+          legacyAnchorUri,
         });
         if (action.kind === 'noop') return { kind: 'noop' };
 
