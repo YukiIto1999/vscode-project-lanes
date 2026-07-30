@@ -12,6 +12,7 @@ import type {
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
+import type { LaneRootAvailability } from './model';
 import { ActiveLaneReconciliationError, createLaneService } from './service';
 
 const workspaceKey = 'workspace:test' as WorkspaceKey;
@@ -60,6 +61,7 @@ const createHarness = ({
   saveSelection = async () => {},
   rekeyTerminal = () => {},
   rekeyEditor = () => {},
+  inspectRoot = () => 'available',
 }: {
   readonly initial?: readonly WorkspaceFolder[];
   readonly saveCatalog?: CatalogStorePort['save'];
@@ -80,6 +82,7 @@ const createHarness = ({
   readonly saveSelection?: LaneSelectionStorePort['save'];
   readonly rekeyTerminal?: (oldId: LaneId, newId: LaneId) => void;
   readonly rekeyEditor?: LaneSessionStore['rekey'];
+  readonly inspectRoot?: (path: AbsolutePath) => LaneRootAvailability;
 } = {}) => {
   const store: CatalogStorePort = {
     load: () => initial,
@@ -152,6 +155,9 @@ const createHarness = ({
     clearLink();
     currentLinkTarget = undefined;
   });
+  const rootAvailability = {
+    inspect: vi.fn((path: AbsolutePath) => inspectRoot(path)),
+  };
   const service = createLaneService({
     getCatalog: () => registry.snapshot(),
     workspaceKey,
@@ -170,6 +176,7 @@ const createHarness = ({
     terminalRekey: { rekeyLane: terminalRekey },
     editorStore,
     operationQueue,
+    rootAvailability,
   });
 
   return {
@@ -180,6 +187,7 @@ const createHarness = ({
     linkRead,
     linkSwap,
     linkClear,
+    rootAvailability,
     terminalClose,
     terminalRekey,
     editorRekey,
@@ -256,6 +264,91 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('web');
     expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
     expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'web');
+  });
+
+  it('active root が missing なら catalog 先頭の available lane へ退避する', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/api' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'web');
+    expect(h.rootAvailability.inspect.mock.calls.map(([path]) => path)).toEqual([
+      '/repo/web',
+      '/repo/api',
+    ]);
+  });
+
+  it('利用可能な lane が無ければ link、active、selection cache を消す', async () => {
+    const h = createHarness({
+      inspectRoot: () => 'inaccessible',
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'inactive',
+      cache: 'saved',
+    });
+
+    expect(h.linkClear).toHaveBeenCalledOnce();
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, undefined);
+    expect(h.viewRebind).not.toHaveBeenCalled();
+  });
+
+  it('inactive の cache 保存失敗は link と active を消した pending result にする', async () => {
+    const failure = new Error('selection clear failed');
+    let saveCount = 0;
+    const h = createHarness({
+      inspectRoot: () => 'missing',
+      saveSelection: async () => {
+        saveCount += 1;
+        if (saveCount === 1) throw failure;
+      },
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'inactive',
+      cache: 'pending',
+      error: failure,
+    });
+    expect(h.currentLinkTarget()).toBeUndefined();
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'inactive',
+      cache: 'saved',
+    });
+    expect(h.selectionSave).toHaveBeenCalledTimes(2);
+  });
+
+  it('inactive の link clear 失敗は active と cache を維持して伝播する', async () => {
+    let availability: LaneRootAvailability = 'available';
+    const clearFailure = new Error('clear failed');
+    const h = createHarness({
+      inspectRoot: () => availability,
+      clearLink: () => {
+        throw clearFailure;
+      },
+    });
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    availability = 'missing';
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'link-clear-failed',
+      cause: clearFailure,
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.selectionSave).not.toHaveBeenCalled();
   });
 
   it('queue 待機後の最新 catalog、link target、selection cache を読む', async () => {
@@ -462,7 +555,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.selectionSave).toHaveBeenCalledTimes(2);
   });
 
-  it('catalog が空なら active を未確定にする以外の副作用を起こさない', async () => {
+  it('catalog が空でも pending を確定して link、active、selection cache を消す', async () => {
     let saveCount = 0;
     const h = createHarness({
       saveSelection: async () => {
@@ -480,14 +573,17 @@ describe('createLaneService active lane reconciliation', () => {
     h.linkClear.mockClear();
     h.viewRebind.mockClear();
 
-    await expect(h.service.reconcileActiveLane()).resolves.toEqual({ kind: 'empty' });
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'empty',
+      cache: 'saved',
+    });
 
     expect(h.service.snapshot().activeLaneId).toBeUndefined();
-    expect(h.selectionLoad).not.toHaveBeenCalled();
-    expect(h.selectionSave).not.toHaveBeenCalled();
-    expect(h.linkRead).not.toHaveBeenCalled();
+    expect(h.selectionLoad).toHaveBeenCalledOnce();
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, undefined);
+    expect(h.linkRead).toHaveBeenCalledOnce();
     expect(h.linkSwap).not.toHaveBeenCalled();
-    expect(h.linkClear).not.toHaveBeenCalled();
+    expect(h.linkClear).toHaveBeenCalledOnce();
     expect(h.viewRebind).not.toHaveBeenCalled();
   });
 

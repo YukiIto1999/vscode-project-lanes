@@ -1,6 +1,6 @@
 import type { AbsolutePath, LaneId } from '../foundation/model';
 import { planActiveLinkSwap } from '../lane/active-link';
-import type { Lane, LaneCatalog } from '../lane/model';
+import type { Lane, LaneCatalog, LaneRootAvailability } from '../lane/model';
 import type { ActiveLinkSwapPlan } from './model';
 
 /** アクティブレーン再整合の入力 */
@@ -13,6 +13,8 @@ export interface ActiveLaneReconciliationInput {
   readonly currentLinkTarget: AbsolutePath | undefined;
   /** 永続化済み選択レーン識別子 */
   readonly cachedLaneId: LaneId | undefined;
+  /** 評価時点のレーン別 root 利用可否 */
+  readonly availabilityByLaneId: ReadonlyMap<LaneId, LaneRootAvailability>;
 }
 
 /** アクティブレーン再整合の純粋計画 */
@@ -20,6 +22,10 @@ export type ActiveLaneReconciliationPlan =
   | {
       /** カタログが空で操作不要 */
       readonly kind: 'empty';
+    }
+  | {
+      /** カタログ内の全レーンが利用不能 */
+      readonly kind: 'inactive';
     }
   | {
       /** レーン活性化 */
@@ -33,22 +39,31 @@ export type ActiveLaneReconciliationPlan =
     };
 
 /**
- * catalog 内の symlink 参照先、catalog 内の選択 cache、catalog 先頭の順で再整合する
+ * symlink 参照先が利用不能なら catalog 内の先頭の available lane へ退避する
+ * link 未作成または catalog 外の場合だけ、available な選択 cache を補助に再整合する
  * @param input - 再整合入力
  * @returns 副作用の実行計画
  */
 export const planActiveLaneReconciliation = (
   input: ActiveLaneReconciliationInput,
 ): ActiveLaneReconciliationPlan => {
-  const { catalog, linkPath, currentLinkTarget, cachedLaneId } = input;
-  const [firstLane] = catalog.lanes;
-  if (!firstLane) return { kind: 'empty' };
+  const { catalog, linkPath, currentLinkTarget, cachedLaneId, availabilityByLaneId } = input;
+  if (catalog.lanes.length === 0) return { kind: 'empty' };
+  const isAvailable = (lane: Lane): boolean => availabilityByLaneId.get(lane.id) === 'available';
+  const firstAvailable = catalog.lanes.find(isAvailable);
+  if (!firstAvailable) return { kind: 'inactive' };
 
   const linkedLane = currentLinkTarget
     ? catalog.lanes.find((lane) => lane.rootPath === currentLinkTarget)
     : undefined;
-  const cachedLane = cachedLaneId ? catalog.byId.get(cachedLaneId) : undefined;
-  const lane = linkedLane ?? cachedLane ?? firstLane;
+  const cachedCandidate = cachedLaneId ? catalog.byId.get(cachedLaneId) : undefined;
+  const cachedLane = cachedCandidate && isAvailable(cachedCandidate) ? cachedCandidate : undefined;
+  const lane =
+    linkedLane && isAvailable(linkedLane)
+      ? linkedLane
+      : linkedLane
+        ? firstAvailable
+        : (cachedLane ?? firstAvailable);
 
   return {
     kind: 'activate',

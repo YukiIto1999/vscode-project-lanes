@@ -1,6 +1,6 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { OperationQueue } from '../foundation/operation-queue';
-import type { WorkspaceLinkPort } from '../workspace/ports';
+import type { LaneRootAvailabilityPort, WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
 import { planActiveLaneReconciliation } from '../workspace/active-lane-reconciliation';
 import { createLaneFocusTransaction } from './focus-transaction';
@@ -42,13 +42,24 @@ export interface LaneServiceDeps {
   readonly editorStore: LaneSessionStore;
   /** runtime 共通の非同期操作 queue */
   readonly operationQueue: OperationQueue;
+  /** レーンルート利用可否の検査 */
+  readonly rootAvailability: LaneRootAvailabilityPort;
 }
 
 /** アクティブレーン再整合の結果 */
 export type ActiveLaneReconciliationResult =
   | {
-      /** 空 catalog */
-      readonly kind: 'empty';
+      /** active lane を持たない状態 */
+      readonly kind: 'empty' | 'inactive';
+      /** selection cache を消去済み */
+      readonly cache: 'saved';
+    }
+  | {
+      /** active lane を持たない状態 */
+      readonly kind: 'empty' | 'inactive';
+      /** selection cache の消去は次回再試行が必要 */
+      readonly cache: 'pending';
+      readonly error: unknown;
     }
   | {
       /** レーンを確定し cache も整合済み */
@@ -64,6 +75,7 @@ export type ActiveLaneReconciliationResult =
 
 /** active lane 再整合の commit 前失敗理由 */
 export type ActiveLaneReconciliationFailureReason =
+  | 'link-clear-failed'
   | 'link-swap-failed'
   | 'workspace-folder-mutation-rejected'
   | 'rollback-failed';
@@ -153,6 +165,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     terminalRekey,
     editorStore,
     operationQueue,
+    rootAvailability,
   } = deps;
   let activeLaneId: LaneId | undefined;
   let pendingRename: PendingRenameFinalization | undefined;
@@ -212,29 +225,35 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
   const reconcileActiveLane = (): Promise<ActiveLaneReconciliationResult> =>
     operationQueue.enqueue(async () => {
-      if (getCatalog().lanes.length === 0) {
-        activeLaneId = undefined;
-        return { kind: 'empty' };
-      }
-
       await finalizePendingOperations();
 
       const catalog = getCatalog();
-      if (catalog.lanes.length === 0) {
-        activeLaneId = undefined;
-        return { kind: 'empty' };
-      }
-
       const currentLinkTarget = link.readTarget();
+      const cachedLaneId = selectionStore.load(workspaceKey);
       const plan = planActiveLaneReconciliation({
         catalog,
         linkPath: link.linkPath,
         currentLinkTarget,
-        cachedLaneId: selectionStore.load(workspaceKey),
+        cachedLaneId,
+        availabilityByLaneId: new Map(
+          catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
+        ),
       });
-      if (plan.kind === 'empty') {
+      if (plan.kind === 'empty' || plan.kind === 'inactive') {
+        try {
+          link.clear();
+        } catch (error) {
+          throw new ActiveLaneReconciliationError('link-clear-failed', error);
+        }
         activeLaneId = undefined;
-        return { kind: 'empty' };
+        if (cachedLaneId !== undefined) {
+          try {
+            await selectionStore.save(workspaceKey, undefined);
+          } catch (error) {
+            return { kind: plan.kind, cache: 'pending', error };
+          }
+        }
+        return { kind: plan.kind, cache: 'saved' };
       }
 
       let swapped = false;

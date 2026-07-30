@@ -72,7 +72,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
 
         try {
           const activeResult = await reconcileActiveLane();
-          if (activeResult.kind === 'active' && activeResult.cache === 'pending') {
+          if (activeResult.cache === 'pending') {
             await reportPendingCache(activeResult.error);
           }
         } catch (error) {
