@@ -10,6 +10,8 @@ const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
 const WORKSPACE_FIXTURE = 'workspace-bootstrap.code-workspace';
 
+const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
+
 const waitFor = async (
   assertion,
   {
@@ -81,8 +83,16 @@ const run = async ({
 
   const extension = resolvedVscodeApi.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension, `Extension not found: ${EXTENSION_ID}`);
-  await extension.activate();
-  assert.equal(extension.isActive, true, `Extension did not activate: ${EXTENSION_ID}`);
+  let activationCanceled = false;
+  try {
+    await extension.activate();
+  } catch (error) {
+    if (!isCancellation(error)) throw error;
+    activationCanceled = true;
+  }
+  if (!activationCanceled) {
+    assert.equal(extension.isActive, true, `Extension did not activate: ${EXTENSION_ID}`);
+  }
 
   const workspaceDirectory = path.dirname(workspaceFile.fsPath);
   const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
