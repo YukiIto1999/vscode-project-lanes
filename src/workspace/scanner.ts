@@ -1,7 +1,7 @@
-import * as nodePath from 'node:path';
-import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
+import type { AbsolutePath } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import { isCanonicalLaneId } from '../lane/model';
+import { classifyWorkspaceFolder, deriveWorkspaceAnchor, type WorkspaceAnchor } from './anchor';
 import type {
   CatalogEntry,
   WorkspaceBootstrapResult,
@@ -13,42 +13,20 @@ import type {
   DirectoryPort,
   LaneIdFactoryPort,
   WorkspaceHostPort,
-  WorkspaceLinkPort,
 } from './ports';
-
-const ANCHOR_DIR_NAME = '.lanes-root' as const;
-
-/**
- * symlink folder の判定
- * @param folder - 判定対象フォルダ
- * @param linkPath - symlink 絶対パス
- * @returns symlink folder なら true
- */
-export const isLinkFolder = (folder: WorkspaceFolder, linkPath: AbsolutePath): boolean =>
-  uriToAbsolutePath(folder.uri) === linkPath;
-
-/**
- * 旧アンカーフォルダの判定
- * @param folder - 判定対象フォルダ
- * @param legacyAnchorUri - 旧アンカーの絶対 URI
- * @returns 旧アンカーなら true
- */
-export const isLegacyAnchor = (folder: WorkspaceFolder, legacyAnchorUri: UriString): boolean =>
-  uriToAbsolutePath(folder.uri) === uriToAbsolutePath(legacyAnchorUri);
 
 /**
  * レーン候補の純粋抽出
  * @param rawFolders - workspaceFolders の現状
  * @param stored - 永続化されたカタログ
- * @param linkPath - symlink 絶対パス
- * @param legacyAnchorUri - 旧アンカーの絶対 URI
+ * @param anchor - 現 workspace の新旧 anchor
+ * @param laneIdFactory - 新規レーン識別子採番
  * @returns レーン候補列
  */
 export const collectLaneCandidates = (
   rawFolders: readonly WorkspaceFolder[],
   stored: readonly CatalogEntry[] | undefined,
-  linkPath: AbsolutePath,
-  legacyAnchorUri: UriString,
+  anchor: WorkspaceAnchor,
   laneIdFactory: LaneIdFactoryPort,
 ): readonly CatalogEntry[] => {
   const storedRoots = new Set<AbsolutePath>();
@@ -61,11 +39,9 @@ export const collectLaneCandidates = (
   }
   for (const folder of rawFolders) uriToAbsolutePath(folder.uri);
 
-  const real = rawFolders.filter(
-    (folder) => !isLinkFolder(folder, linkPath) && !isLegacyAnchor(folder, legacyAnchorUri),
-  );
+  const real = rawFolders.filter((folder) => classifyWorkspaceFolder(folder, anchor) === 'lane');
   const canonicalStored = (stored ?? []).filter(
-    (folder) => !isLegacyAnchor(folder, legacyAnchorUri),
+    (folder) => classifyWorkspaceFolder(folder, anchor) === 'lane',
   );
   const known = new Set(canonicalStored.map((entry) => uriToAbsolutePath(entry.uri)));
   const usedIds = new Set(canonicalStored.map((entry) => entry.id));
@@ -112,8 +88,6 @@ export const collapseFoldersToLink = (
  * @param fileInfo - 確定済みワークスペースファイル情報
  * @param catalogStore - カタログ永続化ポート
  * @param directory - ディレクトリ操作ポート
- * @param legacyAnchorUri - 旧アンカーの絶対 URI
- * @param link - symlink の所在
  * @param laneIdFactory - 新規レーン識別子採番
  * @returns ブートストラップ結果
  */
@@ -122,14 +96,12 @@ export const bootstrapWorkspace = async (
   fileInfo: WorkspaceFileInfo,
   catalogStore: CatalogStorePort,
   directory: DirectoryPort,
-  legacyAnchorUri: UriString,
-  link: Pick<WorkspaceLinkPort, 'linkPath'>,
   laneIdFactory: LaneIdFactoryPort,
 ): Promise<WorkspaceBootstrapResult> => {
-  const linkPath = link.linkPath;
+  const anchor = deriveWorkspaceAnchor(fileInfo);
   const rawFolders = host.readFolders();
   const stored = catalogStore.load();
-  const lanes = collectLaneCandidates(rawFolders, stored, linkPath, legacyAnchorUri, laneIdFactory);
+  const lanes = collectLaneCandidates(rawFolders, stored, anchor, laneIdFactory);
 
   if (stored === undefined && lanes.length === 0) {
     return { kind: 'disabled', reason: 'missing-lane-source' };
@@ -137,11 +109,15 @@ export const bootstrapWorkspace = async (
 
   await catalogStore.save(lanes);
 
-  const anchorDir = nodePath.join(fileInfo.directoryPath, ANCHOR_DIR_NAME) as AbsolutePath;
-  if (!directory.ensureDirectory(anchorDir)) {
+  if (
+    !directory.ensureDirectory(anchor.rootDirectoryPath) ||
+    !directory.ensureDirectory(anchor.namespaceDirectoryPath)
+  ) {
     return { kind: 'disabled', reason: 'missing-anchor' };
   }
 
-  const key = `workspace:${fileInfo.uri}` as WorkspaceKey;
-  return { kind: 'ready', context: { key, canonicalLanes: lanes } };
+  return {
+    kind: 'ready',
+    context: { key: anchor.workspaceKey, canonicalLanes: lanes },
+  };
 };

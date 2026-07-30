@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { createWorkspaceLinkAdapter } from '../adapters/linux/symlink';
+import {
+  createLegacyWorkspaceLinkReader,
+  createWorkspaceLinkAdapter,
+} from '../adapters/linux/symlink';
 import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createRipgrepSearchAdapter } from '../adapters/search/ripgrep';
 import { createConfigAdapter } from '../adapters/vscode/config';
@@ -41,6 +43,11 @@ import { createLaneSearchService } from '../search/service';
 import type { SessionIdPort } from '../terminal/ports';
 import { createTerminalService } from '../terminal/service';
 import { projectUi } from '../ui/projections';
+import {
+  classifyWorkspaceFolder,
+  deriveWorkspaceAnchor,
+  type WorkspaceAnchor,
+} from '../workspace/anchor';
 import { inspectWorkspace } from '../workspace/inspection';
 import type {
   WorkspaceContext,
@@ -107,8 +114,9 @@ type ManagedCommandHandlers = Readonly<Record<ManagedCommandId, ManagedCommandHa
 
 interface WorkspaceResources {
   readonly fileInfo: WorkspaceFileInfo;
+  readonly anchor: WorkspaceAnchor;
   readonly link: WorkspaceLinkPort;
-  readonly legacyAnchorUri: UriString;
+  readonly legacyLink: Pick<WorkspaceLinkPort, 'readTarget'>;
 }
 
 interface ManagedRuntime {
@@ -218,7 +226,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     config,
     toUri,
   } = deps;
-  const { fileInfo, link } = resources;
+  const { anchor, fileInfo, link } = resources;
   const disposables: Disposable[] = [];
   const track = <T extends Disposable>(disposable: T): T => {
     disposables.push(disposable);
@@ -273,6 +281,13 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       workspaceKey: workspaceContext.key,
       editor,
       link,
+      readLegacyLinkTarget: () => {
+        const hasLegacyWorkspaceFolder = workspaceHost.readFolders().some((folder) => {
+          const role = classifyWorkspaceFolder(folder, anchor);
+          return role === 'legacy-active-link' || role === 'legacy-anchor';
+        });
+        return hasLegacyWorkspaceFolder ? resources.legacyLink.readTarget() : undefined;
+      },
       terminal: {
         revealLane: async (lane) => {
           if (isLaneAvailable(lane)) await terminalService.revealLane(lane);
@@ -338,9 +353,8 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       },
       absorb: (additions) => registry.absorb(additions).then(() => undefined),
       finalizePendingOperations: () => laneService.finalizePendingOperations(),
-      linkPath: link.linkPath,
+      anchor,
       linkUri: toUri(link.linkPath),
-      legacyAnchorUri: resources.legacyAnchorUri,
     });
     const runtimeReconciler = createRuntimeReconciler({
       reconcileWorkspaceFolders: () => workspaceFolderReconciler.reconcileWorkspaceFolders(),
@@ -486,12 +500,12 @@ export const bootstrapRuntime = async (
   const readResources = (): WorkspaceResources | undefined => {
     const fileInfo = workspaceFile.read();
     if (!fileInfo) return undefined;
-    const legacyAnchorPath = nodePath.join(fileInfo.directoryPath, '.lanes-root') as AbsolutePath;
-    const linkPath = nodePath.join(legacyAnchorPath, 'active') as AbsolutePath;
+    const anchor = deriveWorkspaceAnchor(fileInfo);
     return {
       fileInfo,
-      link: createWorkspaceLinkAdapter(linkPath),
-      legacyAnchorUri: toUri(legacyAnchorPath),
+      anchor,
+      link: createWorkspaceLinkAdapter(anchor),
+      legacyLink: createLegacyWorkspaceLinkReader(anchor),
     };
   };
 
@@ -502,7 +516,6 @@ export const bootstrapRuntime = async (
       workspaceFile,
       workspaceHost,
       catalogStore,
-      link: resources.link,
     }).kind;
   };
 
@@ -518,8 +531,6 @@ export const bootstrapRuntime = async (
         resources.fileInfo,
         catalogStore,
         directory,
-        resources.legacyAnchorUri,
-        resources.link,
         laneIdFactory,
       );
       if (result.kind === 'disabled') return result;

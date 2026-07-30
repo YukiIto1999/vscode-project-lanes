@@ -1,21 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import type { AbsolutePath, UriString } from '../foundation/model';
 import { createOperationQueue } from '../foundation/operation-queue';
-import type { WorkspaceFolder } from './model';
+import type { WorkspaceFileInfo, WorkspaceFolder } from './model';
 import type { WorkspaceHostPort } from './ports';
+import { deriveWorkspaceAnchor } from './anchor';
 import { createWorkspaceFolderReconciler, reconcileUserChange } from './reconciler';
 
-const linkPath = '/ws/.lanes-root/active' as AbsolutePath;
-const linkUri = `file://${linkPath}` as UriString;
-const legacyAnchorUri = 'file:///ws/.lanes-root' as UriString;
 const toUri = (p: string) => `file://${p}` as UriString;
 const mkFolder = (name: string, path: string): WorkspaceFolder => ({ name, uri: toUri(path) });
+const fileInfo: WorkspaceFileInfo = {
+  uri: toUri('/ws/workspace.code-workspace'),
+  directoryPath: '/ws' as AbsolutePath,
+};
+const anchor = deriveWorkspaceAnchor(fileInfo);
+const linkUri = toUri(anchor.activeLinkPath);
 
 const baseInput = {
-  linkPath,
+  anchor,
   activeLabel: 'web',
   linkUri,
-  legacyAnchorUri,
 };
 
 describe('reconcileUserChange', () => {
@@ -56,6 +59,7 @@ describe('reconcileUserChange', () => {
       ...baseInput,
       rawFolders: [
         mkFolder('renamed-anchor', '/ws/.lanes-root'),
+        mkFolder('legacy-active', anchor.legacyActiveLinkPath),
         { name: 'web', uri: linkUri },
         mkFolder('new', '/p/new'),
       ],
@@ -119,9 +123,8 @@ describe('createWorkspaceFolderReconciler', () => {
         await gate.promise;
         events.push('finalize:end');
       },
-      linkPath,
+      anchor,
       linkUri,
-      legacyAnchorUri,
     });
 
     const pending = reconciler.reconcileWorkspaceFolders();
@@ -159,9 +162,8 @@ describe('createWorkspaceFolderReconciler', () => {
         await saveGate.promise;
       },
       finalizePendingOperations: async () => undefined,
-      linkPath,
+      anchor,
       linkUri,
-      legacyAnchorUri,
     });
 
     const pending = reconciler.reconcileWorkspaceFolders();
@@ -194,9 +196,8 @@ describe('createWorkspaceFolderReconciler', () => {
         currentLanes = [...currentLanes, ...additions];
       },
       finalizePendingOperations: async () => undefined,
-      linkPath,
+      anchor,
       linkUri,
-      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).resolves.toEqual({ kind: 'rejected' });
@@ -219,9 +220,8 @@ describe('createWorkspaceFolderReconciler', () => {
         currentLanes = [...currentLanes, ...additions];
       },
       finalizePendingOperations: async () => undefined,
-      linkPath,
+      anchor,
       linkUri,
-      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).rejects.toBe(failure);
@@ -249,9 +249,8 @@ describe('createWorkspaceFolderReconciler', () => {
         currentLanes = [...currentLanes, ...additions];
       },
       finalizePendingOperations: async () => undefined,
-      linkPath,
+      anchor,
       linkUri,
-      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).resolves.toEqual({ kind: 'rejected' });
@@ -278,9 +277,8 @@ describe('createWorkspaceFolderReconciler', () => {
       getActiveLabel: () => 'web',
       absorb: async () => undefined,
       finalizePendingOperations: async () => undefined,
-      linkPath,
+      anchor,
       linkUri,
-      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).rejects.toBe(failure);

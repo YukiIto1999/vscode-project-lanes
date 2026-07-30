@@ -21,6 +21,10 @@ const {
   runScenario,
 } = require('./runner.cjs');
 const { resolveScenarios, scenarios } = require('./scenarios.cjs');
+const { deriveWorkspaceAnchor } = require('./workspace-anchor.cjs');
+
+const activeLinkForPath = (workspaceFilePath) =>
+  deriveWorkspaceAnchor({ fsPath: workspaceFilePath }).activeLinkPath;
 
 const workspaceBootstrapScenario = {
   name: 'workspace-bootstrap',
@@ -33,6 +37,22 @@ const workspaceBootstrapScenario = {
   ),
   suitePath: path.join(__dirname, 'suite', 'workspace-bootstrap.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'restart' }],
+};
+const workspaceAnchorIsolationScenario = {
+  name: 'workspace-anchor-isolation',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'workspace-anchor-isolation'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'workspace-anchor-isolation',
+    'alpha.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'workspace-anchor-isolation.cjs'),
+  launches: [
+    { phase: 'alpha-initialize', workspaceFixtureName: 'alpha.code-workspace' },
+    { phase: 'beta-switch', workspaceFixtureName: 'beta.code-workspace' },
+    { phase: 'alpha-reopen', workspaceFixtureName: 'alpha.code-workspace' },
+  ],
 };
 const workspaceManualInitializationScenario = {
   name: 'workspace-manual-initialization',
@@ -257,12 +277,75 @@ test('each registered scenario binds its fixture and launch phases to its dedica
       suitePath: path.join(__dirname, 'suite', 'empty-workspace.cjs'),
     },
     workspaceBootstrapScenario,
+    workspaceAnchorIsolationScenario,
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
     legacyAnchorClassificationScenario,
   ]);
+});
+
+test('the isolated beta switch tolerates VS Code canceling the command after applying it', async () => {
+  const { run } = require('./suite/workspace-anchor-isolation.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-anchor-isolation/workspace';
+  const alphaWorkspacePath = path.join(workspaceDirectory, 'alpha.code-workspace');
+  const betaWorkspacePath = path.join(workspaceDirectory, 'beta.code-workspace');
+  const alphaLink = activeLinkForPath(alphaWorkspacePath);
+  const betaLink = activeLinkForPath(betaWorkspacePath);
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const linkTargets = new Map([
+    [alphaLink, laneA],
+    [betaLink, laneA],
+  ]);
+  const messages = [];
+  const workspace = {
+    workspaceFile: { fsPath: betaWorkspacePath },
+    workspaceFolders: [{ uri: { fsPath: betaLink }, name: 'lane-a' }],
+  };
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'beta-switch' }),
+    },
+    vscodeApi: {
+      Uri: {
+        file: (fsPath) => ({ fsPath }),
+      },
+      workspace,
+      extensions: {
+        getExtension() {
+          return { async activate() {} };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          assert.equal(command, 'projectLanes.switchLane');
+          assert.equal(laneId, 'lane-b');
+          linkTargets.set(betaLink, laneB);
+          workspace.workspaceFolders = [{ uri: { fsPath: betaLink }, name: 'lane-b' }];
+          throw new Error('Canceled');
+        },
+      },
+    },
+    fileSystem: {
+      lstatSync(target) {
+        assert.equal(linkTargets.has(target), true);
+        return { isSymbolicLink: () => true };
+      },
+      realpathSync(target) {
+        return linkTargets.get(target);
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.equal(linkTargets.get(alphaLink), laneA);
+  assert.equal(linkTargets.get(betaLink), laneB);
+  assert.deepEqual(messages, ['E2E PASS: beta switch left alpha anchor unchanged']);
 });
 
 test('lane switch search fixture exposes a selectable file only in lane-b', () => {
@@ -293,7 +376,9 @@ test('the active-lane reconciliation suite rejects an unknown phase', async () =
 test('the prepare phase leaves a stale cache behind a lane-b link', async () => {
   const { run } = require('./suite/active-lane-reconciliation.cjs');
   const workspaceDirectory = '/tmp/project-lanes-active-reconciliation/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'active-lane-reconciliation.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const messages = [];
@@ -337,7 +422,9 @@ test('the prepare phase leaves a stale cache behind a lane-b link', async () => 
 test('the reload phase reconciles the link, absorbs lane-c, and removes the link for restart', async () => {
   const { run } = require('./suite/active-lane-reconciliation.cjs');
   const workspaceDirectory = '/tmp/project-lanes-active-reload/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'active-lane-reconciliation.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const laneC = path.join(workspaceDirectory, 'lane-c');
@@ -429,7 +516,9 @@ test('the reload phase reconciles the link, absorbs lane-c, and removes the link
 test('the restore phase verifies the missing link was recreated from the lane-c cache', async () => {
   const { run } = require('./suite/active-lane-reconciliation.cjs');
   const workspaceDirectory = '/tmp/project-lanes-active-restore/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'active-lane-reconciliation.code-workspace'),
+  );
   const laneC = path.join(workspaceDirectory, 'lane-c');
   const messages = [];
 
@@ -480,7 +569,9 @@ test('the missing-lane recovery suite rejects an unknown phase', async () => {
 test('the prepare-missing-active phase leaves a broken lane-a symlink after moving its directory', async () => {
   const { run } = require('./suite/missing-lane-recovery.cjs');
   const workspaceDirectory = '/tmp/project-lanes-missing-prepare/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
   const laneB = path.join(workspaceDirectory, 'lane-b');
@@ -547,7 +638,9 @@ test('the prepare-missing-active phase leaves a broken lane-a symlink after movi
 test('the locate-and-reconcile phase drives the no-argument public command through the lane picker and switches both lanes', async () => {
   const { run } = require('./suite/missing-lane-recovery.cjs');
   const workspaceDirectory = '/tmp/project-lanes-missing-locate/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
   const laneB = path.join(workspaceDirectory, 'lane-b');
@@ -628,7 +721,9 @@ test('the locate-and-reconcile phase drives the no-argument public command throu
 test('the restart-and-switch-recovered phase switches to the persisted relocated lane', async () => {
   const { run } = require('./suite/missing-lane-recovery.cjs');
   const workspaceDirectory = '/tmp/project-lanes-missing-restore/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+  );
   const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const commands = [];
@@ -798,13 +893,14 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   const extensionsDir = '/tmp/installed/upgrade/extensions';
   const workspaceDirectory = '/tmp/installed/upgrade/workspace';
   const workspaceFile = path.join(workspaceDirectory, 'workspace-bootstrap.code-workspace');
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const anchor = deriveWorkspaceAnchor({ fsPath: workspaceFile });
+  const namespacedLink = anchor.activeLinkPath;
+  const legacyLink = anchor.legacyActiveLinkPath;
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const commands = [];
   const recreatedTargets = [];
-  let activeTarget;
-  let linkPresent = false;
+  const linkTargets = new Map();
   let version = '0.1.13';
   let activated = false;
   const workspace = {
@@ -826,13 +922,10 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
           },
           async activate() {
             activated = true;
-            if (version === '0.1.14' && !linkPresent) {
-              activeTarget = laneB;
-              linkPresent = true;
-              recreatedTargets.push(activeTarget);
-              workspace.workspaceFolders = [
-                { name: path.basename(activeTarget), uri: { fsPath: activeLink } },
-              ];
+            if (version === '0.1.14' && !linkTargets.has(namespacedLink)) {
+              linkTargets.set(namespacedLink, laneB);
+              recreatedTargets.push(laneB);
+              workspace.workspaceFolders = [{ name: 'lane-b', uri: { fsPath: namespacedLink } }];
             }
           },
         };
@@ -841,13 +934,13 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     commands: {
       async executeCommand(command, argument) {
         commands.push([command, argument]);
+        const activeLink = version === '0.1.13' ? legacyLink : namespacedLink;
         if (command === 'projectLanes.initializeWorkspace') {
-          activeTarget = laneA;
-          linkPresent = true;
+          linkTargets.set(activeLink, laneA);
         } else if (command === 'projectLanes.switchLane') {
-          activeTarget = argument === 'lane-a' ? laneA : laneB;
-          linkPresent = true;
+          linkTargets.set(activeLink, argument === 'lane-a' ? laneA : laneB);
         }
+        const activeTarget = linkTargets.get(activeLink);
         if (activeTarget) {
           workspace.workspaceFolders = [
             { name: path.basename(activeTarget), uri: { fsPath: activeLink } },
@@ -869,19 +962,9 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     },
     fileSystem: {
       realpathSync(value) {
-        assert.equal(value, activeLink);
-        if (!linkPresent) throw new Error('active link is missing');
-        return activeTarget;
-      },
-      unlinkSync(value) {
-        assert.equal(value, activeLink);
-        assert.equal(linkPresent, true);
-        linkPresent = false;
-        activeTarget = undefined;
-      },
-      existsSync(value) {
-        assert.equal(value, activeLink);
-        return linkPresent;
+        const target = linkTargets.get(value);
+        if (!target) throw new Error(`active link is missing: ${value}`);
+        return target;
       },
     },
     delay: async () => {},
@@ -896,7 +979,8 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     ...dependencies,
     environment: environmentFor('baseline-create-v1'),
   });
-  assert.equal(linkPresent, false);
+  assert.equal(linkTargets.get(legacyLink), laneB);
+  assert.equal(linkTargets.has(namespacedLink), false);
   assert.deepEqual(recreatedTargets, []);
 
   version = '0.1.14';
@@ -905,7 +989,8 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     ...dependencies,
     environment: environmentFor('candidate-migrate'),
   });
-  assert.equal(linkPresent, false);
+  assert.equal(linkTargets.get(legacyLink), laneB);
+  assert.equal(linkTargets.get(namespacedLink), laneB);
   assert.deepEqual(recreatedTargets, [laneB]);
 
   activated = false;
@@ -922,9 +1007,9 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     ['projectLanes.switchLane', 'lane-a'],
     ['projectLanes.switchLane', 'lane-b'],
   ]);
-  assert.deepEqual(recreatedTargets, [laneB, laneB]);
-  assert.equal(linkPresent, true);
-  assert.equal(activeTarget, laneB);
+  assert.deepEqual(recreatedTargets, [laneB]);
+  assert.equal(linkTargets.get(legacyLink), laneB);
+  assert.equal(linkTargets.get(namespacedLink), laneB);
 });
 
 test('the installed VSIX suite rejects a candidate whose manifest version is unexpected', async () => {
@@ -1801,6 +1886,37 @@ test('normal launches reuse their workspace and profile while passing only a pha
     path.join(temporaryRoot, 'extensions'),
   ]);
   assert.equal(Object.hasOwn(environment, 'PROJECT_LANES_E2E_PAYLOAD'), false);
+});
+
+test('a launch can select another workspace file copied from the same fixture root', async () => {
+  const temporaryRoot = '/tmp/project-lanes-e2e-anchor-isolation-test';
+  const receivedWorkspacePaths = [];
+  const scenario = {
+    name: 'workspace-anchor-isolation',
+    fixtureRoot: '/fixtures/workspace-anchor-isolation',
+    workspaceFixture: '/fixtures/workspace-anchor-isolation/alpha.code-workspace',
+    suitePath: '/suite/workspace-anchor-isolation.cjs',
+    launches: [
+      { phase: 'alpha-initialize', workspaceFixtureName: 'alpha.code-workspace' },
+      { phase: 'beta-switch', workspaceFixtureName: 'beta.code-workspace' },
+      { phase: 'alpha-reopen', workspaceFixtureName: 'alpha.code-workspace' },
+    ],
+  };
+
+  await runScenario(
+    scenario,
+    createScenarioDependencies(temporaryRoot, {
+      launchVSCode: async (options) => {
+        receivedWorkspacePaths.push(options.args[0]);
+      },
+    }),
+  );
+
+  assert.deepEqual(receivedWorkspacePaths, [
+    path.join(temporaryRoot, 'workspace', 'alpha.code-workspace'),
+    path.join(temporaryRoot, 'workspace', 'beta.code-workspace'),
+    path.join(temporaryRoot, 'workspace', 'alpha.code-workspace'),
+  ]);
 });
 
 test('multiple launches wait for the previous VS Code process before starting the next', async () => {
@@ -3195,7 +3311,9 @@ test('the workspace-bootstrap suite rejects an unknown phase', async () => {
 test('the workspace-bootstrap phase accepts host cancellation after reaching lane-a', async () => {
   const { run } = require('./suite/workspace-bootstrap.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-bootstrap/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'workspace-bootstrap.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   let activated = false;
   const messages = [];
@@ -3242,7 +3360,9 @@ test('the workspace-bootstrap phase accepts host cancellation after reaching lan
 test('the legacy-anchor classification suite stops after the classified workspace state is reached', async () => {
   const { run } = require('./suite/legacy-anchor-classification.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-legacy-anchor/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'legacy-anchor-classification.code-workspace'),
+  );
   const realLane = path.join(workspaceDirectory, 'real-lane');
   const commands = [];
   const messages = [];
@@ -3290,7 +3410,9 @@ test('the legacy-anchor classification suite stops after the classified workspac
 test('the workspace-bootstrap restart phase switches using the restored public lane catalog', async () => {
   const { run } = require('./suite/workspace-bootstrap.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-restart/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'workspace-bootstrap.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const commands = [];
@@ -3415,7 +3537,9 @@ test('the initialize phase accepts host cancellation only after reaching the man
     workspaceDirectory,
     'workspace-manual-initialization.code-workspace',
   );
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'workspace-manual-initialization.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const fixtureContent = fs.readFileSync(
     workspaceManualInitializationScenario.workspaceFixture,
@@ -3486,7 +3610,9 @@ test('the initialize phase accepts host cancellation only after reaching the man
 test('the managed-restart phase verifies terminal settings and restored lane switching', async () => {
   const { run } = require('./suite/workspace-manual-initialization.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-manual-restart/workspace';
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'workspace-manual-initialization.code-workspace'),
+  );
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const commands = [];

@@ -174,6 +174,72 @@ describe('planActiveLaneReconciliation', () => {
     });
   });
 
+  it('link 未作成時も valid selection cache を旧 link target より優先する', () => {
+    const result = planActiveLaneReconciliation(
+      makeInput({
+        legacyLinkTarget: '/projects/api' as AbsolutePath,
+        cachedSelection: { kind: 'v2', laneId: 'web' as LaneId },
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'activate',
+      lane: makeLane('web'),
+      linkSwap: {
+        linkPath,
+        from: undefined,
+        to: '/projects/web',
+      },
+    });
+  });
+
+  it('link 未作成で cache が無効なら catalog 内の旧 link target を移行候補にする', () => {
+    const result = planActiveLaneReconciliation(
+      makeInput({
+        legacyLinkTarget: '/projects/api' as AbsolutePath,
+        cachedSelection: { kind: 'v2', laneId: 'unknown' as LaneId },
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'activate',
+      lane: makeLane('api'),
+      linkSwap: {
+        linkPath,
+        from: undefined,
+        to: '/projects/api',
+      },
+      selectionUpdate: { laneId: 'api' },
+    });
+  });
+
+  it('新 link が存在すれば旧 link target を移行候補にしない', () => {
+    const result = planActiveLaneReconciliation(
+      makeInput({
+        currentLinkTarget: '/projects/unknown' as AbsolutePath,
+        legacyLinkTarget: '/projects/api' as AbsolutePath,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'activate',
+      lane: makeLane('web'),
+    });
+  });
+
+  it('catalog 外の旧 link target は移行候補にしない', () => {
+    const result = planActiveLaneReconciliation(
+      makeInput({
+        legacyLinkTarget: '/projects/unknown' as AbsolutePath,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      kind: 'activate',
+      lane: makeLane('web'),
+    });
+  });
+
   it('link target と selection cache が無効なら catalog 先頭を選ぶ', () => {
     const result = planActiveLaneReconciliation(
       makeInput({

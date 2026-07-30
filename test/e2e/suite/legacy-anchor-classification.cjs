@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { deriveWorkspaceAnchor } = require('../workspace-anchor.cjs');
 
 const EXTENSION_ID = 'yukiito1999.project-lanes';
 const POLL_INTERVAL_MS = 100;
@@ -62,7 +63,7 @@ const run = async ({
   }
 
   const workspaceDirectory = path.dirname(workspaceFile.fsPath);
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = deriveWorkspaceAnchor(workspaceFile).activeLinkPath;
   const realLane = path.join(workspaceDirectory, 'real-lane');
 
   await waitFor(

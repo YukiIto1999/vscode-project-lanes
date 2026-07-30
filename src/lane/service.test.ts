@@ -59,6 +59,7 @@ const createHarness = ({
   rebindActiveFolder = async () => true,
   linkTarget = '/repo/web' as AbsolutePath,
   readLinkTarget,
+  readLegacyLinkTarget = () => undefined,
   swapLink = () => {},
   clearLink = () => {},
   warnDirtyEditors = () => {},
@@ -82,6 +83,7 @@ const createHarness = ({
   readonly rebindActiveFolder?: LaneViewRebindPort['rebindActiveFolder'];
   readonly linkTarget?: AbsolutePath | null;
   readonly readLinkTarget?: () => AbsolutePath | undefined;
+  readonly readLegacyLinkTarget?: () => AbsolutePath | undefined;
   readonly swapLink?: (target: AbsolutePath) => void;
   readonly clearLink?: () => void;
   readonly warnDirtyEditors?: LanePromptPort['warnDirtyEditors'];
@@ -163,6 +165,7 @@ const createHarness = ({
   };
   let currentLinkTarget: AbsolutePath | undefined = linkTarget ?? undefined;
   const linkRead = vi.fn(() => (readLinkTarget ? readLinkTarget() : currentLinkTarget));
+  const legacyLinkRead = vi.fn(readLegacyLinkTarget);
   const linkSwap = vi.fn((target: AbsolutePath) => {
     swapLink(target);
     currentLinkTarget = target;
@@ -185,6 +188,7 @@ const createHarness = ({
         swap: linkSwap,
         clear: linkClear,
       },
+      readLegacyLinkTarget: legacyLinkRead,
       terminal,
       viewRebind: { rebindActiveFolder: viewRebind },
       selectionStore,
@@ -204,6 +208,7 @@ const createHarness = ({
     selectionLoad,
     selectionSave,
     linkRead,
+    legacyLinkRead,
     linkSwap,
     linkClear,
     rootAvailability,
@@ -272,6 +277,69 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.linkSwap).toHaveBeenCalledOnce();
     expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
     expect(h.selectionSave).not.toHaveBeenCalled();
+  });
+
+  it('new link 未作成で cache が無効なら catalog 内の旧 link target を新 link へ移行する', async () => {
+    const h = createHarness({
+      linkTarget: null,
+      selectionLaneId: 'unknown' as LaneId,
+      readLegacyLinkTarget: () => '/repo/api' as AbsolutePath,
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.legacyLinkRead).toHaveBeenCalledOnce();
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
+    expect(h.currentLinkTarget()).toBe('/repo/api');
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+  });
+
+  it('new link 未作成でも valid selection cache を旧 link target より優先する', async () => {
+    const h = createHarness({
+      linkTarget: null,
+      selectionLaneId: 'web' as LaneId,
+      readLegacyLinkTarget: () => '/repo/api' as AbsolutePath,
+    });
+
+    await h.service.reconcileActiveLane();
+
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+  });
+
+  it('new link が存在すれば旧 link を読まない', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'web' as LaneId,
+      readLegacyLinkTarget: () => '/repo/api' as AbsolutePath,
+    });
+
+    await h.service.reconcileActiveLane();
+
+    expect(h.legacyLinkRead).not.toHaveBeenCalled();
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
+  });
+
+  it('旧 link からの移行後に view mutation が失敗しても旧 link は変更せず new link だけ消す', async () => {
+    const legacyTarget = '/repo/api' as AbsolutePath;
+    const h = createHarness({
+      linkTarget: null,
+      selectionLaneId: 'unknown' as LaneId,
+      readLegacyLinkTarget: () => legacyTarget,
+      rebindActiveFolder: async () => false,
+    });
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+    });
+
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
+    expect(h.linkClear).toHaveBeenCalledOnce();
+    expect(h.currentLinkTarget()).toBeUndefined();
+    expect(h.legacyLinkRead()).toBe(legacyTarget);
   });
 
   it('link target と selection cache が無効なら catalog 先頭を選ぶ', async () => {

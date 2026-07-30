@@ -5,6 +5,7 @@ const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const { createRequire } = require('node:module');
 const path = require('node:path');
+const { deriveWorkspaceAnchor } = require('../workspace-anchor.cjs');
 
 const EXTENSION_ID = 'yukiito1999.project-lanes';
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
@@ -133,7 +134,9 @@ const run = async ({
   assert.ok(workspaceFile, `Workspace file not found: ${UPGRADE_WORKSPACE_FIXTURE}`);
   assert.equal(path.basename(workspaceFile.fsPath), UPGRADE_WORKSPACE_FIXTURE);
   const workspaceDirectory = path.dirname(workspaceFile.fsPath);
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const anchor = deriveWorkspaceAnchor(workspaceFile);
+  const activeLink =
+    phase === 'baseline-create-v1' ? anchor.legacyActiveLinkPath : anchor.activeLinkPath;
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const waitForLane = (expectedTarget) =>
@@ -150,10 +153,6 @@ const run = async ({
     await vscodeApi.commands.executeCommand('projectLanes.switchLane', label);
     await waitForLane(expectedTarget);
   };
-  const removeActiveLink = () => {
-    fileSystem.unlinkSync(activeLink);
-    assert.equal(fileSystem.existsSync(activeLink), false, 'Expected active link to be removed');
-  };
 
   if (phase === 'baseline-create-v1') {
     try {
@@ -163,16 +162,24 @@ const run = async ({
     }
     await waitForLane(laneA);
     await switchTo('lane-b', laneB);
-    removeActiveLink();
     log(`E2E PASS: baseline ${EXTENSION_ID}@${expectedVersion} created v1 state`);
     return;
   }
 
   await waitForLane(laneB);
+  assert.equal(
+    path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
+    laneB,
+    'Candidate changed the legacy active link during migration',
+  );
   await switchTo('lane-a', laneA);
   await switchTo('lane-b', laneB);
-  if (phase === 'candidate-migrate') removeActiveLink();
-  log(`E2E PASS: ${phase} preserved migration and legacy-label commands`);
+  assert.equal(
+    path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
+    laneB,
+    'Candidate changed the legacy active link after migration',
+  );
+  log(`E2E PASS: ${phase} preserved the legacy link and namespaced workspace state`);
 };
 
 module.exports = { run };

@@ -15,7 +15,9 @@ When running many projects:
 ## Features
 
 Each project becomes a "lane". Switching lanes swaps Explorer, editor tabs, terminals, and Git together.
-The switch is a view change — background terminals keep running because the workspace folder URI stays stable (a `.lanes-root/active` symlink whose target is updated on switch).
+The switch is a view change — background terminals keep running because the workspace folder URI stays stable (a `.lanes-root/<workspace-hash>/active` symlink whose target is updated on switch). The full 64-character SHA-256 hash gives every `.code-workspace` file in the same directory an independent active link.
+
+When upgrading from v0.1.13, Project Lanes can use `.lanes-root/active` as read-only migration input if the current workspace folder and catalog both confirm that legacy state. The legacy link is never changed or removed by the migration.
 
 Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Initialize Workspace`. Set `projectLanes.initializationMode` to `automatic` to initialize new workspaces during extension startup. Already managed workspaces are repaired during startup in either mode.
 
@@ -60,7 +62,7 @@ Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Ini
 - Activity detection requires shell integration via `bash` or `zsh` and OSC 633. Other shells (`fish`, `pwsh`, etc.) skip injection and fall back to `no-agent`
 - Tab restore covers normal file tabs only (not diff views, notebooks, etc.)
 - Terminal sessions don't survive VS Code window reloads
-- Workspace initialization creates `.lanes-root/` next to the `.code-workspace` file; add it to `.gitignore` if you don't want it tracked
+- Workspace initialization creates `.lanes-root/<workspace-hash>/` next to the `.code-workspace` file; add `.lanes-root/` to `.gitignore` if you don't want it tracked
 
 ## License
 
