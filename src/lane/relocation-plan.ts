@@ -1,6 +1,6 @@
 import type { AbsolutePath, UriString } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
-import type { Lane, LaneCatalog, LaneRootAvailability } from './model';
+import type { Lane, LaneCatalog, LaneFocusPlan, LaneRootAvailability } from './model';
 
 /** レーン所在変更計画 */
 export type LaneRelocationPlan =
@@ -15,6 +15,12 @@ export type LaneRelocationPlan =
       readonly kind: 'rejected';
       /** 拒否理由 */
       readonly reason: 'replacement-unavailable' | 'duplicate-root';
+    }
+  | {
+      /** active lane の所在変更を安全に実行できない状態 */
+      readonly kind: 'blocked';
+      /** focus transaction が返した阻害理由 */
+      readonly reason: Extract<LaneFocusPlan, { readonly kind: 'blocked' }>['reason'];
     }
   | {
       /** 所在変更の実行 */
