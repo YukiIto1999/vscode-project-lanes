@@ -1,0 +1,15 @@
+{
+  "folders": [
+    {
+      "path": ".lanes-root",
+      "name": "renamed-anchor",
+    },
+    {
+      "path": "real-lane",
+      "name": ".lanes-root",
+    },
+  ],
+  "settings": {
+    "projectLanes.initializationMode": "automatic",
+  },
+}
