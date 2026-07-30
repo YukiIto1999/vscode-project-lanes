@@ -2,6 +2,37 @@ import type { SessionId, TerminalId } from '../foundation/model';
 import type { TerminalCommand, TerminalEffect, TerminalState, TerminalTransition } from './model';
 
 /**
+ * セッションを所属レーンから除外し、空になったレーン記録を削除する
+ * @param state - 更新対象状態
+ * @param sessionId - 除外するセッション識別子
+ * @returns 更新後状態
+ */
+const removeSession = (state: TerminalState, sessionId: SessionId): TerminalState => {
+  const record = state.sessions.get(sessionId);
+  if (!record) return state;
+
+  const sessions = new Map(state.sessions);
+  sessions.delete(sessionId);
+
+  const lanes = new Map(state.lanes);
+  const lane = lanes.get(record.spec.laneId);
+  if (!lane) return { ...state, sessions, lanes };
+
+  const sessionIds = lane.sessionIds.filter((id) => id !== sessionId);
+  if (sessionIds.length === 0) {
+    lanes.delete(record.spec.laneId);
+  } else {
+    lanes.set(record.spec.laneId, {
+      ...lane,
+      sessionIds,
+      lastVisibleSessionId:
+        lane.lastVisibleSessionId === sessionId ? undefined : lane.lastVisibleSessionId,
+    });
+  }
+  return { ...state, sessions, lanes };
+};
+
+/**
  * 空の初期状態の生成
  * @returns 初期状態
  */
@@ -40,7 +71,7 @@ export const reduceTerminal = (
     case 'sessionStarted': {
       const { spec } = command;
       const sessions = new Map(state.sessions);
-      sessions.set(spec.id, { spec, alive: true, terminalId: undefined });
+      sessions.set(spec.id, { spec, terminalId: undefined });
 
       const lanes = new Map(state.lanes);
       const lane = lanes.get(spec.laneId) ?? { sessionIds: [], lastVisibleSessionId: undefined };
@@ -73,34 +104,15 @@ export const reduceTerminal = (
     case 'terminalClosed': {
       const sessionId = findSessionByTerminalId(state, command.terminalId);
       if (!sessionId) return { state, effects: [] };
-      const sessions = new Map(state.sessions);
-      const record = sessions.get(sessionId);
-      if (!record) return { state, effects: [] };
-
-      sessions.delete(sessionId);
-      const lanes = new Map(state.lanes);
-      const lane = lanes.get(record.spec.laneId);
-      if (lane) {
-        lanes.set(record.spec.laneId, {
-          ...lane,
-          sessionIds: lane.sessionIds.filter((id) => id !== sessionId),
-          lastVisibleSessionId:
-            lane.lastVisibleSessionId === sessionId ? undefined : lane.lastVisibleSessionId,
-        });
-      }
 
       return {
-        state: { ...state, sessions, lanes },
+        state: removeSession(state, sessionId),
         effects: [{ kind: 'killSession', sessionId }],
       };
     }
 
     case 'sessionExited': {
-      const sessions = new Map(state.sessions);
-      const record = sessions.get(command.sessionId);
-      if (!record) return { state, effects: [] };
-      sessions.set(command.sessionId, { ...record, alive: false });
-      return { state: { ...state, sessions }, effects: [] };
+      return { state: removeSession(state, command.sessionId), effects: [] };
     }
 
     case 'laneRevealed': {

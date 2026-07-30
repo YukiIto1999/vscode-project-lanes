@@ -325,6 +325,10 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         revealLane: async (lane) => {
           if (isLaneAvailable(lane)) await terminalService.revealLane(lane);
         },
+        refreshLane: async (lane) => {
+          if (isLaneAvailable(lane)) await terminalService.refreshLane(lane);
+        },
+        finalizePendingPresentations: async () => terminalService.finalizePendingPresentations(),
         closeLane: async (laneId) => terminalService.closeLane(laneId),
       },
       viewRebind: createLaneViewRebindAdapter(workspaceHost, toUri(link.linkPath)),
@@ -429,9 +433,11 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
           if (!activeLaneId) return undefined;
           const lane = registry.snapshot().byId.get(activeLaneId);
           if (!lane || !isLaneAvailable(lane)) return undefined;
-          const { sessionId, handle } = terminalService.requestSession(lane);
-          return presentation.presentAsProfile(handle, lane.label, (terminalId) => {
-            terminalService.bindTerminal(sessionId, terminalId);
+          const { sessionId, handle, profileTitle } = terminalService.requestSession(lane);
+          return presentation.presentAsProfile(handle, profileTitle, (terminalId) => {
+            void runAsyncBoundary(async () => {
+              terminalService.bindTerminal(sessionId, terminalId);
+            }, reportAsyncFailure);
           });
         },
       }),
@@ -441,7 +447,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       vscode.window.onDidCloseTerminal((terminal) => {
         const terminalId = presentation.resolveId(terminal);
         if (!terminalId) return;
-        presentation.disposeTerminal(terminalId);
+        presentation.forgetTerminal(terminalId);
         terminalService.handleTerminalClosed(terminalId);
         render();
       }),

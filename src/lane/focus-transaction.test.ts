@@ -155,6 +155,7 @@ const createHarness = ({
       events.push(`terminal:${activeLane.id}`);
       if (failing.has('terminal')) throw errors.terminal;
     },
+    refreshLane: async () => {},
     closeLane: async () => {},
   };
   const availability: LaneRootAvailabilityPort = {

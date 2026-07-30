@@ -251,6 +251,28 @@ describe('managed runtime の共通 operation queue', () => {
     expect(profile).toMatch(/if \(!lane \|\| !isLaneAvailable\(lane\)\) return undefined;/);
   });
 
+  it('TerminalProfile の遅延 bind 失敗を共通失敗境界へ渡す', () => {
+    const profile = managedRuntime.slice(
+      managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
+      managedRuntime.indexOf('vscode.window.onDidCloseTerminal'),
+    );
+
+    expect(profile).toMatch(/runAsyncBoundary/);
+    expect(profile).toMatch(/terminalService\.bindTerminal/);
+    expect(profile).toMatch(/reportAsyncFailure/);
+  });
+
+  it('terminal の pending 表示更新を lane の共通 finalization へ接続する', () => {
+    const laneService = managedRuntime.slice(
+      managedRuntime.indexOf('const laneService = createLaneService'),
+      managedRuntime.indexOf('const initialReconciliation'),
+    );
+
+    expect(laneService).toMatch(
+      /finalizePendingPresentations: async \(\) =>\s*terminalService\.finalizePendingPresentations\(\)/,
+    );
+  });
+
   it('prompt adapter へ runtime の ExtensionMode を渡す', () => {
     expect(managedRuntime).toMatch(
       /createPromptAdapter\(\{\s*extensionMode: extensionContext\.extensionMode,\s*\}\)/,
