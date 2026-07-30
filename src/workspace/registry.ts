@@ -1,4 +1,4 @@
-import type { Disposable } from '../foundation/model';
+import type { Disposable, LaneId, UriString } from '../foundation/model';
 import { type Lane, type LaneCatalog, toLaneId } from '../lane/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import type { WorkspaceFolder } from './model';
@@ -79,6 +79,13 @@ export interface WorkspaceCatalogRegistry {
     beforePublish?: () => void | Promise<void>,
   ) => Promise<boolean>;
   /**
+   * レーンルートの所在変更
+   * @param laneId - 変更対象 LaneId
+   * @param replacementUri - 置換先 URI
+   * @returns 実際に変更が発生すれば true
+   */
+  readonly relocate: (laneId: LaneId, replacementUri: UriString) => Promise<boolean>;
+  /**
    * レーンの除外
    * @param name - LaneId を兼ねる除外対象 name
    * @param beforePublish - 保存後、カタログ公開前に実行する副作用
@@ -156,6 +163,16 @@ export const createCatalogRegistry = (
         if (idx < 0) return false;
         const next = folders.map((f, i) => (i === idx ? { ...f, name: newName } : f));
         await commit(next, beforePublish);
+        return true;
+      }),
+    relocate: (laneId, replacementUri) =>
+      enqueue(async () => {
+        const idx = folders.findIndex((folder) => folder.name === laneId);
+        if (idx < 0 || folders[idx]!.uri === replacementUri) return false;
+        const next = folders.map((folder, i) =>
+          i === idx ? { ...folder, uri: replacementUri } : folder,
+        );
+        await commit(next);
         return true;
       }),
     remove: (name, beforePublish) =>
