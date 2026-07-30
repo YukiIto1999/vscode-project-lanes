@@ -94,6 +94,14 @@ describe('collectLaneCandidates', () => {
     ).toEqual(['web', 'api', 'new']);
   });
 
+  it('stored に誤登録された旧アンカーを除外し、同名の実レーンは残す', () => {
+    const realLane = mkFolder('.lanes-root', '/home/user/projects/.lanes-root');
+    const contaminatedStored = [mkFolder('renamed-anchor', '/home/user/.lanes-root'), realLane];
+    expect(
+      collectLaneCandidates([linkFolder], contaminatedStored, linkPath, legacyAnchorUri),
+    ).toEqual([realLane]);
+  });
+
   it('rawFolders が symlink folder のみなら stored そのまま', () => {
     const raw = [linkFolder];
     expect(collectLaneCandidates(raw, stored, linkPath, legacyAnchorUri)).toEqual(stored);

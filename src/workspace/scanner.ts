@@ -47,9 +47,10 @@ export const collectLaneCandidates = (
     (folder) => !isLinkFolder(folder, linkPath) && !isLegacyAnchor(folder, legacyAnchorUri),
   );
   if (!stored || stored.length === 0) return real;
-  const known = new Set(stored.map((s) => s.uri));
+  const canonicalStored = stored.filter((folder) => !isLegacyAnchor(folder, legacyAnchorUri));
+  const known = new Set(canonicalStored.map((s) => s.uri));
   const additions = real.filter((f) => !known.has(f.uri));
-  return [...stored, ...additions];
+  return [...canonicalStored, ...additions];
 };
 
 /**
