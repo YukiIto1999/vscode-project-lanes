@@ -38,8 +38,6 @@ export interface LaneServiceDeps {
   readonly prompt: LanePromptPort;
   /** カタログ正本の操作 */
   readonly registry: WorkspaceCatalogRegistry;
-  /** ターミナル rekey ポート */
-  readonly terminalRekey: { readonly rekeyLane: (oldId: LaneId, newId: LaneId) => void };
   /** エディタ snapshot ストア */
   readonly editorStore: LaneSessionStore;
   /** runtime 共通の非同期操作 queue */
@@ -145,12 +143,7 @@ export interface LaneService {
 }
 
 interface PendingRenameFinalization {
-  readonly fromId: LaneId;
   readonly target: Lane;
-  readonly terminalRekeyed: boolean;
-  readonly editorRekeyed: boolean;
-  readonly activeCommitted: boolean;
-  readonly selectionSaved: boolean;
   readonly viewRebound: boolean;
 }
 
@@ -170,7 +163,6 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     selectionStore,
     prompt,
     registry,
-    terminalRekey,
     editorStore,
     operationQueue,
     rootAvailability,
@@ -197,26 +189,6 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     let current = pendingRename;
     if (!current) return;
 
-    if (!current.terminalRekeyed) {
-      terminalRekey.rekeyLane(current.fromId, current.target.id);
-      current = { ...current, terminalRekeyed: true };
-      pendingRename = current;
-    }
-    if (!current.editorRekeyed) {
-      editorStore.rekey(current.fromId, current.target.id);
-      current = { ...current, editorRekeyed: true };
-      pendingRename = current;
-    }
-    if (!current.activeCommitted) {
-      activeLaneId = current.target.id;
-      current = { ...current, activeCommitted: true };
-      pendingRename = current;
-    }
-    if (!current.selectionSaved) {
-      await selectionStore.save(workspaceKey, current.target.id);
-      current = { ...current, selectionSaved: true };
-      pendingRename = current;
-    }
     if (!current.viewRebound) {
       const rebound = await viewRebind.rebindActiveFolder(current.target);
       if (!rebound) throw new Error('workspace-folder-mutation-rejected');
@@ -239,7 +211,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
     const catalog = getCatalog();
     const currentLinkTarget = link.readTarget();
-    const cachedLaneId = selectionStore.load(workspaceKey);
+    const cachedSelection = selectionStore.load(workspaceKey);
     const availabilityByLaneId = new Map(
       catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
     );
@@ -250,7 +222,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       catalog,
       linkPath: link.linkPath,
       currentLinkTarget,
-      cachedLaneId,
+      cachedSelection,
       ...(preferredLaneId ? { preferredLaneId } : {}),
       availabilityByLaneId,
     });
@@ -258,7 +230,9 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     const preserveLinkedLane = async (): Promise<ActiveLaneReconciliationResult> => {
       if (!linkedLane) throw new Error('linked-lane-missing');
       activeLaneId = linkedLane.id;
-      if (cachedLaneId === linkedLane.id) return { kind: 'active', cache: 'saved' };
+      if (cachedSelection?.kind === 'v2' && cachedSelection.laneId === linkedLane.id) {
+        return { kind: 'active', cache: 'saved' };
+      }
       try {
         await selectionStore.save(workspaceKey, linkedLane.id);
         return { kind: 'active', cache: 'saved' };
@@ -307,7 +281,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         throw new ActiveLaneReconciliationError('link-clear-failed', error);
       }
       activeLaneId = undefined;
-      if (cachedLaneId !== undefined) {
+      if (cachedSelection !== undefined) {
         try {
           await selectionStore.save(workspaceKey, undefined);
         } catch (error) {
@@ -477,8 +451,6 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       const validate = (raw: string): string | undefined => {
         const plan = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
         if (plan.kind === 'invalid' && plan.reason === 'empty') return 'Enter a name.';
-        if (plan.kind === 'invalid' && plan.reason === 'duplicate')
-          return 'A lane with this name already exists.';
         return undefined;
       };
 
@@ -491,21 +463,24 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         if (plan.kind !== 'rename') return;
 
         const renameWasActive = activeLaneId === plan.from.id;
-        pendingRename = {
-          fromId: plan.from.id,
-          target: { ...plan.from, id: plan.to.id, label: plan.to.label },
-          terminalRekeyed: false,
-          editorRekeyed: false,
-          activeCommitted: !renameWasActive,
-          selectionSaved: !renameWasActive,
-          viewRebound: !renameWasActive,
-        };
+        pendingRename = renameWasActive
+          ? {
+              target: { ...plan.from, label: plan.to.label },
+              viewRebound: false,
+            }
+          : undefined;
         let catalogCommitted = false;
         try {
-          const renamed = await registry.rename(plan.from.label, plan.to.label, async () => {
-            catalogCommitted = true;
-            await finalizePendingRename();
-          });
+          const renamed = await registry.rename(
+            plan.from.id,
+            plan.to.label,
+            renameWasActive
+              ? async () => {
+                  catalogCommitted = true;
+                  await finalizePendingRename();
+                }
+              : undefined,
+          );
           if (!renamed) pendingRename = undefined;
         } catch (error) {
           if (!catalogCommitted) pendingRename = undefined;
@@ -532,7 +507,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
           return;
         }
 
-        await registry.remove(plan.target.label, async () => {
+        await registry.remove(plan.target.id, async () => {
           try {
             await terminal.closeLane(plan.target.id);
           } finally {

@@ -34,18 +34,80 @@ const makeInput = (
     catalog,
     linkPath,
     currentLinkTarget: undefined,
-    cachedLaneId: undefined,
+    cachedSelection: undefined,
     availabilityByLaneId: makeAvailability(catalog),
     ...overrides,
   };
 };
 
 describe('planActiveLaneReconciliation', () => {
+  it('legacy label より active link を優先し、同じ label でも v2 ID を保存する', () => {
+    const web = { ...makeLane('web-id', '/projects/web'), label: 'same' };
+    const api = { ...makeLane('api-id', '/projects/api'), label: 'same' };
+    const catalog = makeCatalog([web, api]);
+
+    expect(
+      planActiveLaneReconciliation(
+        makeInput({
+          catalog,
+          currentLinkTarget: api.rootPath,
+          cachedSelection: { kind: 'legacy', label: 'same' },
+          availabilityByLaneId: makeAvailability(catalog),
+        }),
+      ),
+    ).toEqual({
+      kind: 'activate',
+      lane: api,
+      linkSwap: undefined,
+      selectionUpdate: { laneId: api.id },
+    });
+  });
+
+  it('link が無ければ一意な legacy label を選び v2 ID へ更新する', () => {
+    const web = { ...makeLane('web-id', '/projects/web'), label: 'frontend' };
+    const api = { ...makeLane('api-id', '/projects/api'), label: 'backend' };
+    const catalog = makeCatalog([web, api]);
+
+    expect(
+      planActiveLaneReconciliation(
+        makeInput({
+          catalog,
+          cachedSelection: { kind: 'legacy', label: 'backend' },
+          availabilityByLaneId: makeAvailability(catalog),
+        }),
+      ),
+    ).toMatchObject({
+      kind: 'activate',
+      lane: api,
+      selectionUpdate: { laneId: api.id },
+    });
+  });
+
+  it('legacy label が重複していれば label から推測せず先頭へ fallback する', () => {
+    const first = { ...makeLane('first-id', '/projects/first'), label: 'same' };
+    const second = { ...makeLane('second-id', '/projects/second'), label: 'same' };
+    const catalog = makeCatalog([first, second]);
+
+    expect(
+      planActiveLaneReconciliation(
+        makeInput({
+          catalog,
+          cachedSelection: { kind: 'legacy', label: 'same' },
+          availabilityByLaneId: makeAvailability(catalog),
+        }),
+      ),
+    ).toMatchObject({
+      kind: 'activate',
+      lane: first,
+      selectionUpdate: { laneId: first.id },
+    });
+  });
+
   it('valid link target は stale selection cache より優先する', () => {
     const result = planActiveLaneReconciliation(
       makeInput({
         currentLinkTarget: '/projects/api' as AbsolutePath,
-        cachedLaneId: 'web' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'web' as LaneId },
       }),
     );
 
@@ -61,7 +123,7 @@ describe('planActiveLaneReconciliation', () => {
     const result = planActiveLaneReconciliation(
       makeInput({
         currentLinkTarget: '/projects/api' as AbsolutePath,
-        cachedLaneId: 'api' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'api' as LaneId },
       }),
     );
 
@@ -77,7 +139,7 @@ describe('planActiveLaneReconciliation', () => {
     const result = planActiveLaneReconciliation(
       makeInput({
         currentLinkTarget: '/projects/unknown' as AbsolutePath,
-        cachedLaneId: 'api' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'api' as LaneId },
       }),
     );
 
@@ -96,7 +158,7 @@ describe('planActiveLaneReconciliation', () => {
   it('link 未作成なら valid selection cache を選ぶ', () => {
     const result = planActiveLaneReconciliation(
       makeInput({
-        cachedLaneId: 'api' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'api' as LaneId },
       }),
     );
 
@@ -116,7 +178,7 @@ describe('planActiveLaneReconciliation', () => {
     const result = planActiveLaneReconciliation(
       makeInput({
         currentLinkTarget: '/projects/unknown' as AbsolutePath,
-        cachedLaneId: 'unknown' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'unknown' as LaneId },
       }),
     );
 
@@ -152,7 +214,7 @@ describe('planActiveLaneReconciliation', () => {
       makeInput({
         catalog: makeCatalog([]),
         currentLinkTarget: '/projects/unknown' as AbsolutePath,
-        cachedLaneId: 'unknown' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'unknown' as LaneId },
       }),
     );
 
@@ -166,7 +228,7 @@ describe('planActiveLaneReconciliation', () => {
       makeInput({
         catalog,
         currentLinkTarget: missing.rootPath,
-        cachedLaneId: missing.id,
+        cachedSelection: { kind: 'v2', laneId: missing.id },
         availabilityByLaneId: makeAvailability(catalog, new Map([[missing.id, 'missing']])),
       }),
     );
@@ -190,7 +252,7 @@ describe('planActiveLaneReconciliation', () => {
       makeInput({
         catalog,
         currentLinkTarget: missing.rootPath,
-        cachedLaneId: 'api' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'api' as LaneId },
         availabilityByLaneId: makeAvailability(catalog, new Map([[missing.id, 'missing']])),
       }),
     );
@@ -209,7 +271,7 @@ describe('planActiveLaneReconciliation', () => {
       makeInput({
         catalog,
         currentLinkTarget: missing.rootPath,
-        cachedLaneId: 'api' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'api' as LaneId },
         availabilityByLaneId: makeAvailability(catalog, new Map([[missing.id, 'missing']])),
       }),
     );
@@ -227,7 +289,7 @@ describe('planActiveLaneReconciliation', () => {
     const result = planActiveLaneReconciliation(
       makeInput({
         catalog,
-        cachedLaneId: inaccessible.id,
+        cachedSelection: { kind: 'v2', laneId: inaccessible.id },
         availabilityByLaneId: makeAvailability(
           catalog,
           new Map([[inaccessible.id, 'inaccessible']]),
@@ -249,7 +311,7 @@ describe('planActiveLaneReconciliation', () => {
         catalog,
         currentLinkTarget: '/projects/web' as AbsolutePath,
         preferredLaneId: 'web' as LaneId,
-        cachedLaneId: 'api' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'api' as LaneId },
         availabilityByLaneId: makeAvailability(catalog),
       }),
     );
@@ -272,7 +334,7 @@ describe('planActiveLaneReconciliation', () => {
       makeInput({
         catalog,
         currentLinkTarget: '/projects/web' as AbsolutePath,
-        cachedLaneId: 'web' as LaneId,
+        cachedSelection: { kind: 'v2', laneId: 'web' as LaneId },
         availabilityByLaneId: new Map([
           ['web' as LaneId, 'missing'],
           ['api' as LaneId, 'inaccessible'],

@@ -37,6 +37,26 @@ const project = (
   );
 
 describe('projectUi', () => {
+  it('同名 label の tree item だけ rootPath を description に表示する', () => {
+    const lanes = [
+      { ...makeCatalog(['web']).lanes[0]!, label: 'same' },
+      { ...makeCatalog(['api']).lanes[0]!, label: 'same' },
+      makeCatalog(['docs']).lanes[0]!,
+    ];
+    const lane: LaneServiceSnapshot = {
+      catalog: { lanes, byId: new Map(lanes.map((entry) => [entry.id, entry])) },
+      activeLaneId: lanes[0]!.id,
+    };
+
+    const result = project(lane, [], false);
+
+    expect(result.treeItems.map((item) => item.description)).toEqual([
+      '/projects/web',
+      '/projects/api',
+      '',
+    ]);
+  });
+
   it('アクティブレーンなしでステータスバー表示', () => {
     const lane: LaneServiceSnapshot = {
       catalog: makeCatalog(['web', 'api']),

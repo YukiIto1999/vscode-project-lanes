@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AbsolutePath, LaneId, UriString, WorkspaceKey } from '../foundation/model';
 import { createOperationQueue, type OperationQueue } from '../foundation/operation-queue';
-import type { WorkspaceFolder } from '../workspace/model';
+import type { CatalogEntry } from '../workspace/model';
 import type { CatalogStorePort } from '../workspace/ports';
 import { createCatalogRegistry } from '../workspace/registry';
 import type {
@@ -17,10 +17,15 @@ import { ActiveLaneReconciliationError, createLaneService } from './service';
 
 const workspaceKey = 'workspace:test' as WorkspaceKey;
 const linkPath = '/repo/.lanes-root/active' as AbsolutePath;
-const toFolder = (name: string): WorkspaceFolder => ({
+const toFolder = (name: string): CatalogEntry => ({
+  id: name as LaneId,
   name,
   uri: `file:///repo/${name}` as UriString,
 });
+const laneIdFactory = () => {
+  let nextId = 0;
+  return { next: () => `generated-${(nextId += 1)}` as LaneId };
+};
 
 const deferred = () => {
   let resolve!: () => void;
@@ -60,14 +65,12 @@ const createHarness = ({
   loadSelection,
   selectionLaneId = 'web' as LaneId,
   saveSelection = async () => {},
-  rekeyTerminal = () => {},
-  rekeyEditor = () => {},
   inspectRoot = () => 'available',
   hasDirtyEditors = () => false,
   captureSnapshot = () => ({ tabs: [] }),
   restoreSnapshot = async () => {},
 }: {
-  readonly initial?: readonly WorkspaceFolder[];
+  readonly initial?: readonly CatalogEntry[];
   readonly saveCatalog?: CatalogStorePort['save'];
   readonly closeLane?: LaneTerminalPort['closeLane'];
   readonly revealLane?: LaneTerminalPort['revealLane'];
@@ -85,8 +88,6 @@ const createHarness = ({
   readonly loadSelection?: LaneSelectionStorePort['load'];
   readonly selectionLaneId?: LaneId | undefined;
   readonly saveSelection?: LaneSelectionStorePort['save'];
-  readonly rekeyTerminal?: (oldId: LaneId, newId: LaneId) => void;
-  readonly rekeyEditor?: LaneSessionStore['rekey'];
   readonly inspectRoot?: (path: AbsolutePath) => LaneRootAvailability;
   readonly hasDirtyEditors?: EditorPort['hasDirtyEditors'];
   readonly captureSnapshot?: EditorPort['captureSnapshot'];
@@ -100,14 +101,15 @@ const createHarness = ({
       persistedFolders = folders;
     },
   };
-  const registry = createCatalogRegistry(initial, store);
-  let currentSelection = selectionLaneId;
+  const registry = createCatalogRegistry(initial, store, laneIdFactory());
+  let currentSelection =
+    selectionLaneId === undefined ? undefined : ({ kind: 'v2', laneId: selectionLaneId } as const);
   const selectionLoad = vi.fn<LaneSelectionStorePort['load']>(
     loadSelection ?? (() => currentSelection),
   );
   const selectionSave = vi.fn<LaneSelectionStorePort['save']>(async (key, laneId) => {
     await saveSelection(key, laneId);
-    currentSelection = laneId;
+    currentSelection = laneId === undefined ? undefined : { kind: 'v2', laneId };
   });
   const selectionStore: LaneSelectionStorePort = {
     load: selectionLoad,
@@ -123,15 +125,12 @@ const createHarness = ({
     revealLane: terminalReveal,
     closeLane: terminalClose,
   };
-  const terminalRekey = vi.fn<(oldId: LaneId, newId: LaneId) => void>(rekeyTerminal);
-  const editorRekey = vi.fn<LaneSessionStore['rekey']>(rekeyEditor);
   const editorClear = vi.fn<LaneSessionStore['clear']>(() => {
     effectEvents.push('clear');
   });
   const editorStore: LaneSessionStore = {
     save: () => {},
     get: () => undefined,
-    rekey: editorRekey,
     clear: editorClear,
   };
   const editorClose = vi.fn<EditorPort['closeAll']>(async () => {});
@@ -191,7 +190,6 @@ const createHarness = ({
       selectionStore,
       prompt,
       registry: serviceRegistry,
-      terminalRekey: { rekeyLane: terminalRekey },
       editorStore,
       operationQueue,
       rootAvailability,
@@ -200,7 +198,8 @@ const createHarness = ({
 
   return {
     service,
-    recreateService: () => createService(createCatalogRegistry(store.load(), store)),
+    recreateService: () =>
+      createService(createCatalogRegistry(store.load() ?? [], store, laneIdFactory())),
     registry,
     selectionLoad,
     selectionSave,
@@ -210,8 +209,6 @@ const createHarness = ({
     rootAvailability,
     terminalReveal,
     terminalClose,
-    terminalRekey,
-    editorRekey,
     editorClear,
     effectEvents,
     viewRebind,
@@ -225,7 +222,10 @@ const createHarness = ({
       currentLinkTarget = target;
     },
     setSelection: (laneId: LaneId | undefined) => {
-      currentSelection = laneId;
+      currentSelection = laneId === undefined ? undefined : { kind: 'v2', laneId };
+    },
+    setLegacySelection: (label: string | undefined) => {
+      currentSelection = label === undefined ? undefined : { kind: 'legacy', label };
     },
   };
 };
@@ -668,7 +668,10 @@ describe('createLaneService active lane reconciliation', () => {
     const h = createHarness({
       loadSelection: () => {
         events.push('load');
-        return saveCount >= 2 ? ('api' as LaneId) : ('web' as LaneId);
+        return {
+          kind: 'v2',
+          laneId: (saveCount >= 2 ? 'api' : 'web') as LaneId,
+        };
       },
       saveSelection: async () => {
         saveCount += 1;
@@ -697,39 +700,6 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.selectionSave).toHaveBeenCalledTimes(2);
   });
 
-  it('pending rename finalization を確定してから最新 cache で再整合する', async () => {
-    const events: string[] = [];
-    let saveCount = 0;
-    const h = createHarness({
-      loadSelection: () => {
-        events.push('load');
-        return saveCount >= 2 ? ('frontend' as LaneId) : ('web' as LaneId);
-      },
-      saveSelection: async () => {
-        saveCount += 1;
-        events.push(`save:${saveCount}`);
-        if (saveCount === 1) throw new Error('pending rename save');
-      },
-      readLinkTarget: () => {
-        events.push('link');
-        return '/repo/web' as AbsolutePath;
-      },
-      rebindActiveFolder: async (lane) => {
-        events.push(`view:${lane.id}`);
-        return true;
-      },
-    });
-    await h.service.reconcileActiveLane();
-    events.splice(0);
-    await expect(h.service.renameLane('web' as LaneId)).rejects.toThrow('pending rename save');
-    events.splice(0);
-
-    await h.service.reconcileActiveLane();
-
-    expect(events).toEqual(['save:2', 'view:frontend', 'link', 'load', 'view:frontend']);
-    expect(h.selectionSave).toHaveBeenCalledTimes(2);
-  });
-
   it('失敗した reconciliation の後続 operation を queue が実行する', async () => {
     let viewCount = 0;
     const h = createHarness({
@@ -752,6 +722,39 @@ describe('createLaneService active lane reconciliation', () => {
 });
 
 describe('createLaneService operation queue', () => {
+  it('active rename は LaneId と terminal/editor/selection のキーを変更しない', async () => {
+    const h = createHarness({ promptRename: async () => 'api' });
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    h.viewRebind.mockClear();
+
+    await h.service.renameLane('web' as LaneId);
+
+    expect(h.registry.snapshot().lanes).toEqual([
+      expect.objectContaining({ id: 'web', label: 'api', rootPath: '/repo/web' }),
+      expect.objectContaining({ id: 'api', label: 'api', rootPath: '/repo/api' }),
+    ]);
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.selectionSave).not.toHaveBeenCalled();
+    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web', label: 'api' }));
+  });
+
+  it('rename 後に service を再生成しても同じ LaneId と新 label を復元する', async () => {
+    const h = createHarness();
+    await h.service.reconcileActiveLane();
+    await h.service.renameLane('web' as LaneId);
+
+    const restarted = h.recreateService();
+    await restarted.reconcileActiveLane();
+
+    expect(restarted.snapshot().activeLaneId).toBe('web');
+    expect(restarted.snapshot().catalog.byId.get('web' as LaneId)).toMatchObject({
+      id: 'web',
+      label: 'frontend',
+      rootPath: '/repo/web',
+    });
+  });
+
   it('focus を共通 queue へ投入する', async () => {
     const h = createHarness();
 
@@ -908,7 +911,7 @@ describe('createLaneService interaction boundary', () => {
     const h = createHarness({ operationQueue });
 
     const focusing = h.service.focus('api' as LaneId);
-    await h.registry.remove('api');
+    await h.registry.remove('api' as LaneId);
     gate.resolve();
     await holding;
 
@@ -1005,7 +1008,7 @@ describe('createLaneService interaction boundary', () => {
     });
 
     const relocating = h.service.relocateLane('api' as LaneId);
-    await h.registry.remove('api');
+    await h.registry.remove('api' as LaneId);
     saveCatalog.mockClear();
     gate.resolve();
     await holding;
@@ -1076,8 +1079,8 @@ describe('createLaneService relocation', () => {
     });
 
     expect(saveCatalog).toHaveBeenCalledWith([
-      { name: 'web', uri: 'file:///moved/web' },
-      { name: 'api', uri: 'file:///repo/api' },
+      { id: 'web', name: 'web', uri: 'file:///moved/web' },
+      { id: 'api', name: 'api', uri: 'file:///repo/api' },
     ]);
     expect(h.registry.snapshot().byId.get('web' as LaneId)).toMatchObject({
       id: 'web',
@@ -1401,72 +1404,12 @@ describe('createLaneService catalog mutation ordering', () => {
 
     await expect(h.service.renameLane('web' as LaneId)).rejects.toBe(failure);
 
-    expect(h.terminalRekey).not.toHaveBeenCalled();
-    expect(h.editorRekey).not.toHaveBeenCalled();
     expect(h.selectionSave).not.toHaveBeenCalled();
     expect(h.service.snapshot().activeLaneId).toBe('web');
     expect(h.viewRebind).not.toHaveBeenCalled();
   });
 
-  it('rename listener は rekey と active selection 更新後の状態を観測', async () => {
-    const h = createHarness();
-    await h.service.reconcileActiveLane();
-    h.selectionSave.mockClear();
-    h.viewRebind.mockClear();
-    let observed:
-      | {
-          readonly terminalRekeyed: boolean;
-          readonly editorRekeyed: boolean;
-          readonly selectedLane: LaneId | undefined;
-          readonly persistedLane: LaneId | undefined;
-        }
-      | undefined;
-    h.registry.onChange(() => {
-      observed = {
-        terminalRekeyed: h.terminalRekey.mock.calls.length === 1,
-        editorRekeyed: h.editorRekey.mock.calls.length === 1,
-        selectedLane: h.service.snapshot().activeLaneId,
-        persistedLane: h.selectionSave.mock.calls[0]?.[1],
-      };
-    });
-
-    await h.service.renameLane('web' as LaneId);
-
-    expect(observed).toEqual({
-      terminalRekeyed: true,
-      editorRekeyed: true,
-      selectedLane: 'frontend',
-      persistedLane: 'frontend',
-    });
-  });
-
-  it('active rename の selection 保存失敗を次 operation 前に再試行する', async () => {
-    const failure = new Error('selection failed');
-    let saveCount = 0;
-    const h = createHarness({
-      saveSelection: async () => {
-        saveCount += 1;
-        if (saveCount === 1) throw failure;
-      },
-    });
-    await h.service.reconcileActiveLane();
-    h.selectionSave.mockClear();
-    h.viewRebind.mockClear();
-
-    await expect(h.service.renameLane('web' as LaneId)).rejects.toBe(failure);
-
-    expect(h.registry.snapshot().byId.has('frontend' as LaneId)).toBe(true);
-    expect(h.service.snapshot().activeLaneId).toBe('frontend');
-    expect(h.viewRebind).not.toHaveBeenCalled();
-
-    await h.service.finalizePendingOperations();
-
-    expect(h.selectionSave).toHaveBeenCalledTimes(2);
-    expect(h.viewRebind).toHaveBeenCalledOnce();
-    expect(h.viewRebind.mock.calls[0]?.[0].id).toBe('frontend');
-  });
-
-  it('active rename の view mutation 拒否を selection 再保存なしで再試行する', async () => {
+  it('active rename の view mutation 拒否を ID/selection 変更なしで再試行する', async () => {
     let rebindCount = 0;
     const h = createHarness({
       rebindActiveFolder: async () => {
@@ -1482,58 +1425,22 @@ describe('createLaneService catalog mutation ordering', () => {
       'workspace-folder-mutation-rejected',
     );
 
-    expect(h.registry.snapshot().byId.has('frontend' as LaneId)).toBe(true);
-    expect(h.service.snapshot().activeLaneId).toBe('frontend');
-    expect(h.selectionSave).toHaveBeenCalledOnce();
+    expect(h.registry.snapshot().byId.get('web' as LaneId)?.label).toBe('frontend');
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.selectionSave).not.toHaveBeenCalled();
 
     await h.service.finalizePendingOperations();
 
-    expect(h.selectionSave).toHaveBeenCalledOnce();
+    expect(h.selectionSave).not.toHaveBeenCalled();
     expect(h.viewRebind).toHaveBeenCalledTimes(2);
   });
 
-  it('non-active rename の terminal rekey 失敗を同じ段階から再試行する', async () => {
-    const failure = new Error('terminal rekey failed');
-    let rekeyCount = 0;
-    const h = createHarness({
-      rekeyTerminal: () => {
-        rekeyCount += 1;
-        if (rekeyCount === 1) throw failure;
-      },
-    });
+  it('non-active rename は表示名だけを保存し active view に触れない', async () => {
+    const h = createHarness();
 
-    await expect(h.service.renameLane('api' as LaneId)).rejects.toBe(failure);
-    expect(h.registry.snapshot().byId.has('frontend' as LaneId)).toBe(true);
-    expect(h.terminalRekey).toHaveBeenCalledOnce();
-    expect(h.editorRekey).not.toHaveBeenCalled();
+    await h.service.renameLane('api' as LaneId);
 
-    await h.service.finalizePendingOperations();
-
-    expect(h.terminalRekey).toHaveBeenCalledTimes(2);
-    expect(h.editorRekey).toHaveBeenCalledOnce();
-    expect(h.selectionSave).not.toHaveBeenCalled();
-    expect(h.viewRebind).not.toHaveBeenCalled();
-  });
-
-  it('non-active rename の editor rekey 失敗時は terminal rekey を繰り返さない', async () => {
-    const failure = new Error('editor rekey failed');
-    let rekeyCount = 0;
-    const h = createHarness({
-      rekeyEditor: () => {
-        rekeyCount += 1;
-        if (rekeyCount === 1) throw failure;
-      },
-    });
-
-    await expect(h.service.renameLane('api' as LaneId)).rejects.toBe(failure);
-    expect(h.registry.snapshot().byId.has('frontend' as LaneId)).toBe(true);
-    expect(h.terminalRekey).toHaveBeenCalledOnce();
-    expect(h.editorRekey).toHaveBeenCalledOnce();
-
-    await h.service.finalizePendingOperations();
-
-    expect(h.terminalRekey).toHaveBeenCalledOnce();
-    expect(h.editorRekey).toHaveBeenCalledTimes(2);
+    expect(h.registry.snapshot().byId.get('api' as LaneId)?.label).toBe('frontend');
     expect(h.selectionSave).not.toHaveBeenCalled();
     expect(h.viewRebind).not.toHaveBeenCalled();
   });

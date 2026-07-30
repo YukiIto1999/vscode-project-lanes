@@ -8,7 +8,7 @@ import type { AbsolutePath, UriString } from './model';
  * @returns 絶対パス
  */
 export const uriToAbsolutePath = (uri: UriString): AbsolutePath =>
-  fileURLToPath(uri) as AbsolutePath;
+  nodePath.resolve(fileURLToPath(uri)) as AbsolutePath;
 
 /**
  * 絶対パスの親ディレクトリ

@@ -12,6 +12,12 @@ describe('uriToAbsolutePath', () => {
     const uri = 'file:///home/user/my%20project' as UriString;
     expect(uriToAbsolutePath(uri)).toBe('/home/user/my project');
   });
+
+  it('末尾 separator と dot segment を lexical に正規化', () => {
+    expect(uriToAbsolutePath('file:///home/user/projects/../project/' as UriString)).toBe(
+      '/home/user/project',
+    );
+  });
 });
 
 describe('parentDirectory', () => {
