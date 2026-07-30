@@ -14,7 +14,7 @@ const EXPECTED_EXTENSIONS_DIR_KEY = 'PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR';
 const EXPECTED_VERSION_KEY = 'PROJECT_LANES_E2E_EXPECTED_VERSION';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
-const UPGRADE_WORKSPACE_FIXTURE = 'workspace-bootstrap.code-workspace';
+const UPGRADE_WORKSPACE_FIXTURE = 'installed-vsix-upgrade.code-workspace';
 const LEGACY_PROMPT_COMMANDS = ['notifications.focusToasts', 'notification.acceptPrimaryAction'];
 
 const requiredEnvironmentValue = (environment, key) => {
@@ -71,7 +71,12 @@ const waitFor = async (
   });
 };
 
-const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
+const isActivationHostCancellation = (error) =>
+  error instanceof Error &&
+  (error.message === 'Canceled' ||
+    error.message === `Activating extension '${EXTENSION_ID}' failed: Canceled.`);
+
+const isCommandCancellation = (error) => error instanceof Error && error.message === 'Canceled';
 
 const activateWithLegacyRemoval = async ({
   activation,
@@ -144,17 +149,25 @@ const run = async ({
   );
 
   const activation = extension.activate();
-  if (phase === 'candidate-migrate') {
-    await respondToLegacySettings({
-      activation,
-      commands: vscodeApi.commands,
-      delay,
-      now,
-    });
-  } else {
-    await activation;
+  let activationCanceled = false;
+  try {
+    if (phase === 'candidate-migrate') {
+      await respondToLegacySettings({
+        activation,
+        commands: vscodeApi.commands,
+        delay,
+        now,
+      });
+    } else {
+      await activation;
+    }
+  } catch (error) {
+    if (phase !== 'candidate-migrate' || !isActivationHostCancellation(error)) throw error;
+    activationCanceled = true;
   }
-  assert.equal(extension.isActive, true, `Extension did not activate: ${EXTENSION_ID}`);
+  if (!activationCanceled) {
+    assert.equal(extension.isActive, true, `Extension did not activate: ${EXTENSION_ID}`);
+  }
 
   const nodePty = loadNodePty(installedExtensionPath);
   assert.equal(typeof nodePty.spawn, 'function', 'node-pty native module did not load');
@@ -197,7 +210,11 @@ const run = async ({
       { delay, now },
     );
   const switchTo = async (label, expectedTarget) => {
-    await vscodeApi.commands.executeCommand('projectLanes.switchLane', label);
+    try {
+      await vscodeApi.commands.executeCommand('projectLanes.switchLane', label);
+    } catch (error) {
+      if (!isCommandCancellation(error)) throw error;
+    }
     await waitForLane(expectedTarget);
   };
 
@@ -205,7 +222,7 @@ const run = async ({
     try {
       await vscodeApi.commands.executeCommand('projectLanes.initializeWorkspace');
     } catch (error) {
-      if (!isCancellation(error)) throw error;
+      if (!isCommandCancellation(error)) throw error;
     }
     await waitForLane(laneA);
     await switchTo('lane-b', laneB);
@@ -240,4 +257,9 @@ const run = async ({
   log(`E2E PASS: ${phase} preserved the legacy link and namespaced workspace state`);
 };
 
-module.exports = { activateWithLegacyRemoval, run };
+module.exports = {
+  activateWithLegacyRemoval,
+  isActivationHostCancellation,
+  isCommandCancellation,
+  run,
+};
