@@ -1,5 +1,6 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { OperationQueue } from '../foundation/operation-queue';
+import { parentDirectory, uriToAbsolutePath } from '../foundation/path';
 import type { LaneRootAvailabilityPort, WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
 import { planActiveLaneReconciliation } from '../workspace/active-lane-reconciliation';
@@ -13,6 +14,7 @@ import type {
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
+import { planLaneRelocation, type LaneRelocationPlan } from './relocation-plan';
 import { planLaneRemoval } from './removal-plan';
 import { planLaneRename } from './rename-plan';
 
@@ -124,6 +126,12 @@ export interface LaneService {
    */
   readonly renameLane: (laneId?: LaneId) => Promise<void>;
   /**
+   * レーンルートの所在変更
+   * @param laneId - 対象レーン識別子、または未指定で対話選択
+   * @returns 判定結果、または対話取消で undefined
+   */
+  readonly relocateLane: (laneId?: LaneId) => Promise<LaneRelocationPlan | undefined>;
+  /**
    * レーンの削除
    * @param laneId - 対象レーン識別子、または未指定で対話選択
    * @returns 完了の Promise
@@ -224,80 +232,85 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     await finalizePendingRename();
   };
 
-  const reconcileActiveLane = (): Promise<ActiveLaneReconciliationResult> =>
-    operationQueue.enqueue(async () => {
-      await finalizePendingOperations();
+  const executeActiveLaneReconciliation = async (
+    preferredLaneId?: LaneId,
+  ): Promise<ActiveLaneReconciliationResult> => {
+    await finalizePendingOperations();
 
-      const catalog = getCatalog();
-      const currentLinkTarget = link.readTarget();
-      const cachedLaneId = selectionStore.load(workspaceKey);
-      const plan = planActiveLaneReconciliation({
-        catalog,
-        linkPath: link.linkPath,
-        currentLinkTarget,
-        cachedLaneId,
-        availabilityByLaneId: new Map(
-          catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
-        ),
-      });
-      if (plan.kind === 'empty' || plan.kind === 'inactive') {
-        try {
-          link.clear();
-        } catch (error) {
-          throw new ActiveLaneReconciliationError('link-clear-failed', error);
-        }
-        activeLaneId = undefined;
-        if (cachedLaneId !== undefined) {
-          try {
-            await selectionStore.save(workspaceKey, undefined);
-          } catch (error) {
-            return { kind: plan.kind, cache: 'pending', error };
-          }
-        }
-        return { kind: plan.kind, cache: 'saved' };
-      }
-
-      let swapped = false;
-      if (plan.linkSwap) {
-        try {
-          link.swap(plan.linkSwap.to);
-          swapped = true;
-        } catch (error) {
-          throw new ActiveLaneReconciliationError('link-swap-failed', error);
-        }
-      }
-
-      try {
-        const rebound = await viewRebind.rebindActiveFolder(plan.lane);
-        if (!rebound) throw new Error('workspace-folder-mutation-rejected');
-      } catch (error) {
-        if (swapped) {
-          try {
-            if (currentLinkTarget !== undefined) link.swap(currentLinkTarget);
-            else link.clear();
-          } catch (rollbackError) {
-            throw new ActiveLaneReconciliationError(
-              'rollback-failed',
-              new AggregateError(
-                [error, rollbackError],
-                'Active lane reconciliation and link rollback failed.',
-              ),
-            );
-          }
-        }
-        throw new ActiveLaneReconciliationError('workspace-folder-mutation-rejected', error);
-      }
-
-      activeLaneId = plan.lane.id;
-      if (plan.selectionUpdate) {
-        try {
-          await selectionStore.save(workspaceKey, plan.selectionUpdate.laneId);
-        } catch (error) {
-          return { kind: 'active', cache: 'pending', error };
-        }
-      }
-      return { kind: 'active', cache: 'saved' };
+    const catalog = getCatalog();
+    const currentLinkTarget = link.readTarget();
+    const cachedLaneId = selectionStore.load(workspaceKey);
+    const plan = planActiveLaneReconciliation({
+      catalog,
+      linkPath: link.linkPath,
+      currentLinkTarget,
+      cachedLaneId,
+      ...(preferredLaneId ? { preferredLaneId } : {}),
+      availabilityByLaneId: new Map(
+        catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
+      ),
     });
+    if (plan.kind === 'empty' || plan.kind === 'inactive') {
+      try {
+        link.clear();
+      } catch (error) {
+        throw new ActiveLaneReconciliationError('link-clear-failed', error);
+      }
+      activeLaneId = undefined;
+      if (cachedLaneId !== undefined) {
+        try {
+          await selectionStore.save(workspaceKey, undefined);
+        } catch (error) {
+          return { kind: plan.kind, cache: 'pending', error };
+        }
+      }
+      return { kind: plan.kind, cache: 'saved' };
+    }
+
+    let swapped = false;
+    if (plan.linkSwap) {
+      try {
+        link.swap(plan.linkSwap.to);
+        swapped = true;
+      } catch (error) {
+        throw new ActiveLaneReconciliationError('link-swap-failed', error);
+      }
+    }
+
+    try {
+      const rebound = await viewRebind.rebindActiveFolder(plan.lane);
+      if (!rebound) throw new Error('workspace-folder-mutation-rejected');
+    } catch (error) {
+      if (swapped) {
+        try {
+          if (currentLinkTarget !== undefined) link.swap(currentLinkTarget);
+          else link.clear();
+        } catch (rollbackError) {
+          throw new ActiveLaneReconciliationError(
+            'rollback-failed',
+            new AggregateError(
+              [error, rollbackError],
+              'Active lane reconciliation and link rollback failed.',
+            ),
+          );
+        }
+      }
+      throw new ActiveLaneReconciliationError('workspace-folder-mutation-rejected', error);
+    }
+
+    activeLaneId = plan.lane.id;
+    if (plan.selectionUpdate) {
+      try {
+        await selectionStore.save(workspaceKey, plan.selectionUpdate.laneId);
+      } catch (error) {
+        return { kind: 'active', cache: 'pending', error };
+      }
+    }
+    return { kind: 'active', cache: 'saved' };
+  };
+
+  const reconcileActiveLane = (): Promise<ActiveLaneReconciliationResult> =>
+    operationQueue.enqueue(executeActiveLaneReconciliation);
 
   return {
     reconcileActiveLane,
@@ -323,6 +336,41 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
     closeActiveLaneTerminals: async () => {
       if (activeLaneId) await terminal.closeLane(activeLaneId);
+    },
+
+    relocateLane: async (laneId) => {
+      const targetId = laneId ?? (await prompt.pickLane(getCatalog().lanes));
+      if (!targetId) return undefined;
+      const initialTarget = getCatalog().byId.get(targetId);
+      if (!initialTarget) return { kind: 'noop', reason: 'no-target' };
+
+      const replacementUri = await prompt.pickReplacementFolder(
+        parentDirectory(initialTarget.rootPath),
+      );
+      if (!replacementUri) return undefined;
+
+      return operationQueue.enqueue(async () => {
+        await finalizePendingOperations();
+        const catalog = getCatalog();
+        const target = catalog.byId.get(targetId);
+        const replacementPath = uriToAbsolutePath(replacementUri);
+        const plan = planLaneRelocation({
+          target,
+          replacementUri,
+          replacementAvailability: rootAvailability.inspect(replacementPath),
+          catalog,
+        });
+        if (plan.kind !== 'relocate') return plan;
+
+        const relocationWasActive = activeLaneId === targetId;
+        const relocated = await registry.relocate(targetId, plan.replacementUri);
+        if (!relocated) return { kind: 'noop', reason: 'no-target' };
+        const reconciliation = await executeActiveLaneReconciliation(
+          relocationWasActive ? targetId : undefined,
+        );
+        if (reconciliation.cache === 'pending') throw reconciliation.error;
+        return plan;
+      });
     },
 
     renameLane: async (laneId) => {
