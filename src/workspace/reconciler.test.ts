@@ -7,6 +7,7 @@ import { createWorkspaceFolderReconciler, reconcileUserChange } from './reconcil
 
 const linkPath = '/ws/.lanes-root/active' as AbsolutePath;
 const linkUri = `file://${linkPath}` as UriString;
+const legacyAnchorUri = 'file:///ws/.lanes-root' as UriString;
 const toUri = (p: string) => `file://${p}` as UriString;
 const mkFolder = (name: string, path: string): WorkspaceFolder => ({ name, uri: toUri(path) });
 
@@ -14,6 +15,7 @@ const baseInput = {
   linkPath,
   activeLabel: 'web',
   linkUri,
+  legacyAnchorUri,
 };
 
 describe('reconcileUserChange', () => {
@@ -49,11 +51,11 @@ describe('reconcileUserChange', () => {
     expect(result.additions).toEqual([]);
   });
 
-  it('旧アンカーが紛れ込んでも除外される', () => {
+  it('旧アンカー URI が紛れ込んでも表示名にかかわらず除外される', () => {
     const result = reconcileUserChange({
       ...baseInput,
       rawFolders: [
-        mkFolder('.lanes-root', '/ws/.lanes-root'),
+        mkFolder('renamed-anchor', '/ws/.lanes-root'),
         { name: 'web', uri: linkUri },
         mkFolder('new', '/p/new'),
       ],
@@ -62,6 +64,18 @@ describe('reconcileUserChange', () => {
     expect(result.kind).toBe('absorb');
     if (result.kind !== 'absorb') return;
     expect(result.additions.map((f) => f.name)).toEqual(['new']);
+  });
+
+  it('表示名が `.lanes-root` の実レーンを additions に残す', () => {
+    const realLane = mkFolder('.lanes-root', '/p/.lanes-root');
+    const result = reconcileUserChange({
+      ...baseInput,
+      rawFolders: [{ name: 'web', uri: linkUri }, realLane],
+      currentLanes: [],
+    });
+    expect(result.kind).toBe('absorb');
+    if (result.kind !== 'absorb') return;
+    expect(result.additions).toEqual([realLane]);
   });
 });
 
@@ -107,6 +121,7 @@ describe('createWorkspaceFolderReconciler', () => {
       },
       linkPath,
       linkUri,
+      legacyAnchorUri,
     });
 
     const pending = reconciler.reconcileWorkspaceFolders();
@@ -146,6 +161,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       linkPath,
       linkUri,
+      legacyAnchorUri,
     });
 
     const pending = reconciler.reconcileWorkspaceFolders();
@@ -180,6 +196,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       linkPath,
       linkUri,
+      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).resolves.toEqual({ kind: 'rejected' });
@@ -204,6 +221,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       linkPath,
       linkUri,
+      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).rejects.toBe(failure);
@@ -233,6 +251,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       linkPath,
       linkUri,
+      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).resolves.toEqual({ kind: 'rejected' });
@@ -261,6 +280,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       linkPath,
       linkUri,
+      legacyAnchorUri,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).rejects.toBe(failure);

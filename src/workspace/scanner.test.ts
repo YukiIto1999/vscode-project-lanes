@@ -22,6 +22,7 @@ const fileInfo: WorkspaceFileInfo = {
   uri: toUri('/home/user/workspace.code-workspace'),
   directoryPath: '/home/user' as AbsolutePath,
 };
+const legacyAnchorUri = toUri('/home/user/.lanes-root');
 const linkPath = '/home/user/.lanes-root/active' as AbsolutePath;
 const linkFolder = mkFolder('web', linkPath);
 
@@ -36,11 +37,15 @@ const deferred = () => {
 };
 
 describe('isLegacyAnchor', () => {
-  it('`.lanes-root` は true', () => {
-    expect(isLegacyAnchor(mkFolder('.lanes-root', '/home/user/.lanes-root'))).toBe(true);
+  it('旧 anchor URI と一致すれば表示名にかかわらず true', () => {
+    expect(
+      isLegacyAnchor(mkFolder('renamed-anchor', '/home/user/.lanes-root'), legacyAnchorUri),
+    ).toBe(true);
   });
-  it('他の名前は false', () => {
-    expect(isLegacyAnchor(mkFolder('web', '/home/user/web'))).toBe(false);
+  it('表示名が `.lanes-root` でも URI が異なる実レーンは false', () => {
+    expect(
+      isLegacyAnchor(mkFolder('.lanes-root', '/home/user/projects/.lanes-root'), legacyAnchorUri),
+    ).toBe(false);
   });
 });
 
@@ -61,12 +66,19 @@ describe('collectLaneCandidates', () => {
 
   it('stored 無しで rawFolders から新旧アンカー除外', () => {
     const raw = [
-      mkFolder('.lanes-root', '/home/user/.lanes-root'),
+      mkFolder('renamed-anchor', '/home/user/.lanes-root'),
       linkFolder,
       mkFolder('web', '/home/user/web'),
     ];
-    expect(collectLaneCandidates(raw, undefined, linkPath)).toEqual([
+    expect(collectLaneCandidates(raw, undefined, linkPath, legacyAnchorUri)).toEqual([
       mkFolder('web', '/home/user/web'),
+    ]);
+  });
+
+  it('表示名が `.lanes-root` の実レーンを候補に残す', () => {
+    const realLane = mkFolder('.lanes-root', '/home/user/projects/.lanes-root');
+    expect(collectLaneCandidates([realLane], undefined, linkPath, legacyAnchorUri)).toEqual([
+      realLane,
     ]);
   });
 
@@ -77,21 +89,27 @@ describe('collectLaneCandidates', () => {
       mkFolder('api', '/home/user/api'),
       mkFolder('new', '/home/user/new'),
     ];
-    expect(collectLaneCandidates(raw, stored, linkPath).map((f) => f.name)).toEqual([
-      'web',
-      'api',
-      'new',
-    ]);
+    expect(
+      collectLaneCandidates(raw, stored, linkPath, legacyAnchorUri).map((f) => f.name),
+    ).toEqual(['web', 'api', 'new']);
+  });
+
+  it('stored に誤登録された旧アンカーを除外し、同名の実レーンは残す', () => {
+    const realLane = mkFolder('.lanes-root', '/home/user/projects/.lanes-root');
+    const contaminatedStored = [mkFolder('renamed-anchor', '/home/user/.lanes-root'), realLane];
+    expect(
+      collectLaneCandidates([linkFolder], contaminatedStored, linkPath, legacyAnchorUri),
+    ).toEqual([realLane]);
   });
 
   it('rawFolders が symlink folder のみなら stored そのまま', () => {
     const raw = [linkFolder];
-    expect(collectLaneCandidates(raw, stored, linkPath)).toEqual(stored);
+    expect(collectLaneCandidates(raw, stored, linkPath, legacyAnchorUri)).toEqual(stored);
   });
 
   it('stored が空でも rawFolders の通常 folder を候補にする', () => {
     const raw = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
-    expect(collectLaneCandidates(raw, [], linkPath)).toEqual(raw);
+    expect(collectLaneCandidates(raw, [], linkPath, legacyAnchorUri)).toEqual(raw);
   });
 });
 
@@ -180,6 +198,7 @@ describe('bootstrapWorkspace', () => {
       fileInfo,
       store.port,
       okDir,
+      legacyAnchorUri,
       forbiddenLink,
     );
 
@@ -200,6 +219,7 @@ describe('bootstrapWorkspace', () => {
       fileInfo,
       store.port,
       failDir,
+      legacyAnchorUri,
       forbiddenLink,
     );
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-anchor' });
@@ -213,6 +233,7 @@ describe('bootstrapWorkspace', () => {
       fileInfo,
       store.port,
       makeDirectory(true, events),
+      legacyAnchorUri,
       linkOnly,
     );
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-lane-source' });
@@ -228,6 +249,7 @@ describe('bootstrapWorkspace', () => {
       fileInfo,
       store.port,
       makeDirectory(true, events),
+      legacyAnchorUri,
       linkOnly,
     );
     expect(result).toEqual({
@@ -249,6 +271,7 @@ describe('bootstrapWorkspace', () => {
       fileInfo,
       store.port,
       makeDirectory(true, events),
+      legacyAnchorUri,
       linkOnly,
     );
     await Promise.resolve();
@@ -273,6 +296,7 @@ describe('bootstrapWorkspace', () => {
         fileInfo,
         store.port,
         makeDirectory(true, events),
+        legacyAnchorUri,
         linkOnly,
       ),
     ).rejects.toBe(failure);
@@ -290,6 +314,7 @@ describe('bootstrapWorkspace', () => {
       fileInfo,
       store.port,
       makeDirectory(false, events),
+      legacyAnchorUri,
       forbiddenLink,
     );
 
@@ -320,7 +345,14 @@ describe('bootstrapWorkspace', () => {
       },
     };
 
-    const result = await bootstrapWorkspace(host, fileInfo, store.port, okDir, link);
+    const result = await bootstrapWorkspace(
+      host,
+      fileInfo,
+      store.port,
+      okDir,
+      legacyAnchorUri,
+      link,
+    );
 
     expect(result).toMatchObject({ kind: 'ready' });
     expect(mutationCalls).toBe(0);
@@ -348,7 +380,14 @@ describe('bootstrapWorkspace', () => {
     const store = makeCatalogStore([mkFolder('web', '/home/user/web')]);
 
     await expect(
-      bootstrapWorkspace(makeHost([linkFolder]), fileInfo, store.port, okDir, link),
+      bootstrapWorkspace(
+        makeHost([linkFolder]),
+        fileInfo,
+        store.port,
+        okDir,
+        legacyAnchorUri,
+        link,
+      ),
     ).resolves.toMatchObject({ kind: 'ready' });
     expect(reads).toBe(0);
     expect(writes).toEqual([]);
