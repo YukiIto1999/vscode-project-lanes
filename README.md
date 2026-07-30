@@ -38,18 +38,19 @@ In a managed workspace, Project Lanes normally sets the workspace default termin
 
 ## Commands
 
-| Command                                  | Description                                                                         |
-| ---------------------------------------- | ----------------------------------------------------------------------------------- |
-| `Project Lanes: Initialize Workspace`    | Convert the current workspace into a managed Project Lanes workspace                |
-| `Project Lanes: Switch Lane`             | Switch to a lane                                                                    |
-| `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent   |
-| `Project Lanes: Reload Lanes`            | Absorb added workspace folders and reconcile the active link and selection cache    |
-| `Project Lanes: Locate Folder`           | Re-associate a missing or inaccessible lane with a readable folder                  |
-| `Project Lanes: Rename Lane`             | Rename the selected lane's label; duplicate labels are disambiguated by folder path |
-| `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)    |
-| `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                      |
-| `Project Lanes: Find in Lanes`           | Search file contents across all lanes with ripgrep and jump to a match              |
-| `Project Lanes: Go to File in Lanes`     | Fuzzy-find a file across all lanes and open it                                      |
+| Command                                    | Description                                                                         |
+| ------------------------------------------ | ----------------------------------------------------------------------------------- |
+| `Project Lanes: Initialize Workspace`      | Convert the current workspace into a managed Project Lanes workspace                |
+| `Project Lanes: Switch Lane`               | Switch to a lane                                                                    |
+| `Project Lanes: Add Folder to Workspace`   | Add a folder as a new lane via a folder picker rooted at the active lane's parent   |
+| `Project Lanes: Reload Lanes`              | Absorb added workspace folders and reconcile the active link and selection cache    |
+| `Project Lanes: Locate Folder`             | Re-associate a missing or inaccessible lane with a readable folder                  |
+| `Project Lanes: Rename Lane`               | Rename the selected lane's label; duplicate labels are disambiguated by folder path |
+| `Project Lanes: Remove Lane`               | Remove the selected lane from the catalog (the folder on disk is left untouched)    |
+| `Project Lanes: Close Terminals`           | Kill all terminal sessions for the active lane                                      |
+| `Project Lanes: Toggle Activity Indicator` | Show or hide activity indicators without restarting VS Code                         |
+| `Project Lanes: Find in Lanes`             | Search file contents across all lanes with ripgrep and jump to a match              |
+| `Project Lanes: Go to File in Lanes`       | Fuzzy-find a file across all lanes and open it                                      |
 
 ## Settings
 
