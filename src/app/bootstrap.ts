@@ -8,6 +8,7 @@ import { createShellSessionFactory } from '../adapters/pty/node-pty';
 import { createRipgrepSearchAdapter } from '../adapters/search/ripgrep';
 import { createConfigAdapter } from '../adapters/vscode/config';
 import { readLaneTerminalProfile } from '../adapters/vscode/contributions';
+import { createEditorSnapshotStoreAdapter } from '../adapters/vscode/editor-snapshots';
 import { createEditorAdapter } from '../adapters/vscode/editors';
 import { createPromptAdapter } from '../adapters/vscode/prompt';
 import { createSearchUiAdapter } from '../adapters/vscode/search-pick';
@@ -38,7 +39,6 @@ import type { MonotonicClockPort } from '../lane-activity/ports';
 import { createLaneActivityService } from '../lane-activity/service';
 import { toLaneId, type Lane } from '../lane/model';
 import { createLaneService } from '../lane/service';
-import { createLaneSessionStore } from '../lane/session-store';
 import { createLaneSearchService } from '../search/service';
 import type { SessionIdPort } from '../terminal/ports';
 import { createTerminalService } from '../terminal/service';
@@ -245,6 +245,8 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const operationQueue = createOperationQueue();
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
     const editor = createEditorAdapter();
+    const editorStore = createEditorSnapshotStoreAdapter(extensionContext.workspaceState);
+    await editorStore.prune(registry.snapshot().lanes.map((lane) => lane.id));
     const selectionStore = createSelectionStoreAdapter(extensionContext.workspaceState);
     const prompt = createPromptAdapter({
       extensionMode: extensionContext.extensionMode,
@@ -298,7 +300,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       selectionStore,
       prompt,
       registry,
-      editorStore: createLaneSessionStore(),
+      editorStore,
       rootAvailability,
       operationQueue,
     });

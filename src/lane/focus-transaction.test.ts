@@ -4,9 +4,9 @@ import type { LaneRootAvailabilityPort, WorkspaceLinkPort } from '../workspace/p
 import { createLaneFocusTransaction } from './focus-transaction';
 import type { EditorSnapshot, Lane, LaneCatalog } from './model';
 import type {
+  EditorSnapshotStorePort,
   EditorPort,
   LaneSelectionStorePort,
-  LaneSessionStore,
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
@@ -42,6 +42,7 @@ const targetSnapshot: EditorSnapshot = {
 
 type FailureStep =
   | 'close'
+  | 'close-false'
   | 'swap'
   | 'target-rebind-throw'
   | 'target-rebind-false'
@@ -58,12 +59,14 @@ const createHarness = ({
   activeLaneId = sourceLane.id,
   failures = [],
   rootAvailability = 'available',
+  saveSnapshot,
 }: {
   readonly linkTarget?: AbsolutePath;
   readonly dirty?: boolean;
   readonly activeLaneId?: LaneId;
   readonly failures?: readonly FailureStep[];
   readonly rootAvailability?: ReturnType<LaneRootAvailabilityPort['inspect']>;
+  readonly saveSnapshot?: EditorSnapshotStorePort['save'];
 } = {}) => {
   const events: string[] = [];
   const failing = new Set(failures);
@@ -79,11 +82,14 @@ const createHarness = ({
   };
   let currentLinkTarget: AbsolutePath | undefined = linkTarget;
   let currentActiveLaneId: LaneId | undefined = activeLaneId;
+  let currentCatalog = catalog;
+  let currentDirty = dirty;
+  let currentRootAvailability = rootAvailability;
 
   const editor: EditorPort = {
     hasDirtyEditors: () => {
       events.push('validate:dirty');
-      return dirty;
+      return currentDirty;
     },
     captureSnapshot: () => {
       events.push('source:capture');
@@ -92,6 +98,7 @@ const createHarness = ({
     closeAll: async () => {
       events.push('source:close');
       if (failing.has('close')) throw new Error('close failed');
+      return !failing.has('close-false');
     },
     restoreSnapshot: async (snapshot) => {
       const source = snapshot === sourceSnapshot;
@@ -101,13 +108,15 @@ const createHarness = ({
     },
   };
   const snapshots = new Map<LaneId, EditorSnapshot>([[targetLane.id, targetSnapshot]]);
-  const editorStore: LaneSessionStore = {
-    save: (laneId, snapshot) => {
+  const editorStore: EditorSnapshotStorePort = {
+    save: async (laneId, snapshot) => {
       events.push('source:save');
+      await saveSnapshot?.(laneId, snapshot);
       snapshots.set(laneId, snapshot);
     },
     get: (laneId) => snapshots.get(laneId),
-    clear: () => {},
+    remove: async () => {},
+    prune: async () => 'unchanged',
   };
   const link: WorkspaceLinkPort = {
     linkPath: '/repo/.lanes-root/active' as AbsolutePath,
@@ -151,13 +160,13 @@ const createHarness = ({
   const availability: LaneRootAvailabilityPort = {
     inspect: () => {
       events.push('validate:root');
-      return rootAvailability;
+      return currentRootAvailability;
     },
   };
   const transaction = createLaneFocusTransaction({
     getCatalog: () => {
       events.push('validate:catalog');
-      return catalog;
+      return currentCatalog;
     },
     workspaceKey,
     editor,
@@ -180,6 +189,18 @@ const createHarness = ({
     errors,
     currentActiveLaneId: () => currentActiveLaneId,
     currentLinkTarget: () => currentLinkTarget,
+    setCatalog: (next: LaneCatalog) => {
+      currentCatalog = next;
+    },
+    setDirty: (next: boolean) => {
+      currentDirty = next;
+    },
+    setLinkTarget: (next: AbsolutePath | undefined) => {
+      currentLinkTarget = next;
+    },
+    setRootAvailability: (next: ReturnType<LaneRootAvailabilityPort['inspect']>) => {
+      currentRootAvailability = next;
+    },
   };
 };
 
@@ -199,6 +220,10 @@ describe('createLaneFocusTransaction', () => {
       'validate:dirty',
       'source:capture',
       'source:save',
+      'validate:catalog',
+      'validate:link',
+      'validate:root',
+      'validate:dirty',
       'source:close',
       'link:api',
       'view:api',
@@ -268,6 +293,10 @@ describe('createLaneFocusTransaction', () => {
       'validate:dirty',
       'source:capture',
       'source:save',
+      'validate:catalog',
+      'validate:link',
+      'validate:root',
+      'validate:dirty',
       'source:close',
       'link:api',
       'view:api',
@@ -419,6 +448,131 @@ describe('createLaneFocusTransaction', () => {
     expect(h.events).not.toContain('view:api');
     expect(h.currentActiveLaneId()).toBe(sourceLane.id);
     expect(h.currentLinkTarget()).toBe(sourceLane.rootPath);
+  });
+
+  it('source snapshot の永続化完了前は tabs を閉じない', async () => {
+    let resolveSave!: () => void;
+    const savePending = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    const h = createHarness({ saveSnapshot: () => savePending });
+
+    const focusing = h.transaction.focus(targetLane.id);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(h.events).toContain('source:save');
+    expect(h.events).not.toContain('source:close');
+
+    resolveSave();
+    await expect(focusing).resolves.toMatchObject({ kind: 'focus' });
+    expect(h.events).toContain('source:close');
+  });
+
+  it('source snapshot の永続化失敗時は tabs と topology を変更しない', async () => {
+    const failure = new Error('snapshot save failed');
+    const h = createHarness({
+      saveSnapshot: async () => {
+        throw failure;
+      },
+    });
+
+    await expect(h.transaction.focus(targetLane.id)).resolves.toEqual({
+      kind: 'failed',
+      reason: 'transition-failed',
+      error: failure,
+    });
+    expect(h.events).not.toContain('source:close');
+    expect(h.events).not.toContain('link:api');
+    expect(h.events).not.toContain('tabs:web');
+  });
+
+  it('snapshot 保存待機中に dirty editor が生じたら close 前に blocked を返す', async () => {
+    let resolveSave!: () => void;
+    const savePending = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    const h = createHarness({ saveSnapshot: () => savePending });
+
+    const focusing = h.transaction.focus(targetLane.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    h.setDirty(true);
+    resolveSave();
+
+    await expect(focusing).resolves.toEqual({ kind: 'blocked', reason: 'dirty-editors' });
+    expect(h.events).not.toContain('source:close');
+  });
+
+  it('snapshot 保存待機中に link topology が変わったら close 前に再整合を要求する', async () => {
+    let resolveSave!: () => void;
+    const savePending = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    const h = createHarness({ saveSnapshot: () => savePending });
+
+    const focusing = h.transaction.focus(targetLane.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    h.setLinkTarget(targetLane.rootPath);
+    resolveSave();
+
+    await expect(focusing).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'reconciliation-required',
+    });
+    expect(h.events).not.toContain('source:close');
+  });
+
+  it('snapshot 保存待機中に catalog が変わったら close 前に再整合を要求する', async () => {
+    let resolveSave!: () => void;
+    const savePending = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    const h = createHarness({ saveSnapshot: () => savePending });
+
+    const focusing = h.transaction.focus(targetLane.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    h.setCatalog({
+      lanes: [sourceLane],
+      byId: new Map([[sourceLane.id, sourceLane]]),
+    });
+    resolveSave();
+
+    await expect(focusing).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'reconciliation-required',
+    });
+    expect(h.events).not.toContain('source:close');
+  });
+
+  it('snapshot 保存待機中に target root が利用不能になったら close 前に blocked を返す', async () => {
+    let resolveSave!: () => void;
+    const savePending = new Promise<void>((resolve) => {
+      resolveSave = resolve;
+    });
+    const h = createHarness({ saveSnapshot: () => savePending });
+
+    const focusing = h.transaction.focus(targetLane.id);
+    await Promise.resolve();
+    await Promise.resolve();
+    h.setRootAvailability('missing');
+    resolveSave();
+
+    await expect(focusing).resolves.toEqual({ kind: 'blocked', reason: 'root-unavailable' });
+    expect(h.events).not.toContain('source:close');
+  });
+
+  it('tabs close が false を返したら commit せず source tabs を復元する', async () => {
+    const h = createHarness({ failures: ['close-false'] });
+
+    const result = await h.transaction.focus(targetLane.id);
+
+    expect(result.kind).toBe('failed');
+    expect(h.events).toContain('tabs:web');
+    expect(h.events).not.toContain('link:api');
+    expect(h.events).not.toContain('commit:api');
   });
 
   it('pre-commit failure は original error を結果に保持する', async () => {
