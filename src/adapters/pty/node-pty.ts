@@ -25,6 +25,8 @@ export interface ShellSessionFactoryDeps {
   readonly extensionPath: AbsolutePath;
   /** セッション活動の事実流入口 */
   readonly activitySink: SessionActivitySink;
+  /** node-pty モジュールのロード。テスト時のみ差し替える */
+  readonly loadPty?: () => typeof NodePty;
 }
 
 /**
@@ -36,7 +38,7 @@ export const createShellSessionFactory = (
   deps: ShellSessionFactoryDeps,
 ): ShellSessionFactoryPort => ({
   create: (spec): ShellSessionHandle => {
-    const pty = loadPty();
+    const pty = deps.loadPty?.() ?? loadPty();
     const shellPath = spec.shellPath ?? detectShell();
     const baseEnv: Record<string, string> = {
       ...(process.env as Record<string, string>),
@@ -57,7 +59,11 @@ export const createShellSessionFactory = (
     const exitCallbacks: (() => void)[] = [];
     const scrollbackChunks: string[] = [];
     let scrollbackSize = 0;
-    let currentListener: ((data: string) => void) | undefined;
+    let currentOutput:
+      | {
+          readonly listener: (data: string) => void;
+        }
+      | undefined;
     let parserState: ParserState = initialParserState();
 
     const trimScrollback = (): void => {
@@ -89,13 +95,14 @@ export const createShellSessionFactory = (
       scrollbackSize += data.length;
       trimScrollback();
       dispatchActivity(data);
-      currentListener?.(data);
+      currentOutput?.listener(data);
     });
 
     proc.onExit(() => {
       alive = false;
       deps.activitySink.forgotten(spec.id);
-      for (const cb of exitCallbacks) cb();
+      const callbacks = exitCallbacks.splice(0);
+      for (const callback of callbacks) callback();
     });
 
     return {
@@ -104,12 +111,14 @@ export const createShellSessionFactory = (
       resize: (cols, rows) => proc.resize(cols, rows),
 
       attachOutput: (callback) => {
-        currentListener = callback;
+        const output = { listener: callback };
+        currentOutput = output;
         if (scrollbackChunks.length > 0) callback(scrollbackChunks.join(''));
-      },
-
-      detachOutput: () => {
-        currentListener = undefined;
+        return {
+          dispose: () => {
+            if (currentOutput === output) currentOutput = undefined;
+          },
+        };
       },
 
       onExit: (callback): Disposable => {
@@ -129,7 +138,6 @@ export const createShellSessionFactory = (
       kill: () => {
         if (alive) proc.kill();
       },
-      isAlive: () => alive,
     };
   },
 });

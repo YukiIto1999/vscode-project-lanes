@@ -95,6 +95,7 @@ const run = async ({
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const backgroundMarker = path.join(laneA, 'background-process-alive');
+  const renamedTerminalMarker = path.join(laneB, 'renamed-terminal-ready');
   const waitForWorkspaceState = (expectedTarget, expectedLabel) =>
     waitFor(
       () =>
@@ -115,7 +116,7 @@ const run = async ({
   }
 
   if (phase === 'restart') {
-    await waitForWorkspaceState(laneB, 'lane-b');
+    await waitForWorkspaceState(laneB, 'lane-beta');
     log('E2E PASS: lane switch transaction target persisted after restart');
     return;
   }
@@ -179,7 +180,64 @@ const run = async ({
     },
     { delay, now },
   );
-  log('E2E PASS: lane switch requests were serialized and background shell remained alive');
+
+  await resolvedVscodeApi.commands.executeCommand('projectLanes.renameLane', 'lane-b');
+  await waitForWorkspaceState(laneB, 'lane-beta');
+  await waitFor(
+    () => {
+      const names = resolvedVscodeApi.window.terminals.map((terminal) => terminal.name);
+      assert.equal(names.filter((name) => name === 'lane-beta').length, 1);
+      assert.equal(
+        names.includes('lane-b'),
+        false,
+        `Expected the old lane-b Terminal to close: ${JSON.stringify(names)}`,
+      );
+    },
+    { delay, now },
+  );
+
+  const renamedTerminal = resolvedVscodeApi.window.terminals.find(
+    (terminal) => terminal.name === 'lane-beta',
+  );
+  assert.ok(renamedTerminal, 'Expected renamed lane Terminal');
+  await renamedTerminal.processId;
+  renamedTerminal.sendText(`printf ready > ${shellQuote(renamedTerminalMarker)}`);
+  await waitFor(
+    () => {
+      assert.equal(fileSystem.readFileSync(renamedTerminalMarker, 'utf8'), 'ready');
+    },
+    { delay, now },
+  );
+  renamedTerminal.sendText('exit');
+  await waitFor(
+    () => {
+      assert.equal(
+        resolvedVscodeApi.window.terminals.some((terminal) => terminal.name === 'lane-beta'),
+        false,
+        `Expected lane-beta Terminal to close after shell exit: ${JSON.stringify(
+          resolvedVscodeApi.window.terminals.map((terminal) => terminal.name),
+        )}`,
+      );
+    },
+    { delay, now },
+  );
+
+  await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-a');
+  await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-beta');
+  await waitForWorkspaceState(laneB, 'lane-beta');
+  await waitFor(
+    () => {
+      assert.equal(
+        resolvedVscodeApi.window.terminals.filter((terminal) => terminal.name === 'lane-beta')
+          .length,
+        1,
+      );
+    },
+    { delay, now },
+  );
+  log(
+    'E2E PASS: lane switches preserved the shell, rename refreshed the title, and natural exit created a new session',
+  );
 };
 
 module.exports = { run };

@@ -19,10 +19,9 @@ export interface ShellSessionHandle {
   /**
    * 出力購読の開始
    * @param listener - 出力チャンクのリスナー
+   * @returns この接続だけを解除する Disposable
    */
-  readonly attachOutput: (listener: (chunk: string) => void) => void;
-  /** 出力購読の停止 */
-  readonly detachOutput: () => void;
+  readonly attachOutput: (listener: (chunk: string) => void) => Disposable;
   /**
    * 終了リスナー登録
    * @param listener - 終了時に呼ばれるリスナー
@@ -31,11 +30,6 @@ export interface ShellSessionHandle {
   readonly onExit: (listener: () => void) => Disposable;
   /** プロセスの強制終了 */
   readonly kill: () => void;
-  /**
-   * 生存判定
-   * @returns 生存中なら true
-   */
-  readonly isAlive: () => boolean;
 }
 
 /** シェルセッション生成ポート */
@@ -60,13 +54,19 @@ export interface TerminalPresentationPort {
   /**
    * ターミナルの前面化
    * @param terminalId - 対象ターミナル識別子
+   * @param preserveFocus - 現在の UI focus を維持するか
    */
-  readonly showTerminal: (terminalId: TerminalId) => void;
+  readonly showTerminal: (terminalId: TerminalId, preserveFocus?: boolean) => void;
   /**
    * ターミナルの破棄
    * @param terminalId - 対象ターミナル識別子
    */
   readonly disposeTerminal: (terminalId: TerminalId) => void;
+  /**
+   * VS Code 側で終了済みのターミナルを管理対象から除外
+   * @param terminalId - 対象ターミナル識別子
+   */
+  readonly forgetTerminal: (terminalId: TerminalId) => void;
   /**
    * 管理下ターミナルの一括破棄
    * @returns 破棄したターミナル識別子列

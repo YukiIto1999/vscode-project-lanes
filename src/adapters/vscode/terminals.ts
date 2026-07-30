@@ -15,6 +15,7 @@ const createPseudoterminal = (
 ): vscode.Pseudoterminal => {
   const writeEmitter = new vscode.EventEmitter<string>();
   const closeEmitter = new vscode.EventEmitter<void>();
+  let outputDisposable: Disposable | undefined;
   let exitDisposable: Disposable | undefined;
 
   return {
@@ -23,13 +24,13 @@ const createPseudoterminal = (
 
     open: (dimensions) => {
       if (dimensions) session.resize(dimensions.columns, dimensions.rows);
-      session.attachOutput((data) => writeEmitter.fire(data));
+      outputDisposable = session.attachOutput((data) => writeEmitter.fire(data));
       exitDisposable = session.onExit(() => closeEmitter.fire());
     },
 
     close: () => {
       exitDisposable?.dispose();
-      session.detachOutput();
+      outputDisposable?.dispose();
       writeEmitter.dispose();
       closeEmitter.dispose();
     },
@@ -124,17 +125,22 @@ export const createTerminalPresentationAdapter = (
       return new vscode.TerminalProfile({ name: title, pty, isTransient: true });
     },
 
-    showTerminal: (terminalId) => {
-      terminalById.get(terminalId)?.show();
+    showTerminal: (terminalId, preserveFocus) => {
+      terminalById.get(terminalId)?.show(preserveFocus);
     },
 
     disposeTerminal: (terminalId) => {
       const terminal = terminalById.get(terminalId);
       if (terminal) {
-        terminal.dispose();
         terminalById.delete(terminalId);
         ownedTerminals.delete(terminalId);
+        terminal.dispose();
       }
+    },
+
+    forgetTerminal: (terminalId) => {
+      terminalById.delete(terminalId);
+      ownedTerminals.delete(terminalId);
     },
 
     disposeAllOwned: () => {

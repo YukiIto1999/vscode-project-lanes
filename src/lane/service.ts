@@ -146,6 +146,7 @@ export interface LaneService {
 
 interface PendingRenameFinalization {
   readonly target: Lane;
+  readonly terminalRefreshed: boolean;
   readonly viewRebound: boolean;
 }
 
@@ -202,6 +203,12 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     let current = pendingRename;
     if (!current) return;
 
+    if (!current.terminalRefreshed) {
+      await terminal.refreshLane(current.target);
+      current = { ...current, terminalRefreshed: true };
+      pendingRename = current;
+    }
+
     if (!current.viewRebound) {
       const rebound = await viewRebind.rebindActiveFolder(current.target);
       if (!rebound) throw new Error('workspace-folder-mutation-rejected');
@@ -244,6 +251,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
   };
 
   const finalizePendingOperations = async (): Promise<void> => {
+    await terminal.finalizePendingPresentations();
     await focusTransaction.finalizePending();
     await finalizePendingRename();
     await finalizePendingRemoval();
@@ -513,6 +521,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         pendingRename = renameWasActive
           ? {
               target: { ...plan.from, label: plan.to.label },
+              terminalRefreshed: false,
               viewRebound: false,
             }
           : undefined;

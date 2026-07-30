@@ -51,6 +51,8 @@ const createHarness = ({
   saveCatalog = async () => {},
   closeLane = async () => {},
   revealLane = async () => {},
+  refreshLane = async () => {},
+  finalizePendingPresentations = async () => {},
   pickLane = async () => undefined,
   pickReplacementFolder = async () => undefined,
   promptRename = async () => 'frontend',
@@ -76,6 +78,8 @@ const createHarness = ({
   readonly saveCatalog?: CatalogStorePort['save'];
   readonly closeLane?: LaneTerminalPort['closeLane'];
   readonly revealLane?: LaneTerminalPort['revealLane'];
+  readonly refreshLane?: LaneTerminalPort['refreshLane'];
+  readonly finalizePendingPresentations?: LaneTerminalPort['finalizePendingPresentations'];
   readonly pickLane?: LanePromptPort['pickLane'];
   readonly pickReplacementFolder?: LanePromptPort['pickReplacementFolder'];
   readonly promptRename?: LanePromptPort['promptRename'];
@@ -125,8 +129,14 @@ const createHarness = ({
     await closeLane(laneId);
   });
   const terminalReveal = vi.fn<LaneTerminalPort['revealLane']>(revealLane);
+  const terminalRefresh = vi.fn<LaneTerminalPort['refreshLane']>(refreshLane);
+  const terminalFinalize = vi.fn<LaneTerminalPort['finalizePendingPresentations']>(
+    finalizePendingPresentations,
+  );
   const terminal: LaneTerminalPort = {
     revealLane: terminalReveal,
+    refreshLane: terminalRefresh,
+    finalizePendingPresentations: terminalFinalize,
     closeLane: terminalClose,
   };
   const editorRemove = vi.fn<EditorSnapshotStorePort['remove']>(async (laneId) => {
@@ -217,6 +227,8 @@ const createHarness = ({
     linkClear,
     rootAvailability,
     terminalReveal,
+    terminalRefresh,
+    terminalFinalize,
     terminalClose,
     editorRemove,
     effectEvents,
@@ -1461,6 +1473,24 @@ describe('createLaneService FIFO', () => {
 
     expect(events).toEqual(['terminal:1', 'terminal:2', 'rename:save']);
   });
+
+  it('pending terminal presentation を次 mutation より前に共通 queue 内で再試行する', async () => {
+    const events: string[] = [];
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      finalizePendingPresentations: async () => {
+        events.push('terminal:finalize');
+      },
+      saveCatalog: async () => {
+        events.push('rename:save');
+      },
+    });
+
+    await h.service.renameLane('web' as LaneId);
+
+    expect(events).toEqual(['terminal:finalize', 'rename:save']);
+    expect(h.terminalFinalize).toHaveBeenCalledOnce();
+  });
 });
 
 describe('createLaneService catalog mutation ordering', () => {
@@ -1506,6 +1536,51 @@ describe('createLaneService catalog mutation ordering', () => {
 
     expect(h.selectionSave).not.toHaveBeenCalled();
     expect(h.viewRebind).toHaveBeenCalledTimes(2);
+    expect(h.terminalRefresh).toHaveBeenCalledOnce();
+  });
+
+  it('active rename はターミナル表示名を更新してから active view を再束縛する', async () => {
+    const events: string[] = [];
+    const h = createHarness({
+      refreshLane: async () => {
+        events.push('terminal');
+      },
+      rebindActiveFolder: async () => {
+        events.push('view');
+        return true;
+      },
+    });
+    await h.service.reconcileActiveLane();
+    events.splice(0);
+
+    await h.service.renameLane('web' as LaneId);
+
+    expect(events).toEqual(['terminal', 'view']);
+    expect(h.terminalRefresh).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'web', label: 'frontend' }),
+    );
+  });
+
+  it('active rename のターミナル更新失敗時は view を変更せず、未完了の更新から再試行する', async () => {
+    let refreshCount = 0;
+    const failure = new Error('terminal refresh failed');
+    const h = createHarness({
+      refreshLane: async () => {
+        refreshCount += 1;
+        if (refreshCount === 1) throw failure;
+      },
+    });
+    await h.service.reconcileActiveLane();
+    h.viewRebind.mockClear();
+
+    await expect(h.service.renameLane('web' as LaneId)).rejects.toBe(failure);
+
+    expect(h.viewRebind).not.toHaveBeenCalled();
+
+    await h.service.finalizePendingOperations();
+
+    expect(h.terminalRefresh).toHaveBeenCalledTimes(2);
+    expect(h.viewRebind).toHaveBeenCalledOnce();
   });
 
   it('non-active rename は表示名だけを保存し active view に触れない', async () => {
@@ -1515,6 +1590,7 @@ describe('createLaneService catalog mutation ordering', () => {
 
     expect(h.registry.snapshot().byId.get('api' as LaneId)?.label).toBe('frontend');
     expect(h.selectionSave).not.toHaveBeenCalled();
+    expect(h.terminalRefresh).not.toHaveBeenCalled();
     expect(h.viewRebind).not.toHaveBeenCalled();
   });
 

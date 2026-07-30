@@ -5,6 +5,11 @@ import type { ShellSessionHandle } from '../../terminal/ports';
 
 const vscodeHarness = vi.hoisted(() => {
   const createdOptions: unknown[] = [];
+  const createdTerminals: {
+    readonly creationOptions: unknown;
+    readonly show: ReturnType<typeof vi.fn>;
+    readonly dispose: ReturnType<typeof vi.fn>;
+  }[] = [];
   let openListener: ((terminal: unknown) => void) | undefined;
 
   class EventEmitter {
@@ -19,9 +24,11 @@ const vscodeHarness = vi.hoisted(() => {
 
   return {
     createdOptions,
+    createdTerminals,
     getOpenListener: () => openListener,
     reset: () => {
       createdOptions.splice(0);
+      createdTerminals.splice(0);
       openListener = undefined;
     },
     vscode: {
@@ -30,11 +37,13 @@ const vscodeHarness = vi.hoisted(() => {
       window: {
         createTerminal: vi.fn((options: unknown) => {
           createdOptions.push(options);
-          return {
+          const terminal = {
             creationOptions: options,
             show: vi.fn(),
             dispose: vi.fn(),
           };
+          createdTerminals.push(terminal);
+          return terminal;
         }),
         onDidOpenTerminal: vi.fn((listener: (terminal: unknown) => void) => {
           openListener = listener;
@@ -53,11 +62,9 @@ const session = {
   id: 'session-a' as SessionId,
   write: vi.fn(),
   resize: vi.fn(),
-  attachOutput: vi.fn(),
-  detachOutput: vi.fn(),
+  attachOutput: vi.fn(() => ({ dispose: vi.fn() })),
   onExit: vi.fn(() => ({ dispose: vi.fn() })),
   kill: vi.fn(),
-  isAlive: vi.fn(() => true),
 } satisfies ShellSessionHandle;
 
 const activitySink = {
@@ -99,5 +106,60 @@ describe('createTerminalPresentationAdapter', () => {
         isTransient: true,
       }),
     );
+  });
+
+  it('VS Code 側で閉じた Terminal は再 dispose せず管理対象から外す', () => {
+    const adapter = createTerminalPresentationAdapter({ activitySink });
+    const terminalId = adapter.attachSession(session, 'lane-a');
+    const terminal = vscodeHarness.createdTerminals[0]!;
+
+    adapter.forgetTerminal(terminalId);
+
+    expect(terminal.dispose).not.toHaveBeenCalled();
+    expect(adapter.disposeAllOwned()).toEqual([]);
+  });
+
+  it('preserveFocus を VS Code Terminal.show へ渡す', () => {
+    const adapter = createTerminalPresentationAdapter({ activitySink });
+    const terminalId = adapter.attachSession(session, 'lane-a');
+    const terminal = vscodeHarness.createdTerminals[0]!;
+
+    adapter.showTerminal(terminalId, true);
+
+    expect(terminal.show).toHaveBeenCalledWith(true);
+  });
+
+  it('Pseudoterminal close は自身が取得した出力接続だけを dispose する', () => {
+    const outputConnection = { dispose: vi.fn() };
+    const ownedSession = {
+      ...session,
+      attachOutput: vi.fn(() => outputConnection),
+    } satisfies ShellSessionHandle;
+    const adapter = createTerminalPresentationAdapter({ activitySink });
+
+    adapter.attachSession(ownedSession, 'lane-a');
+    const pty = vscodeHarness.createdOptions[0] as {
+      readonly pty: {
+        readonly open: (dimensions: undefined) => void;
+        readonly close: () => void;
+      };
+    };
+    pty.pty.open(undefined);
+    pty.pty.close();
+
+    expect(outputConnection.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('Terminal dispose が失敗しても管理対象から除外する', () => {
+    const failure = new Error('terminal dispose failed');
+    const adapter = createTerminalPresentationAdapter({ activitySink });
+    const terminalId = adapter.attachSession(session, 'lane-a');
+    const terminal = vscodeHarness.createdTerminals[0]!;
+    terminal.dispose.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    expect(() => adapter.disposeTerminal(terminalId)).toThrow(failure);
+    expect(adapter.disposeAllOwned()).toEqual([]);
   });
 });
