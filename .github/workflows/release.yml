@@ -5,61 +5,263 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   publish:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v6
+      - name: Fetch integration branch
+        run: git fetch --no-tags origin '+refs/heads/develop:refs/remotes/origin/develop'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
 
-      - name: Read version from package.json
-        id: version
-        run: echo "value=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Check if tag already exists
-        id: tag
+      - name: Read and verify release metadata
+        id: metadata
         run: |
-          if git rev-parse "v${{ steps.version.outputs.value }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+          VSIX_NAME="project-lanes-linux-x64-${VERSION}.vsix"
+          CHECKSUM_NAME="${VSIX_NAME}.sha256"
+          RELEASE_DIR="$RUNNER_TEMP/release"
+          REFERENCE_DIR="$RUNNER_TEMP/reference"
+          mkdir -p "$RELEASE_DIR" "$REFERENCE_DIR"
+          npm run verify:release -- --notes-file "$RUNNER_TEMP/release-notes.md"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "previous_version=$(node -p "require('./test/release/verify-release.cjs').verifyRelease().previousVersion")"
+            echo "vsix_name=$VSIX_NAME"
+            echo "checksum_name=$CHECKSUM_NAME"
+            echo "vsix_path=$RELEASE_DIR/$VSIX_NAME"
+            echo "checksum_path=$RELEASE_DIR/$CHECKSUM_NAME"
+            echo "reference_vsix_path=$REFERENCE_DIR/$VSIX_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inspect release checkpoint
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VSIX_NAME: ${{ steps.metadata.outputs.vsix_name }}
+          CHECKSUM_NAME: ${{ steps.metadata.outputs.checksum_name }}
+          RELEASE_DIR: ${{ runner.temp }}/release
+        run: |
+          TAG_EXISTS=false
+          if git rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
+            TAG_EXISTS=true
           fi
 
-      - name: Extract changelog for this version
-        if: steps.tag.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
+          RESPONSE_PATH="$RUNNER_TEMP/release-response.txt"
+          ERROR_PATH="$RUNNER_TEMP/release-response-error.txt"
+          RELEASE_JSON_PATH="$RUNNER_TEMP/release-response.json"
+          if gh api --include \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" \
+            > "$RESPONSE_PATH" 2> "$ERROR_PATH"; then
+            API_SUCCEEDED=true
+          else
+            API_SUCCEEDED=false
+          fi
+          HTTP_STATUS="$(
+            sed -n '1{s/\r$//;s/^HTTP\/[^ ]* \([0-9][0-9][0-9]\).*/\1/p;}' \
+              "$RESPONSE_PATH"
+          )"
+
+          RELEASE_ARGUMENTS=()
+          case "$HTTP_STATUS" in
+            200)
+              if [ "$API_SUCCEEDED" != true ]; then
+                cat "$ERROR_PATH" >&2
+                exit 1
+              fi
+              awk 'body { print } /^\r?$/ { body=1 }' \
+                "$RESPONSE_PATH" > "$RELEASE_JSON_PATH"
+              RELEASE_ARGUMENTS=(--release-file "$RELEASE_JSON_PATH")
+              ;;
+            404)
+              ;;
+            *)
+              cat "$ERROR_PATH" >&2
+              echo "GitHub release API returned HTTP ${HTTP_STATUS:-unknown}" >&2
+              exit 1
+              ;;
+          esac
+
+          STATE="$(
+            node test/release/inspect-checkpoint.cjs \
+              --tag-exists "$TAG_EXISTS" \
+              --vsix-name "$VSIX_NAME" \
+              --checksum-name "$CHECKSUM_NAME" \
+              "${RELEASE_ARGUMENTS[@]}"
+          )"
+          printf '%s\n' "$STATE" >> "$GITHUB_OUTPUT"
+          DOWNLOAD="$(sed -n 's/^download=//p' <<<"$STATE")"
+          case "$DOWNLOAD" in
+            all)
+              gh release download "$TAG" \
+                --pattern "$VSIX_NAME" \
+                --pattern "$CHECKSUM_NAME" \
+                --dir "$RELEASE_DIR"
+              ;;
+            vsix)
+              gh release download "$TAG" --pattern "$VSIX_NAME" --dir "$RELEASE_DIR"
+              ;;
+            none)
+              ;;
+            *)
+              echo "Unknown release checkpoint download state: $DOWNLOAD" >&2
+              exit 1
+              ;;
+          esac
+
+      - run: npm run check
+        if: steps.state.outputs.complete != 'true'
+      - run: npm test
+        if: steps.state.outputs.complete != 'true'
+      - run: npm run test:release
+        if: steps.state.outputs.complete != 'true'
+      - run: npm run build
+        if: steps.state.outputs.complete != 'true'
+      - run: xvfb-run -a npm run test:e2e
+        if: steps.state.outputs.complete != 'true'
+
+      - name: Package VSIX
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.reuse != 'true'
+        env:
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
         run: |
-          awk '/^## \[${{ steps.version.outputs.value }}\]/{flag=1;next} /^## \[/{flag=0} flag' \
-            CHANGELOG.md > .release-notes.md
-          test -s .release-notes.md || (echo "CHANGELOG entry for ${{ steps.version.outputs.value }} not found" && exit 1)
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          npm run package -- --target linux-x64 --out "$VSIX_PATH"
 
-      - name: Publish to VS Code Marketplace
-        if: steps.tag.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
-        run: npx @vscode/vsce publish --pat "${{ secrets.VSCE_PAT }}"
+      - name: Package trusted reference for reused VSIX
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.reuse == 'true'
+        env:
+          REFERENCE_VSIX_PATH: ${{ steps.metadata.outputs.reference_vsix_path }}
+        run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          npm run package -- --target linux-x64 --out "$REFERENCE_VSIX_PATH"
 
-      - name: Create git tag
-        if: steps.tag.outputs.exists == 'false'
+      - name: Write checksum
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.reuse != 'true' || steps.state.outputs.repair_checksum == 'true'
+        env:
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+          CHECKSUM_PATH: ${{ steps.metadata.outputs.checksum_path }}
+        run: npm run checksum:vsix -- write "$VSIX_PATH" "$CHECKSUM_PATH"
+
+      - name: Verify packaged artifact
+        if: steps.state.outputs.complete != 'true'
+        env:
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+          CHECKSUM_PATH: ${{ steps.metadata.outputs.checksum_path }}
+          REFERENCE_VSIX_PATH: ${{ steps.metadata.outputs.reference_vsix_path }}
+          REUSE: ${{ steps.state.outputs.reuse }}
+        run: |
+          if [ "$REUSE" = true ]; then
+            npm run verify:vsix -- "$VSIX_PATH" --reference "$REFERENCE_VSIX_PATH"
+          else
+            npm run verify:vsix -- "$VSIX_PATH"
+          fi
+          npm run checksum:vsix -- verify "$VSIX_PATH" "$CHECKSUM_PATH"
+
+      - name: Test installed VSIX
+        if: steps.state.outputs.complete != 'true'
+        env:
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+          PREVIOUS_VERSION: ${{ steps.metadata.outputs.previous_version }}
+        run: xvfb-run -a npm run test:e2e:vsix -- "$VSIX_PATH" "$PREVIOUS_VERSION"
+
+      - name: Upload verified artifact
+        if: steps.state.outputs.complete != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: project-lanes-linux-x64-${{ steps.metadata.outputs.version }}
+          path: |
+            ${{ steps.metadata.outputs.vsix_path }}
+            ${{ steps.metadata.outputs.checksum_path }}
+          if-no-files-found: error
+
+      - name: Create release tag
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.tag_exists != 'true'
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ steps.version.outputs.value }}"
-          git push origin "v${{ steps.version.outputs.value }}"
+          git tag "$TAG"
+          git push origin "$TAG"
 
-      - name: Create GitHub Release
-        if: steps.tag.outputs.exists == 'false' || github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: v${{ steps.version.outputs.value }}
-          name: v${{ steps.version.outputs.value }}
-          body_path: .release-notes.md
+      - name: Create draft release
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.release_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+          CHECKSUM_PATH: ${{ steps.metadata.outputs.checksum_path }}
+        run: |
+          gh release create "$TAG" \
+            "$VSIX_PATH" \
+            "$CHECKSUM_PATH" \
+            --draft \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md"
+
+      - name: Repair incomplete draft checksum
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.repair_checksum == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          CHECKSUM_PATH: ${{ steps.metadata.outputs.checksum_path }}
+        run: gh release upload "$TAG" "$CHECKSUM_PATH"
+
+      - name: Populate empty draft release
+        if: steps.state.outputs.complete != 'true' && steps.state.outputs.release_exists == 'true' && steps.state.outputs.reuse != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+          CHECKSUM_PATH: ${{ steps.metadata.outputs.checksum_path }}
+        run: gh release upload "$TAG" "$VSIX_PATH" "$CHECKSUM_PATH"
+
+      - name: Reverify release artifact before Marketplace
+        if: steps.state.outputs.complete != 'true'
+        env:
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+          CHECKSUM_PATH: ${{ steps.metadata.outputs.checksum_path }}
+          REFERENCE_VSIX_PATH: ${{ steps.metadata.outputs.reference_vsix_path }}
+          REUSE: ${{ steps.state.outputs.reuse }}
+        run: |
+          if [ "$REUSE" = true ]; then
+            npm run verify:vsix -- "$VSIX_PATH" --reference "$REFERENCE_VSIX_PATH"
+          else
+            npm run verify:vsix -- "$VSIX_PATH"
+          fi
+          npm run checksum:vsix -- verify "$VSIX_PATH" "$CHECKSUM_PATH"
+
+      - name: Publish verified VSIX to Marketplace
+        if: steps.state.outputs.complete != 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
+        run: npm run publish:vsix -- --packagePath "$VSIX_PATH" --skip-duplicate
+
+      - name: Publish GitHub release
+        if: steps.state.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false

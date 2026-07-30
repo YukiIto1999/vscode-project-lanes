@@ -8,10 +8,17 @@ const test = require('node:test');
 
 const packageJson = require('../../package.json');
 const {
+  assertListedExtensionVersion,
   buildDownloadOptions,
+  buildExtensionManagementRequest,
+  buildInstalledLaunchOptions,
   buildLaunchOptions,
   createProcessCleanupRegistry,
+  executeExtensionManagementRequest,
+  installAndVerifyExtension,
+  installCandidateProfiles,
   launchVSCodeProcess,
+  runInstalledVSIXVerification,
   runScenario,
 } = require('./runner.cjs');
 const { resolveScenarios, scenarios } = require('./scenarios.cjs');
@@ -403,6 +410,137 @@ test('the empty-workspace suite rejects a non-empty workspace', async () => {
   );
 });
 
+test('the installed VSIX suite activates the isolated candidate and loads its native module', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  const extensionsDir = '/tmp/installed/fresh/extensions';
+  const extensionPath = path.join(extensionsDir, 'yukiito1999.project-lanes-0.1.13-linux-x64');
+  const messages = [];
+  let activated = false;
+  let loadedFrom;
+  let executedRipgrep;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
+      PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.13',
+    },
+    vscodeApi: {
+      extensions: {
+        getExtension(extensionId) {
+          assert.equal(extensionId, 'yukiito1999.project-lanes');
+          return {
+            extensionPath,
+            packageJSON: { version: '0.1.13' },
+            get isActive() {
+              return activated;
+            },
+            async activate() {
+              activated = true;
+            },
+          };
+        },
+      },
+    },
+    loadNodePty(installedExtensionPath) {
+      assert.equal(activated, true);
+      loadedFrom = installedExtensionPath;
+      return { spawn() {} };
+    },
+    resolveRealPath(value) {
+      return value;
+    },
+    runRipgrep(ripgrepPath) {
+      executedRipgrep = ripgrepPath;
+      return {
+        status: 0,
+        stdout: 'ripgrep 14.1.1\n',
+        stderr: '',
+      };
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.equal(loadedFrom, extensionPath);
+  assert.equal(
+    executedRipgrep,
+    path.join(extensionPath, 'node_modules', '@vscode', 'ripgrep-linux-x64', 'bin', 'rg'),
+  );
+  assert.deepEqual(messages, ['E2E PASS: installed yukiito1999.project-lanes@0.1.13 activated']);
+});
+
+test('the installed VSIX suite rejects a candidate whose manifest version is unexpected', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: '/tmp/installed/fresh/extensions',
+        PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.13',
+      },
+      vscodeApi: {
+        extensions: {
+          getExtension() {
+            return {
+              extensionPath:
+                '/tmp/installed/fresh/extensions/yukiito1999.project-lanes-0.1.12-linux-x64',
+              packageJSON: { version: '0.1.12' },
+              isActive: false,
+              async activate() {},
+            };
+          },
+        },
+      },
+      loadNodePty() {
+        return { spawn() {} };
+      },
+      resolveRealPath(value) {
+        return value;
+      },
+    }),
+    /Unexpected installed extension version: 0\.1\.12/,
+  );
+});
+
+test('the installed VSIX suite rejects a matching extension loaded outside its isolated profile', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  let activated = false;
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: '/tmp/installed/fresh/extensions',
+        PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.13',
+      },
+      vscodeApi: {
+        extensions: {
+          getExtension() {
+            return {
+              extensionPath: '/workspace/project-lanes',
+              packageJSON: { version: '0.1.13' },
+              get isActive() {
+                return activated;
+              },
+              async activate() {
+                activated = true;
+              },
+            };
+          },
+        },
+      },
+      loadNodePty() {
+        return { spawn() {} };
+      },
+      resolveRealPath(value) {
+        return value;
+      },
+    }),
+    /Extension is outside the isolated extensions directory: \/workspace\/project-lanes/,
+  );
+  assert.equal(activated, false);
+});
+
 test('the E2E package script gates scenarios on the registry unit tests', () => {
   assert.equal(
     packageJson.scripts['test:e2e'],
@@ -470,6 +608,448 @@ test('normal launch options use both development extensions without enabling tes
   assert.equal(
     options.args.some((argument) => argument.includes('extensionTestsPath')),
     false,
+  );
+});
+
+test('installed launch enables the profile extension and exposes only the driver as development code', () => {
+  const options = buildInstalledLaunchOptions({
+    vscodeExecutablePath: '/vscode/code',
+    scenario: {
+      name: 'installed-vsix-fresh',
+      suitePath: '/suite/installed-vsix.cjs',
+    },
+    workspacePath: '/tmp/installed/empty.code-workspace',
+    userDataDir: '/tmp/installed/fresh/user-data',
+    extensionsDir: '/tmp/installed/fresh/extensions',
+    markerPath: '/tmp/installed/fresh-result.json',
+    resultIdentity: {
+      runId: 'installed-run',
+      scenario: 'installed-vsix-fresh',
+      phase: 'default',
+    },
+    expectedVersion: '0.1.13',
+    environment: {
+      ELECTRON_RUN_AS_NODE: '1',
+      VSCODE_ESM_ENTRYPOINT: 'unexpected-entrypoint',
+    },
+  });
+
+  assert.deepEqual(options, {
+    command: '/vscode/code',
+    args: [
+      '/tmp/installed/empty.code-workspace',
+      '--user-data-dir',
+      '/tmp/installed/fresh/user-data',
+      '--extensions-dir',
+      '/tmp/installed/fresh/extensions',
+      `--extensionDevelopmentPath=${path.join(__dirname, 'driver')}`,
+      '--no-sandbox',
+      '--disable-gpu-sandbox',
+      '--disable-updates',
+      '--skip-welcome',
+      '--skip-release-notes',
+      '--no-cached-data',
+      '--disable-workspace-trust',
+    ],
+    environment: {
+      PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: '/tmp/installed/fresh/extensions',
+      PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.13',
+      PROJECT_LANES_E2E_RESULT_PATH: '/tmp/installed/fresh-result.json',
+      PROJECT_LANES_E2E_RUN: JSON.stringify({
+        runId: 'installed-run',
+        scenario: 'installed-vsix-fresh',
+        phase: 'default',
+      }),
+      PROJECT_LANES_E2E_SUITE_PATH: '/suite/installed-vsix.cjs',
+    },
+    markerPath: '/tmp/installed/fresh-result.json',
+  });
+  assert.equal(options.args.includes('--disable-extensions'), false);
+  assert.equal(
+    options.args.includes(`--extensionDevelopmentPath=${path.resolve(__dirname, '..', '..')}`),
+    false,
+  );
+});
+
+test('extension management CLI isolates the profile before applying the requested operation', () => {
+  const resolutions = [];
+  const request = buildExtensionManagementRequest({
+    vscodeExecutablePath: '/vscode/code',
+    userDataDir: '/tmp/installed/fresh/user-data',
+    extensionsDir: '/tmp/installed/fresh/extensions',
+    operationArgs: ['--install-extension', '/tmp/project-lanes.vsix', '--force'],
+    resolveCliArgs(executablePath, options) {
+      resolutions.push({ executablePath, options });
+      return ['/vscode/bin/code', '--cli-prefix'];
+    },
+  });
+
+  assert.deepEqual(resolutions, [
+    {
+      executablePath: '/vscode/code',
+      options: { reuseMachineInstall: true },
+    },
+  ]);
+  assert.deepEqual(request, {
+    command: '/vscode/bin/code',
+    args: [
+      '--cli-prefix',
+      '--user-data-dir',
+      '/tmp/installed/fresh/user-data',
+      '--extensions-dir',
+      '/tmp/installed/fresh/extensions',
+      '--install-extension',
+      '/tmp/project-lanes.vsix',
+      '--force',
+    ],
+  });
+});
+
+test('extension listing rejects a version mismatch and any unrelated profile extension', () => {
+  assert.throws(
+    () =>
+      assertListedExtensionVersion(
+        'yukiito1999.project-lanes@0.1.12\n',
+        'yukiito1999.project-lanes',
+        '0.1.13',
+      ),
+    /Expected installed extensions to equal yukiito1999\.project-lanes@0\.1\.13.*0\.1\.12/s,
+  );
+  assert.throws(
+    () =>
+      assertListedExtensionVersion(
+        ['unrelated.publisher@1.0.0', 'yukiito1999.project-lanes@0.1.13', ''].join('\n'),
+        'yukiito1999.project-lanes',
+        '0.1.13',
+      ),
+    /unrelated\.publisher@1\.0\.0/,
+  );
+});
+
+test('extension management executes without a shell and exposes stdout for version checks', () => {
+  const calls = [];
+  const stdout = executeExtensionManagementRequest(
+    {
+      command: '/vscode/bin/code',
+      args: ['--list-extensions', '--show-versions'],
+    },
+    {
+      environment: {
+        ELECTRON_RUN_AS_NODE: '1',
+        PATH: '/bin',
+        VSCODE_ESM_ENTRYPOINT: 'unexpected-entrypoint',
+        VSCODE_IPC_HOOK_CLI: '/tmp/host-session.sock',
+      },
+      spawnSync(command, args, options) {
+        calls.push({ command, args, options });
+        return {
+          status: 0,
+          signal: null,
+          stdout: 'yukiito1999.project-lanes@0.1.13\n',
+          stderr: '',
+        };
+      },
+    },
+  );
+
+  assert.equal(stdout, 'yukiito1999.project-lanes@0.1.13\n');
+  assert.deepEqual(calls, [
+    {
+      command: '/vscode/bin/code',
+      args: ['--list-extensions', '--show-versions'],
+      options: {
+        encoding: 'utf8',
+        env: {
+          DONT_PROMPT_WSL_INSTALL: '1',
+          PATH: '/bin',
+        },
+        shell: false,
+      },
+    },
+  ]);
+});
+
+test('extension management reports the failed CLI operation and stderr', () => {
+  assert.throws(
+    () =>
+      executeExtensionManagementRequest(
+        {
+          command: '/vscode/bin/code',
+          args: ['--install-extension', '/tmp/project-lanes.vsix'],
+        },
+        {
+          spawnSync() {
+            return {
+              status: 1,
+              signal: null,
+              stdout: '',
+              stderr: 'installation failed',
+            };
+          },
+        },
+      ),
+    /--install-extension.*installation failed/s,
+  );
+});
+
+test('extension install is followed by an exact version listing in the same isolated profile', () => {
+  const requests = [];
+  const outputs = ['', 'yukiito1999.project-lanes@0.1.13\n'];
+
+  installAndVerifyExtension(
+    {
+      vscodeExecutablePath: '/vscode/code',
+      userDataDir: '/tmp/installed/fresh/user-data',
+      extensionsDir: '/tmp/installed/fresh/extensions',
+      extensionReference: '/tmp/project-lanes.vsix',
+      extensionId: 'yukiito1999.project-lanes',
+      expectedVersion: '0.1.13',
+      resolveCliArgs() {
+        return ['/vscode/bin/code'];
+      },
+    },
+    {
+      executeRequest(request) {
+        requests.push(request);
+        return outputs.shift();
+      },
+    },
+  );
+
+  assert.deepEqual(requests, [
+    {
+      command: '/vscode/bin/code',
+      args: [
+        '--user-data-dir',
+        '/tmp/installed/fresh/user-data',
+        '--extensions-dir',
+        '/tmp/installed/fresh/extensions',
+        '--install-extension',
+        '/tmp/project-lanes.vsix',
+        '--force',
+      ],
+    },
+    {
+      command: '/vscode/bin/code',
+      args: [
+        '--user-data-dir',
+        '/tmp/installed/fresh/user-data',
+        '--extensions-dir',
+        '/tmp/installed/fresh/extensions',
+        '--list-extensions',
+        '--show-versions',
+      ],
+    },
+  ]);
+  assert.deepEqual(outputs, []);
+});
+
+test('candidate profiles verify fresh install before the marketplace upgrade path', () => {
+  const installations = [];
+  const profiles = {
+    fresh: {
+      userDataDir: '/tmp/installed/fresh/user-data',
+      extensionsDir: '/tmp/installed/fresh/extensions',
+    },
+    upgrade: {
+      userDataDir: '/tmp/installed/upgrade/user-data',
+      extensionsDir: '/tmp/installed/upgrade/extensions',
+    },
+  };
+
+  installCandidateProfiles(
+    {
+      vscodeExecutablePath: '/vscode/code',
+      vsixPath: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
+      candidateVersion: '0.1.13',
+      baselineVersion: '0.1.12',
+      profiles,
+    },
+    {
+      installExtension(options) {
+        installations.push(options);
+      },
+    },
+  );
+
+  assert.deepEqual(installations, [
+    {
+      vscodeExecutablePath: '/vscode/code',
+      ...profiles.fresh,
+      extensionReference: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
+      extensionId: 'yukiito1999.project-lanes',
+      expectedVersion: '0.1.13',
+    },
+    {
+      vscodeExecutablePath: '/vscode/code',
+      ...profiles.upgrade,
+      extensionReference: 'yukiito1999.project-lanes@0.1.12',
+      extensionId: 'yukiito1999.project-lanes',
+      expectedVersion: '0.1.12',
+    },
+    {
+      vscodeExecutablePath: '/vscode/code',
+      ...profiles.upgrade,
+      extensionReference: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
+      extensionId: 'yukiito1999.project-lanes',
+      expectedVersion: '0.1.13',
+    },
+  ]);
+});
+
+test('installed VSIX verification installs before launching fresh and upgraded profiles serially', async () => {
+  const temporaryRoot = '/tmp/project-lanes-installed-vsix-test';
+  const operations = [];
+  const processApi = {
+    pid: 741,
+    once() {},
+    kill() {},
+  };
+
+  await runInstalledVSIXVerification(
+    {
+      vscodeExecutablePath: '/vscode/code',
+      vsixPath: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
+      candidateVersion: '0.1.13',
+      baselineVersion: '0.1.12',
+    },
+    {
+      createRunId: () => 'installed-run',
+      environment: { PATH: '/bin' },
+      fileSystem: {
+        mkdtempSync(prefix) {
+          assert.equal(prefix, '/tmp/project-lanes-installed-vsix-');
+          return temporaryRoot;
+        },
+        mkdirSync() {},
+        copyFileSync(source, destination) {
+          assert.equal(source, path.join(__dirname, 'fixtures', 'empty.code-workspace'));
+          assert.equal(destination, path.join(temporaryRoot, 'workspace', 'empty.code-workspace'));
+        },
+        rmSync(target, options) {
+          operations.push({ cleanup: { target, options } });
+        },
+      },
+      installProfiles(options) {
+        operations.push({ install: options });
+      },
+      async launchVSCode(options) {
+        operations.push({ launch: options });
+      },
+      processApi,
+      temporaryDirectory: '/tmp',
+    },
+  );
+
+  const profiles = {
+    fresh: {
+      userDataDir: path.join(temporaryRoot, 'fresh', 'user-data'),
+      extensionsDir: path.join(temporaryRoot, 'fresh', 'extensions'),
+    },
+    upgrade: {
+      userDataDir: path.join(temporaryRoot, 'upgrade', 'user-data'),
+      extensionsDir: path.join(temporaryRoot, 'upgrade', 'extensions'),
+    },
+  };
+  assert.deepEqual(operations[0], {
+    install: {
+      vscodeExecutablePath: '/vscode/code',
+      vsixPath: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
+      candidateVersion: '0.1.13',
+      baselineVersion: '0.1.12',
+      profiles,
+    },
+  });
+  assert.equal(operations[1].launch.args.includes('--disable-extensions'), false);
+  assert.equal(
+    operations[1].launch.args.includes(
+      `--extensionDevelopmentPath=${path.resolve(__dirname, '..', '..')}`,
+    ),
+    false,
+  );
+  assert.equal(
+    operations[1].launch.environment.PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR,
+    profiles.fresh.extensionsDir,
+  );
+  assert.equal(
+    operations[2].launch.environment.PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR,
+    profiles.upgrade.extensionsDir,
+  );
+  assert.deepEqual(
+    [operations[1].launch.environment, operations[2].launch.environment].map((launchEnvironment) =>
+      JSON.parse(launchEnvironment.PROJECT_LANES_E2E_RUN),
+    ),
+    [
+      {
+        runId: 'installed-run',
+        scenario: 'installed-vsix-fresh',
+        phase: 'default',
+      },
+      {
+        runId: 'installed-run',
+        scenario: 'installed-vsix-upgrade',
+        phase: 'default',
+      },
+    ],
+  );
+  assert.deepEqual(operations[3], {
+    cleanup: {
+      target: temporaryRoot,
+      options: { recursive: true, force: true },
+    },
+  });
+});
+
+test('the installed VSIX entrypoint downloads VS Code and verifies the requested artifact', async () => {
+  const { main } = require('./run-vsix.cjs');
+  const calls = [];
+
+  await main({
+    argv: ['/tmp/project-lanes-linux-x64-0.1.13.vsix', '0.1.12'],
+    packageMetadata: { version: '0.1.13' },
+    async downloadVSCode(options) {
+      calls.push({ download: options });
+      return '/vscode/code';
+    },
+    async runVerification(options) {
+      calls.push({ verification: options });
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      download: {
+        version: '1.101.0',
+        cachePath: '/tmp/vscode-project-lanes-vscode-test-cache',
+      },
+    },
+    {
+      verification: {
+        vscodeExecutablePath: '/vscode/code',
+        vsixPath: '/tmp/project-lanes-linux-x64-0.1.13.vsix',
+        candidateVersion: '0.1.13',
+        baselineVersion: '0.1.12',
+      },
+    },
+  ]);
+});
+
+test('the installed VSIX entrypoint requires the artifact path and previous version only', async () => {
+  const { main } = require('./run-vsix.cjs');
+
+  await assert.rejects(
+    main({
+      argv: ['/tmp/project-lanes-linux-x64-0.1.13.vsix'],
+      packageMetadata: { version: '0.1.13' },
+    }),
+    /Usage: node test\/e2e\/run-vsix\.cjs <vsixPath> <previousVersion>/,
+  );
+  await assert.rejects(
+    main({
+      argv: ['/tmp/project-lanes-linux-x64-0.1.13.vsix', '0.1.12', 'unexpected'],
+      packageMetadata: { version: '0.1.13' },
+    }),
+    /Usage: node test\/e2e\/run-vsix\.cjs <vsixPath> <previousVersion>/,
   );
 });
 
