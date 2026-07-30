@@ -315,6 +315,33 @@ describe('managed runtime の共通 operation queue', () => {
       /'projectLanes\.goToFileInLanes': \(\) =>\s*runAsyncBoundary\(\(\) => laneSearchService\.goToFileInLanes\(\), reportAsyncFailure\)/,
     );
   });
+
+  it('横断検索 adapter の disposable を managed runtime が所有する', () => {
+    expect(managedRuntime).toMatch(
+      /const search = createRipgrepSearchAdapter\(\);\s*track\(search\.disposable\);/,
+    );
+    expect(managedRuntime).toMatch(/createLaneSearchService\(\{[\s\S]*?\bsearch,[\s\S]*?\}\);/);
+  });
+});
+
+describe('横断検索の子プロセス所有境界', () => {
+  const domainFiles = collectTsFiles(nodePath.join(SRC_ROOT, 'search'));
+
+  it.each(domainFiles)('%s は node:child_process に依存しない', (file) => {
+    expect(readSource(file)).not.toMatch(/from\s+['"]node:child_process['"]/);
+  });
+
+  it('ripgrep adapter だけが spawn を所有する', () => {
+    const adapterPath = nodePath.join(SRC_ROOT, 'adapters/search/ripgrep.ts');
+    const searchProcessOwners = [...domainFiles, adapterPath]
+      .filter((file) => /from\s+['"]node:child_process['"]/.test(readSource(file)))
+      .map((file) => nodePath.relative(SRC_ROOT, file));
+    const adapter = readSource(adapterPath);
+
+    expect(searchProcessOwners).toEqual(['adapters/search/ripgrep.ts']);
+    expect(adapter).toMatch(/\bspawn\s*\(/);
+    expect(adapter).not.toMatch(/\bexecFile\s*\(/);
+  });
 });
 
 describe('ターミナル設定の可逆所有境界', () => {

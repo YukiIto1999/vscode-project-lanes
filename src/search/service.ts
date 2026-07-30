@@ -67,6 +67,7 @@ export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearch
         ui.warnUnavailable();
         return;
       }
+      if (outcome.kind === 'cancelled') return;
       if (outcome.results.length === 0) {
         ui.notifyEmpty();
         return;
@@ -82,6 +83,7 @@ export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearch
         ui.warnUnavailable();
         return;
       }
+      if (outcome.kind === 'cancelled') return;
       if (outcome.results.length === 0) {
         ui.notifyEmpty();
         return;
