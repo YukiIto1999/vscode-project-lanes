@@ -114,14 +114,14 @@ export const createTerminalPresentationAdapter = (
   return {
     attachSession: (session, title) => {
       const pty = createPseudoterminal(session, deps.activitySink);
-      const terminal = vscode.window.createTerminal({ name: title, pty });
+      const terminal = vscode.window.createTerminal({ name: title, pty, isTransient: true });
       return registerTerminal(terminal);
     },
 
     presentAsProfile: (session, title, onBound) => {
       const pty = createPseudoterminal(session, deps.activitySink);
       pendingProfile.set(pty, { onBound });
-      return new vscode.TerminalProfile({ name: title, pty });
+      return new vscode.TerminalProfile({ name: title, pty, isTransient: true });
     },
 
     showTerminal: (terminalId) => {

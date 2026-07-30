@@ -901,6 +901,55 @@ test('the installed VSIX suite activates the isolated candidate and loads its na
   assert.deepEqual(messages, ['E2E PASS: installed yukiito1999.project-lanes@0.1.13 activated']);
 });
 
+test('the installed VSIX suite selects Remove Legacy Settings while candidate activation is pending', async () => {
+  const { activateWithLegacyRemoval } = require('./suite/installed-vsix.cjs');
+  let resolveActivation;
+  const activation = new Promise((resolve) => {
+    resolveActivation = resolve;
+  });
+  const commands = [];
+
+  await activateWithLegacyRemoval({
+    activation,
+    commands: {
+      async getCommands(includeInternal) {
+        assert.equal(includeInternal, true);
+        return ['notifications.focusToasts', 'notification.acceptPrimaryAction'];
+      },
+      async executeCommand(command) {
+        commands.push(command);
+        if (command === 'notification.acceptPrimaryAction') resolveActivation();
+      },
+    },
+    delay: async () => {},
+    now: (() => {
+      let instant = 0;
+      return () => ++instant;
+    })(),
+  });
+
+  assert.deepEqual(commands, ['notifications.focusToasts', 'notification.acceptPrimaryAction']);
+});
+
+test('the installed VSIX suite rejects a VS Code build without its required notification commands', async () => {
+  const { activateWithLegacyRemoval } = require('./suite/installed-vsix.cjs');
+
+  await assert.rejects(
+    activateWithLegacyRemoval({
+      activation: new Promise(() => {}),
+      commands: {
+        async getCommands() {
+          return ['notifications.focusToasts'];
+        },
+        async executeCommand() {
+          throw new Error('must not execute');
+        },
+      },
+    }),
+    /VS Code 1\.101\.0.*notification\.acceptPrimaryAction/,
+  );
+});
+
 test('the installed VSIX suite creates v1 state with the baseline then exercises legacy-label commands after upgrade', async () => {
   const { run } = require('./suite/installed-vsix.cjs');
   const extensionsDir = '/tmp/installed/upgrade/extensions';
@@ -922,6 +971,13 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
       { name: 'lane-a', uri: { fsPath: laneA } },
       { name: 'lane-b', uri: { fsPath: laneB } },
     ],
+    getConfiguration() {
+      return {
+        inspect() {
+          return { workspaceValue: undefined };
+        },
+      };
+    },
   };
   const vscodeApi = {
     workspace,
@@ -964,6 +1020,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   };
   const dependencies = {
     vscodeApi,
+    respondToLegacySettings: async ({ activation }) => activation,
     resolveRealPath(value) {
       return value;
     },
@@ -3702,7 +3759,7 @@ test('the initialize phase accepts host cancellation only after reaching the man
   assert.deepEqual(messages, ['E2E PASS: initialize command created the managed workspace']);
 });
 
-test('the managed-restart phase verifies terminal settings and restored lane switching', async () => {
+test('the managed-restart phase preserves terminal persistence and verifies restored lane switching', async () => {
   const { run } = require('./suite/workspace-manual-initialization.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-manual-restart/workspace';
   const activeLink = activeLinkForPath(
@@ -3728,7 +3785,7 @@ test('the managed-restart phase verifies terminal settings and restored lane swi
           return {
             inspect(key) {
               return {
-                workspaceValue: key === 'defaultProfile.linux' ? 'Lane Terminal' : false,
+                workspaceValue: key === 'defaultProfile.linux' ? 'Lane Terminal' : true,
               };
             },
           };
