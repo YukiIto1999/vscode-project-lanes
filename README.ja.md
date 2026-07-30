@@ -21,6 +21,8 @@ v0.1.13 から更新した場合、現在のワークスペースフォルダと
 
 新しいワークスペースは `Project Lanes: Initialize Workspace` を実行するまで変更しない。`projectLanes.initializationMode` を `automatic` にすると、拡張機能の起動時に未管理ワークスペースを初期化する。管理済みワークスペースの復旧は、どちらの設定でも起動時に実行する。
 
+管理済みワークスペースでは通常、ターミナルの `+` ボタンからレーン対応ターミナルを開けるよう、ワークスペースの既定ターミナルプロファイルを一時的に Lane Terminal へ変更する。拡張機能の終了時に設定が変更されていなければ元の値へ戻す。`terminal.integrated.enablePersistentSessions` は変更せず、Project Lanes のカスタムターミナルだけを一時ターミナルとして扱う。v0.1.13 からの更新時は、旧版が残した可能性のあるターミナル設定と現在値が一致する場合だけ移行方法を確認する。`Keep Current Settings` または `Remove Legacy Settings` を選ぶと、そのワークスペースでは既定プロファイルを自動管理しない。`Manage Lane Terminal` を選んだ場合だけ、該当する既定プロファイルを復元可能な lease として引き継ぐ。
+
 - レーン切替
   - エクスプローラーと Git はアクティブレーンのみ表示
   - エディタタブをレーンごとに保存・復元

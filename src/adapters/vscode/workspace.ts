@@ -7,7 +7,6 @@ import type {
   LaneRootAvailabilityPort,
   WorkspaceFilePort,
   WorkspaceHostPort,
-  WorkspaceSettingsPort,
 } from '../../workspace/ports';
 import { createLaneRootAvailabilityInspector } from '../../workspace/root-availability';
 import * as fs from 'node:fs';
@@ -114,25 +113,3 @@ export const createLaneRootAvailabilityAdapter = (): LaneRootAvailabilityPort =>
     access: (path, mode) => fs.accessSync(path, mode),
     readExecuteAccessMode: fs.constants.R_OK | fs.constants.X_OK,
   });
-
-/**
- * VS Code ワークスペース設定アダプターの生成
- * @returns ワークスペース設定ポート
- */
-export const createWorkspaceSettingsAdapter = (): WorkspaceSettingsPort => ({
-  setDefaultTerminalProfile: async (profileTitle) => {
-    const cfg = vscode.workspace.getConfiguration('terminal.integrated');
-    const current = cfg.get<string>('defaultProfile.linux');
-    if (current !== profileTitle) {
-      await cfg.update('defaultProfile.linux', profileTitle, vscode.ConfigurationTarget.Workspace);
-    }
-  },
-
-  disablePersistentTerminals: async () => {
-    const cfg = vscode.workspace.getConfiguration('terminal.integrated');
-    const current = cfg.get<boolean>('enablePersistentSessions');
-    if (current !== false) {
-      await cfg.update('enablePersistentSessions', false, vscode.ConfigurationTarget.Workspace);
-    }
-  },
-});
