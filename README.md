@@ -29,22 +29,22 @@ Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Ini
 - Lane management
   - Add folders as lanes and reconcile the active lane from title-bar icons on the Lanes panel
   - Re-associate a missing or inaccessible lane with a readable folder; available lanes cannot be relocated
-  - Rename or remove a lane via right-click on the lane item. Rename preserves the lane's terminal sessions; remove rejects the active lane and never touches the folder on disk
+  - Rename or remove a lane via right-click on the lane item. Rename preserves the lane's opaque identity and terminal sessions; remove rejects the active lane and never touches the folder on disk
 
 ## Commands
 
-| Command                                  | Description                                                                       |
-| ---------------------------------------- | --------------------------------------------------------------------------------- |
-| `Project Lanes: Initialize Workspace`    | Convert the current workspace into a managed Project Lanes workspace              |
-| `Project Lanes: Switch Lane`             | Switch to a lane                                                                  |
-| `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent |
-| `Project Lanes: Reload Lanes`            | Absorb added workspace folders and reconcile the active link and selection cache  |
-| `Project Lanes: Locate Folder`           | Re-associate a missing or inaccessible lane with a readable folder                |
-| `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                 |
-| `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)  |
-| `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                    |
-| `Project Lanes: Find in Lanes`           | Search file contents across all lanes with ripgrep and jump to a match            |
-| `Project Lanes: Go to File in Lanes`     | Fuzzy-find a file across all lanes and open it                                    |
+| Command                                  | Description                                                                         |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| `Project Lanes: Initialize Workspace`    | Convert the current workspace into a managed Project Lanes workspace                |
+| `Project Lanes: Switch Lane`             | Switch to a lane                                                                    |
+| `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent   |
+| `Project Lanes: Reload Lanes`            | Absorb added workspace folders and reconcile the active link and selection cache    |
+| `Project Lanes: Locate Folder`           | Re-associate a missing or inaccessible lane with a readable folder                  |
+| `Project Lanes: Rename Lane`             | Rename the selected lane's label; duplicate labels are disambiguated by folder path |
+| `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)    |
+| `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                      |
+| `Project Lanes: Find in Lanes`           | Search file contents across all lanes with ripgrep and jump to a match              |
+| `Project Lanes: Go to File in Lanes`     | Fuzzy-find a file across all lanes and open it                                      |
 
 ## Settings
 

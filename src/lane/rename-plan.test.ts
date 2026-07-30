@@ -42,11 +42,12 @@ describe('planLaneRename', () => {
     });
   });
 
-  it('他レーンと重複したら invalid / duplicate', () => {
+  it('他レーンと同じ表示名への変更を許可し、対象 ID を維持する', () => {
     const catalog = makeCatalog(['web', 'api']);
     expect(planLaneRename({ targetId: 'web' as LaneId, newLabel: 'api', catalog })).toEqual({
-      kind: 'invalid',
-      reason: 'duplicate',
+      kind: 'rename',
+      from: makeLane('web'),
+      to: { id: 'web', label: 'api' },
     });
   });
 
@@ -60,7 +61,7 @@ describe('planLaneRename', () => {
     expect(result.kind).toBe('rename');
     if (result.kind !== 'rename') throw new Error('unreachable');
     expect(result.from.id).toBe('web');
-    expect(result.to.id).toBe('frontend');
+    expect(result.to.id).toBe('web');
     expect(result.to.label).toBe('frontend');
   });
 });

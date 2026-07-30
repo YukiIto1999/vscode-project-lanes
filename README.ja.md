@@ -29,7 +29,7 @@
 - レーン管理
   - Lanes パネルのタイトルバーアイコンからフォルダを追加し、アクティブレーンを再整合
   - missing または inaccessible のレーンを、読み取り可能なフォルダへ再関連付け。available のレーンは変更対象外
-  - レーン項目の右クリックでリネームと削除。リネームはターミナルセッションを温存したまま `label` (= `lane.id`) を変更、削除はアクティブレーンを拒否しディスク上のフォルダには触れない
+  - レーン項目の右クリックでリネームと削除。リネームは不透明なレーン ID とターミナルセッションを維持して表示名だけを変更、削除はアクティブレーンを拒否しディスク上のフォルダには触れない
 
 ## コマンド
 
@@ -40,7 +40,7 @@
 | `Project Lanes: Add Folder to Workspace` | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加                         |
 | `Project Lanes: Reload Lanes`            | 追加されたワークスペースフォルダを取り込み、アクティブリンクと選択キャッシュを再整合 |
 | `Project Lanes: Locate Folder`           | missing または inaccessible のレーンを、読み取り可能なフォルダへ再関連付け           |
-| `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                                     |
+| `Project Lanes: Rename Lane`             | 選択レーンの表示名を変更。同じ表示名のレーンはフォルダーパスで区別                   |
 | `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）                           |
 | `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                                       |
 | `Project Lanes: Find in Lanes`           | 全レーンを横断して ripgrep でファイル内容を検索し一致箇所へ移動                      |

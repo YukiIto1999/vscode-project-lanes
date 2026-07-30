@@ -1,4 +1,4 @@
-import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
+import type { AbsolutePath, LaneId, UriString, WorkspaceKey } from '../foundation/model';
 
 /** ワークスペースフォルダ情報 */
 export interface WorkspaceFolder {
@@ -6,6 +6,12 @@ export interface WorkspaceFolder {
   readonly uri: UriString;
   /** 表示名 */
   readonly name: string;
+}
+
+/** workspaceState を正本とするレーンカタログ行 */
+export interface CatalogEntry extends WorkspaceFolder {
+  /** 表示名や所在変更では変わらない不透明識別子 */
+  readonly id: LaneId;
 }
 
 /** ワークスペースファイル情報 */
@@ -33,7 +39,7 @@ export interface WorkspaceContext {
   /** ワークスペース永続キー */
   readonly key: WorkspaceKey;
   /** レーン正本 */
-  readonly canonicalLanes: readonly WorkspaceFolder[];
+  readonly canonicalLanes: readonly CatalogEntry[];
 }
 
 /** ワークスペース無効化の理由 */

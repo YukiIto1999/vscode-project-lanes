@@ -1,17 +1,17 @@
 import type { Disposable, LaneId, UriString } from '../foundation/model';
-import { type Lane, type LaneCatalog, toLaneId } from '../lane/model';
+import { isCanonicalLaneId, type Lane, type LaneCatalog } from '../lane/model';
 import { uriToAbsolutePath } from '../foundation/path';
-import type { WorkspaceFolder } from './model';
-import type { CatalogStorePort } from './ports';
+import type { CatalogEntry, WorkspaceFolder } from './model';
+import type { CatalogStorePort, LaneIdFactoryPort } from './ports';
 
 /**
  * レーンフォルダからのカタログ構築
  * @param lanes - レーンフォルダ列
  * @returns 構築済みカタログ
  */
-export const buildCatalog = (lanes: readonly WorkspaceFolder[]): LaneCatalog => {
+export const buildCatalog = (lanes: readonly CatalogEntry[]): LaneCatalog => {
   const built: Lane[] = lanes.map((f) => ({
-    id: toLaneId(f.name),
+    id: f.id,
     label: f.name,
     rootUri: f.uri,
     rootPath: uriToAbsolutePath(f.uri),
@@ -28,12 +28,26 @@ export const buildCatalog = (lanes: readonly WorkspaceFolder[]): LaneCatalog => 
  * @param b - 比較先
  * @returns 同一なら true
  */
-const sameFolders = (a: readonly WorkspaceFolder[], b: readonly WorkspaceFolder[]): boolean => {
+const sameFolders = (a: readonly CatalogEntry[], b: readonly CatalogEntry[]): boolean => {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i]!.uri !== b[i]!.uri || a[i]!.name !== b[i]!.name) return false;
+    if (a[i]!.id !== b[i]!.id || a[i]!.uri !== b[i]!.uri || a[i]!.name !== b[i]!.name) {
+      return false;
+    }
   }
   return true;
+};
+
+const assertCatalogInvariants = (entries: readonly CatalogEntry[]): void => {
+  const ids = new Set<LaneId>();
+  const roots = new Set<string>();
+  for (const entry of entries) {
+    const rootPath = uriToAbsolutePath(entry.uri);
+    if (ids.has(entry.id)) throw new Error('Duplicate LaneId in catalog.');
+    if (roots.has(rootPath)) throw new Error('Duplicate lane root in catalog.');
+    ids.add(entry.id);
+    roots.add(rootPath);
+  }
 };
 
 /** レーンカタログの集約 */
@@ -47,7 +61,7 @@ export interface WorkspaceCatalogRegistry {
    * 現在のレーンフォルダ列取得
    * @returns 永続化形式のフォルダ列
    */
-  readonly folders: () => readonly WorkspaceFolder[];
+  readonly folders: () => readonly CatalogEntry[];
   /**
    * 変更通知の購読
    * @param listener - 変更時に呼ばれるリスナー
@@ -59,7 +73,7 @@ export interface WorkspaceCatalogRegistry {
    * @param lanes - 置換後のレーン列
    * @returns 実際に変更が発生すれば true
    */
-  readonly replace: (lanes: readonly WorkspaceFolder[]) => Promise<boolean>;
+  readonly replace: (lanes: readonly CatalogEntry[]) => Promise<boolean>;
   /**
    * 未知レーンの追記
    * @param lanes - 追記候補のレーン列
@@ -68,13 +82,13 @@ export interface WorkspaceCatalogRegistry {
   readonly absorb: (lanes: readonly WorkspaceFolder[]) => Promise<readonly string[]>;
   /**
    * レーンの改名
-   * @param oldName - 旧 LaneId を兼ねる改名前 name
-   * @param newName - 新 LaneId を兼ねる改名後 name
+   * @param laneId - 対象レーン識別子
+   * @param newName - 改名後表示名
    * @param beforePublish - 保存後、カタログ公開前に実行する副作用
    * @returns 実際に変更が発生すれば true
    */
   readonly rename: (
-    oldName: string,
+    laneId: LaneId,
     newName: string,
     beforePublish?: () => void | Promise<void>,
   ) => Promise<boolean>;
@@ -87,24 +101,27 @@ export interface WorkspaceCatalogRegistry {
   readonly relocate: (laneId: LaneId, replacementUri: UriString) => Promise<boolean>;
   /**
    * レーンの除外
-   * @param name - LaneId を兼ねる除外対象 name
+   * @param laneId - 除外対象レーン識別子
    * @param beforePublish - 保存後、カタログ公開前に実行する副作用
    * @returns 実際に変更が発生すれば true
    */
-  readonly remove: (name: string, beforePublish?: () => void | Promise<void>) => Promise<boolean>;
+  readonly remove: (laneId: LaneId, beforePublish?: () => void | Promise<void>) => Promise<boolean>;
 }
 
 /**
  * レーンカタログ集約の生成
  * @param initial - 初期レーンフォルダ列
  * @param store - カタログ永続化ポート
+ * @param laneIdFactory - 新規レーン識別子採番
  * @returns 集約インスタンス
  */
 export const createCatalogRegistry = (
-  initial: readonly WorkspaceFolder[],
+  initial: readonly CatalogEntry[],
   store: CatalogStorePort,
+  laneIdFactory: LaneIdFactoryPort,
 ): WorkspaceCatalogRegistry => {
-  let folders: readonly WorkspaceFolder[] = initial;
+  assertCatalogInvariants(initial);
+  let folders: readonly CatalogEntry[] = initial;
   let catalog = buildCatalog(folders);
   const listeners = new Set<(c: LaneCatalog) => void>();
   let tail: Promise<void> = Promise.resolve();
@@ -119,9 +136,10 @@ export const createCatalogRegistry = (
   };
 
   const commit = async (
-    next: readonly WorkspaceFolder[],
+    next: readonly CatalogEntry[],
     beforePublish?: () => void | Promise<void>,
   ): Promise<void> => {
+    assertCatalogInvariants(next);
     await store.save(next);
     let effectFailure: { readonly error: unknown } | undefined;
     try {
@@ -150,34 +168,56 @@ export const createCatalogRegistry = (
       }),
     absorb: (incoming) =>
       enqueue(async () => {
-        const known = new Set(folders.map((f) => f.name));
-        const additions = incoming.filter((f) => !known.has(f.name));
+        const known = new Set(folders.map((f) => uriToAbsolutePath(f.uri)));
+        const usedIds = new Set(folders.map((f) => f.id));
+        const additions: CatalogEntry[] = [];
+        for (const folder of incoming) {
+          const rootPath = uriToAbsolutePath(folder.uri);
+          if (known.has(rootPath)) continue;
+          const id = laneIdFactory.next();
+          if (!isCanonicalLaneId(id)) {
+            throw new Error('LaneId factory returned an invalid LaneId.');
+          }
+          if (usedIds.has(id)) throw new Error('LaneId factory returned a duplicate identifier.');
+          known.add(rootPath);
+          usedIds.add(id);
+          additions.push({ ...folder, id });
+        }
         if (additions.length === 0) return [];
         await commit([...folders, ...additions]);
         return additions.map((f) => f.name);
       }),
-    rename: (oldName, newName, beforePublish) =>
+    rename: (laneId, newName, beforePublish) =>
       enqueue(async () => {
-        if (oldName === newName) return false;
-        const idx = folders.findIndex((f) => f.name === oldName);
+        const idx = folders.findIndex((f) => f.id === laneId);
         if (idx < 0) return false;
+        if (folders[idx]!.name === newName) return false;
         const next = folders.map((f, i) => (i === idx ? { ...f, name: newName } : f));
         await commit(next, beforePublish);
         return true;
       }),
     relocate: (laneId, replacementUri) =>
       enqueue(async () => {
-        const idx = folders.findIndex((folder) => folder.name === laneId);
-        if (idx < 0 || folders[idx]!.uri === replacementUri) return false;
+        const idx = folders.findIndex((folder) => folder.id === laneId);
+        if (idx < 0) return false;
+        const replacementRoot = uriToAbsolutePath(replacementUri);
+        if (uriToAbsolutePath(folders[idx]!.uri) === replacementRoot) return false;
+        if (
+          folders.some(
+            (folder, i) => i !== idx && uriToAbsolutePath(folder.uri) === replacementRoot,
+          )
+        ) {
+          return false;
+        }
         const next = folders.map((folder, i) =>
           i === idx ? { ...folder, uri: replacementUri } : folder,
         );
         await commit(next);
         return true;
       }),
-    remove: (name, beforePublish) =>
+    remove: (laneId, beforePublish) =>
       enqueue(async () => {
-        const next = folders.filter((f) => f.name !== name);
+        const next = folders.filter((f) => f.id !== laneId);
         if (next.length === folders.length) return false;
         await commit(next, beforePublish);
         return true;

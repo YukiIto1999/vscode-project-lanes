@@ -14,13 +14,6 @@ export const createLaneSessionStore = (): LaneSessionStore => {
       store.set(laneId, snapshot);
     },
     get: (laneId) => store.get(laneId),
-    rekey: (oldLaneId, newLaneId) => {
-      if (oldLaneId === newLaneId) return;
-      const snapshot = store.get(oldLaneId);
-      if (snapshot === undefined) return;
-      store.delete(oldLaneId);
-      store.set(newLaneId, snapshot);
-    },
     clear: (laneId) => {
       store.delete(laneId);
     },

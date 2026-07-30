@@ -1,6 +1,7 @@
 import type { AbsolutePath, LaneId } from '../foundation/model';
 import { planActiveLinkSwap } from '../lane/active-link';
 import type { Lane, LaneCatalog, LaneRootAvailability } from '../lane/model';
+import type { StoredLaneSelection } from '../lane/ports';
 import type { ActiveLinkSwapPlan } from './model';
 
 /** アクティブレーン再整合の入力 */
@@ -11,8 +12,8 @@ export interface ActiveLaneReconciliationInput {
   readonly linkPath: AbsolutePath;
   /** 評価時点の symlink 参照先 */
   readonly currentLinkTarget: AbsolutePath | undefined;
-  /** 永続化済み選択レーン識別子 */
-  readonly cachedLaneId: LaneId | undefined;
+  /** 永続化済み選択 */
+  readonly cachedSelection: StoredLaneSelection | undefined;
   /** 呼出操作が維持を要求するレーン識別子 */
   readonly preferredLaneId?: LaneId;
   /** 評価時点のレーン別 root 利用可否 */
@@ -53,7 +54,7 @@ export const planActiveLaneReconciliation = (
     catalog,
     linkPath,
     currentLinkTarget,
-    cachedLaneId,
+    cachedSelection,
     preferredLaneId,
     availabilityByLaneId,
   } = input;
@@ -65,6 +66,15 @@ export const planActiveLaneReconciliation = (
   const linkedLane = currentLinkTarget
     ? catalog.lanes.find((lane) => lane.rootPath === currentLinkTarget)
     : undefined;
+  const cachedLaneId =
+    cachedSelection?.kind === 'v2'
+      ? cachedSelection.laneId
+      : cachedSelection?.kind === 'legacy'
+        ? (() => {
+            const matches = catalog.lanes.filter((lane) => lane.label === cachedSelection.label);
+            return matches.length === 1 ? matches[0]!.id : undefined;
+          })()
+        : undefined;
   const cachedCandidate = cachedLaneId ? catalog.byId.get(cachedLaneId) : undefined;
   const cachedLane = cachedCandidate && isAvailable(cachedCandidate) ? cachedCandidate : undefined;
   const preferredCandidate = preferredLaneId ? catalog.byId.get(preferredLaneId) : undefined;
@@ -81,6 +91,9 @@ export const planActiveLaneReconciliation = (
     kind: 'activate',
     lane,
     linkSwap: planActiveLinkSwap(linkPath, currentLinkTarget, lane.rootPath),
-    selectionUpdate: cachedLaneId === lane.id ? undefined : { laneId: lane.id },
+    selectionUpdate:
+      cachedSelection?.kind === 'v2' && cachedSelection.laneId === lane.id
+        ? undefined
+        : { laneId: lane.id },
   };
 };
