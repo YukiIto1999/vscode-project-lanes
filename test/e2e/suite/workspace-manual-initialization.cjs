@@ -154,7 +154,7 @@ const run = async ({
   }
 
   await waitForManaged(laneA);
-  assertTerminalWorkspaceValues(resolvedVscodeApi, 'Lane Terminal', false);
+  assertTerminalWorkspaceValues(resolvedVscodeApi, 'Lane Terminal', true);
   await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-b');
   await waitForManaged(laneB);
   await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-a');

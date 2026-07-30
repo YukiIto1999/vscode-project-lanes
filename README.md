@@ -21,6 +21,8 @@ When upgrading from v0.1.13, Project Lanes can use `.lanes-root/active` as read-
 
 Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Initialize Workspace`. Set `projectLanes.initializationMode` to `automatic` to initialize new workspaces during extension startup. Already managed workspaces are repaired during startup in either mode.
 
+In a managed workspace, Project Lanes normally sets the workspace default terminal profile to Lane Terminal temporarily so the terminal `+` button remains lane-aware. It restores the previous workspace value when the extension stops, but only if nothing else changed that setting. Project Lanes does not change `terminal.integrated.enablePersistentSessions`; its custom terminals are transient instead. When upgrading from v0.1.13, a migration prompt appears only for matching terminal settings that an earlier version may have left behind. `Keep Current Settings` and `Remove Legacy Settings` disable automatic profile management for that workspace; `Manage Lane Terminal` adopts the matching profile into the reversible lease.
+
 - Lane switching
   - Explorer and Git show only the active lane
   - Editor tabs are saved and restored per lane
