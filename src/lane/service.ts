@@ -179,6 +179,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     viewRebind,
     selectionStore,
     terminal,
+    rootAvailability,
     commitActiveLane: (laneId) => {
       activeLaneId = laneId;
     },

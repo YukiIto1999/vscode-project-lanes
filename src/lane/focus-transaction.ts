@@ -1,5 +1,5 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
-import type { WorkspaceLinkPort } from '../workspace/ports';
+import type { LaneRootAvailabilityPort, WorkspaceLinkPort } from '../workspace/ports';
 import { planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
 import type { Lane, LaneCatalog, LaneFocusPlan } from './model';
@@ -29,6 +29,8 @@ export interface LaneFocusTransactionDeps {
   readonly selectionStore: LaneSelectionStorePort;
   /** ターミナル切替ポート */
   readonly terminal: LaneTerminalPort;
+  /** 切替先レーンルートの利用可否検査 */
+  readonly rootAvailability: LaneRootAvailabilityPort;
   /** commit 済み active lane の反映 */
   readonly commitActiveLane: (laneId: LaneId) => void;
 }
@@ -75,6 +77,7 @@ export const createLaneFocusTransaction = (
     viewRebind,
     selectionStore,
     terminal,
+    rootAvailability,
     commitActiveLane,
   } = deps;
   let pending: PendingFinalization | undefined;
@@ -140,7 +143,12 @@ export const createLaneFocusTransaction = (
     const source = catalog.lanes.find((lane) => lane.rootPath === linkTarget);
     if (!source) return { kind: 'blocked', reason: 'reconciliation-required' };
 
-    const plan = planLaneFocus(source, target, editor.hasDirtyEditors());
+    const targetAvailability = rootAvailability.inspect(target.rootPath);
+    const hasDirtyEditors =
+      targetAvailability === 'available' && source.id !== target.id
+        ? editor.hasDirtyEditors()
+        : false;
+    const plan = planLaneFocus(source, target, targetAvailability, hasDirtyEditors);
     if (plan.kind !== 'focus') return plan;
 
     let sourceSnapshot: ReturnType<EditorPort['captureSnapshot']> | undefined;
