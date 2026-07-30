@@ -1,8 +1,7 @@
-import type { AbsolutePath } from '../foundation/model';
 import type { OperationQueue } from '../foundation/operation-queue';
 import type { WorkspaceFolder } from './model';
 import type { WorkspaceHostPort } from './ports';
-import { isLegacyAnchor, isLinkFolder } from './scanner';
+import { classifyWorkspaceFolder, type WorkspaceAnchor } from './anchor';
 
 /** ユーザー操作による workspaceFolders 変化への応答アクション */
 export type ReconciliationAction =
@@ -25,14 +24,12 @@ export interface ReconcileInput {
   readonly rawFolders: readonly WorkspaceFolder[];
   /** カタログ内の既知レーン */
   readonly currentLanes: readonly WorkspaceFolder[];
-  /** symlink 絶対パス */
-  readonly linkPath: AbsolutePath;
+  /** 現 workspace の新旧 anchor */
+  readonly anchor: WorkspaceAnchor;
   /** 活性レーン由来の表示名 */
   readonly activeLabel: string;
   /** symlink folder の URI */
   readonly linkUri: WorkspaceFolder['uri'];
-  /** 旧アンカーの絶対 URI */
-  readonly legacyAnchorUri: WorkspaceFolder['uri'];
 }
 
 /** workspace folder 再整合の結果 */
@@ -64,12 +61,10 @@ export interface WorkspaceFolderReconcilerDeps {
   readonly absorb: (additions: readonly WorkspaceFolder[]) => Promise<void>;
   /** commit 後に残った lane operation の確定 */
   readonly finalizePendingOperations: () => Promise<void>;
-  /** active link 絶対パス */
-  readonly linkPath: AbsolutePath;
+  /** 現 workspace の新旧 anchor */
+  readonly anchor: WorkspaceAnchor;
   /** active link URI */
   readonly linkUri: WorkspaceFolder['uri'];
-  /** 旧アンカーの絶対 URI */
-  readonly legacyAnchorUri: WorkspaceFolder['uri'];
 }
 
 /** workspace folder 再整合 */
@@ -87,14 +82,17 @@ export interface WorkspaceFolderReconciler {
  * @returns 応答アクション
  */
 export const reconcileUserChange = (input: ReconcileInput): ReconciliationAction => {
-  const { rawFolders, currentLanes, linkPath, activeLabel, linkUri, legacyAnchorUri } = input;
+  const { rawFolders, currentLanes, anchor, activeLabel, linkUri } = input;
 
-  if (rawFolders.length === 1 && isLinkFolder(rawFolders[0]!, linkPath)) {
+  if (
+    rawFolders.length === 1 &&
+    classifyWorkspaceFolder(rawFolders[0]!, anchor) === 'active-link'
+  ) {
     return { kind: 'noop' };
   }
 
   const nonSystem = rawFolders.filter(
-    (folder) => !isLinkFolder(folder, linkPath) && !isLegacyAnchor(folder, legacyAnchorUri),
+    (folder) => classifyWorkspaceFolder(folder, anchor) === 'lane',
   );
   const known = new Set(currentLanes.map((f) => f.uri));
   const additions = nonSystem.filter((f) => !known.has(f.uri));
@@ -121,9 +119,8 @@ export const createWorkspaceFolderReconciler = (
     getActiveLabel,
     absorb,
     finalizePendingOperations,
-    linkPath,
+    anchor,
     linkUri,
-    legacyAnchorUri,
   } = deps;
 
   return {
@@ -134,10 +131,9 @@ export const createWorkspaceFolderReconciler = (
         const action = reconcileUserChange({
           rawFolders,
           currentLanes: getCurrentLanes(),
-          linkPath,
+          anchor,
           activeLabel: getActiveLabel(),
           linkUri,
-          legacyAnchorUri,
         });
         if (action.kind === 'noop') return { kind: 'noop' };
 

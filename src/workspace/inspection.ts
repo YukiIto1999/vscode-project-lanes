@@ -1,19 +1,8 @@
-import * as nodePath from 'node:path';
-import { uriToAbsolutePath } from '../foundation/path';
-import type { AbsolutePath } from '../foundation/model';
-import type {
-  CatalogStorePort,
-  WorkspaceFilePort,
-  WorkspaceHostPort,
-  WorkspaceLinkPort,
-} from './ports';
+import { classifyWorkspaceFolder, deriveWorkspaceAnchor } from './anchor';
+import type { CatalogStorePort, WorkspaceFilePort, WorkspaceHostPort } from './ports';
 
 /** 管理済みワークスペースと判定した根拠 */
-export type WorkspaceManagementEvidence =
-  | 'catalog'
-  | 'active-folder'
-  | 'legacy-anchor'
-  | 'active-target';
+export type WorkspaceManagementEvidence = 'catalog' | 'active-folder' | 'legacy-anchor';
 
 /** ワークスペース管理状態の検査結果 */
 export type WorkspaceInspectionResult =
@@ -40,8 +29,6 @@ export interface WorkspaceInspectionPorts {
   readonly workspaceHost: Pick<WorkspaceHostPort, 'readFolders'>;
   /** catalog の読み取り */
   readonly catalogStore: Pick<CatalogStorePort, 'load'>;
-  /** active link target の読み取り */
-  readonly link: Pick<WorkspaceLinkPort, 'readTarget'>;
 }
 
 /**
@@ -57,29 +44,14 @@ export const inspectWorkspace = (ports: WorkspaceInspectionPorts): WorkspaceInsp
     return { kind: 'managed', evidence: 'catalog' };
   }
 
-  const activePath = nodePath.join(fileInfo.directoryPath, '.lanes-root', 'active') as AbsolutePath;
-  const legacyAnchorPath = nodePath.join(fileInfo.directoryPath, '.lanes-root') as AbsolutePath;
+  const anchor = deriveWorkspaceAnchor(fileInfo);
   const rawFolders = ports.workspaceHost.readFolders();
-  const rawPaths = rawFolders.map((folder) => uriToAbsolutePath(folder.uri));
-
-  if (rawPaths.includes(activePath)) {
+  const roles = rawFolders.map((folder) => classifyWorkspaceFolder(folder, anchor));
+  if (roles.includes('active-link') || roles.includes('legacy-active-link')) {
     return { kind: 'managed', evidence: 'active-folder' };
   }
-  if (
-    rawFolders.some(
-      (folder) =>
-        folder.name === '.lanes-root' && uriToAbsolutePath(folder.uri) === legacyAnchorPath,
-    )
-  ) {
+  if (roles.includes('legacy-anchor')) {
     return { kind: 'managed', evidence: 'legacy-anchor' };
-  }
-
-  const activeTarget = ports.link.readTarget();
-  const normalRawPaths = rawPaths.filter(
-    (path) => path !== activePath && path !== legacyAnchorPath,
-  );
-  if (activeTarget !== undefined && normalRawPaths.includes(activeTarget)) {
-    return { kind: 'managed', evidence: 'active-target' };
   }
 
   return { kind: 'unmanaged' };
