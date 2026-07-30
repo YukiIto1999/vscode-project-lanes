@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import type { AbsolutePath, Disposable } from '../../foundation/model';
 import type { ConfigPort, ProjectLanesConfig } from '../../app/model';
+import { toInitializationMode } from '../../app/configuration';
 
 /**
  * 現設定値の取得
@@ -9,6 +10,7 @@ import type { ConfigPort, ProjectLanesConfig } from '../../app/model';
 const readConfig = (): ProjectLanesConfig => {
   const cfg = vscode.workspace.getConfiguration('projectLanes');
   return {
+    initializationMode: toInitializationMode(cfg.get<unknown>('initializationMode')),
     showActivityIndicator: cfg.get<boolean>('activity.showIndicator', true),
     shellPath: (cfg.get<string>('terminal.shellPath', '') || undefined) as AbsolutePath | undefined,
   };
