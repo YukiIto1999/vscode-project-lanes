@@ -268,6 +268,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'api',
     });
 
     expect(h.service.snapshot().activeLaneId).toBe('api');
@@ -287,6 +289,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'api',
     });
 
     expect(h.service.snapshot().activeLaneId).toBe('api');
@@ -305,6 +309,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'api',
     });
 
     expect(h.legacyLinkRead).toHaveBeenCalledOnce();
@@ -367,6 +373,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'web',
     });
 
     expect(h.service.snapshot().activeLaneId).toBe('web');
@@ -384,6 +392,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'web',
     });
 
     expect(h.service.snapshot().activeLaneId).toBe('web');
@@ -411,6 +421,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'api',
     });
 
     expect(h.service.snapshot().activeLaneId).toBe('api');
@@ -454,6 +466,7 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'inactive',
       cache: 'saved',
+      activeLaneChanged: false,
     });
 
     expect(h.linkClear).toHaveBeenCalledOnce();
@@ -477,6 +490,7 @@ describe('createLaneService active lane reconciliation', () => {
       kind: 'inactive',
       cache: 'pending',
       error: failure,
+      activeLaneChanged: false,
     });
     expect(h.currentLinkTarget()).toBeUndefined();
     expect(h.service.snapshot().activeLaneId).toBeUndefined();
@@ -484,6 +498,7 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'inactive',
       cache: 'saved',
+      activeLaneChanged: false,
     });
     expect(h.selectionSave).toHaveBeenCalledTimes(2);
   });
@@ -531,6 +546,22 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('worker');
     expect(h.linkSwap).not.toHaveBeenCalled();
     expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'worker');
+  });
+
+  it('active lane の変化を queue 内で直前の operation 完了後から判定する', async () => {
+    const h = createHarness({ operationQueue: createOperationQueue() });
+    await h.service.reconcileActiveLane();
+
+    const focusing = h.service.focus('api' as LaneId);
+    const reconciling = h.service.reconcileActiveLane();
+
+    await focusing;
+    await expect(reconciling).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+      activeLaneChanged: false,
+    });
+    expect(h.service.snapshot().activeLaneId).toBe('api');
   });
 
   it('link swap が不要でも active folder view を再構成する', async () => {
@@ -698,6 +729,8 @@ describe('createLaneService active lane reconciliation', () => {
       kind: 'active',
       cache: 'pending',
       error: saveFailure,
+      activeLaneChanged: true,
+      changedToLaneId: 'api',
     });
     expect(h.service.snapshot().activeLaneId).toBe('api');
     expect(h.currentLinkTarget()).toBe('/repo/api');
@@ -707,6 +740,7 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: false,
     });
 
     expect(h.linkSwap).not.toHaveBeenCalled();
@@ -735,6 +769,8 @@ describe('createLaneService active lane reconciliation', () => {
     await expect(h.service.reconcileActiveLane()).resolves.toEqual({
       kind: 'empty',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: undefined,
     });
 
     expect(h.service.snapshot().activeLaneId).toBeUndefined();
@@ -801,12 +837,64 @@ describe('createLaneService active lane reconciliation', () => {
     const second = h.service.reconcileActiveLane();
 
     await expect(first).rejects.toThrow('workspace-folder-mutation-rejected');
-    await expect(second).resolves.toEqual({ kind: 'active', cache: 'saved' });
+    await expect(second).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'api',
+    });
     expect(h.service.snapshot().activeLaneId).toBe('api');
   });
 });
 
 describe('createLaneService operation queue', () => {
+  it('後続 focus 後は再整合時の古い lane を terminal へ再表示しない', async () => {
+    const h = createHarness({ operationQueue: createOperationQueue() });
+    const reconciliation = await h.service.reconcileActiveLane();
+    expect(reconciliation).toMatchObject({
+      activeLaneChanged: true,
+      changedToLaneId: 'web',
+    });
+    h.terminalReveal.mockClear();
+
+    await h.service.focus('api' as LaneId);
+    await h.service.revealActiveLaneIfCurrent('web' as LaneId);
+
+    expect(h.terminalReveal).toHaveBeenCalledOnce();
+    expect(h.terminalReveal).toHaveBeenCalledWith(expect.objectContaining({ id: 'api' }));
+  });
+
+  it('再表示時に同じ LaneId の最新 catalog を読む', async () => {
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      promptRename: async () => 'frontend',
+    });
+    await h.service.reconcileActiveLane();
+    await h.service.renameLane('web' as LaneId);
+    h.terminalReveal.mockClear();
+
+    await h.service.revealActiveLaneIfCurrent('web' as LaneId);
+
+    expect(h.terminalReveal).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'web', label: 'frontend' }),
+    );
+  });
+
+  it('再表示時に active root が unavailable なら terminal を表示しない', async () => {
+    let availability: LaneRootAvailability = 'available';
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      inspectRoot: () => availability,
+    });
+    await h.service.reconcileActiveLane();
+    h.terminalReveal.mockClear();
+    availability = 'missing';
+
+    await h.service.revealActiveLaneIfCurrent('web' as LaneId);
+
+    expect(h.terminalReveal).not.toHaveBeenCalled();
+  });
+
   it('active rename は LaneId と terminal/editor/selection のキーを変更しない', async () => {
     const h = createHarness({ promptRename: async () => 'api' });
     await h.service.reconcileActiveLane();
@@ -1302,6 +1390,8 @@ describe('createLaneService relocation', () => {
     await expect(restarted.reconcileActiveLane()).resolves.toEqual({
       kind: 'active',
       cache: 'saved',
+      activeLaneChanged: true,
+      changedToLaneId: 'web',
     });
     expect(restarted.snapshot().activeLaneId).toBe('web');
     expect(h.currentLinkTarget()).toBe('/moved/web');
@@ -1344,6 +1434,8 @@ describe('createLaneService relocation', () => {
       kind: 'active',
       cache: 'pending',
       error: firstSaveFailure,
+      activeLaneChanged: true,
+      changedToLaneId: 'web',
     });
     expect(h.service.snapshot().activeLaneId).toBe('web');
     webAvailability = 'missing';

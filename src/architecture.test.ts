@@ -236,7 +236,10 @@ describe('managed runtime の共通 operation queue', () => {
       managedRuntime.indexOf('const runtimeReconciler = createRuntimeReconciler'),
       managedRuntime.indexOf('track(laneActivity.onChange'),
     );
-    expect(runtimeReconciler).toMatch(/isLaneAvailable,/);
+    expect(runtimeReconciler).toMatch(
+      /revealActiveLaneIfCurrent: \(laneId\) => laneService\.revealActiveLaneIfCurrent\(laneId\)/,
+    );
+    expect(runtimeReconciler).not.toMatch(/terminalService\.revealLane/);
 
     const startup = managedRuntime.slice(
       managedRuntime.indexOf('const initialLane'),

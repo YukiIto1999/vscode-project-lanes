@@ -398,10 +398,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const runtimeReconciler = createRuntimeReconciler({
       reconcileWorkspaceFolders: () => workspaceFolderReconciler.reconcileWorkspaceFolders(),
       reconcileActiveLane: () => laneService.reconcileActiveLane(),
-      getActiveLaneId: () => laneService.snapshot().activeLaneId,
-      getLane: (laneId) => registry.snapshot().byId.get(laneId),
-      isLaneAvailable,
-      revealLane: async (lane) => terminalService.revealLane(lane),
+      revealActiveLaneIfCurrent: (laneId) => laneService.revealActiveLaneIfCurrent(laneId),
       render,
       reportPendingCache: reportAsyncFailure,
       reportWorkspaceMutationRejected: (error) =>
