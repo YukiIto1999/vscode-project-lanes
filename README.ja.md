@@ -17,6 +17,8 @@
 各プロジェクトを「レーン」として扱い、エクスプローラー・エディタタブ・ターミナル・Git を一括で切り替える。
 ワークスペースフォルダの実体は `.lanes-root/active` という symlink で、切替時にこの symlink の参照先だけが書き換わる。URI 自体は変わらないため拡張ホストが再起動せず、バックグラウンドのターミナルプロセスはそのまま生存し続ける。
 
+新しいワークスペースは `Project Lanes: Initialize Workspace` を実行するまで変更しない。`projectLanes.initializationMode` を `automatic` にすると、拡張機能の起動時に未管理ワークスペースを初期化する。管理済みワークスペースの復旧は、どちらの設定でも起動時に実行する。
+
 - レーン切替
   - エクスプローラーと Git はアクティブレーンのみ表示
   - エディタタブをレーンごとに保存・復元
@@ -32,6 +34,7 @@
 
 | コマンド                                 | 説明                                                              |
 | ---------------------------------------- | ----------------------------------------------------------------- |
+| `Project Lanes: Initialize Workspace`    | 現在のワークスペースを Project Lanes の管理対象として初期化       |
 | `Project Lanes: Switch Lane`             | レーンに切替                                                      |
 | `Project Lanes: Add Folder to Workspace` | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加      |
 | `Project Lanes: Reload Lanes`            | `workspaceFolders` / symlink / カタログを見直し registry を再構築 |
@@ -43,10 +46,11 @@
 
 ## 設定
 
-| 設定                                  | デフォルト | 説明                                                   |
-| ------------------------------------- | ---------- | ------------------------------------------------------ |
-| `projectLanes.activity.showIndicator` | `true`     | バッジ・デコレーション・ステータスバーへの活動状態表示 |
-| `projectLanes.terminal.shellPath`     | `""`       | Lane Terminal のシェルパス（空欄で `$SHELL`）          |
+| 設定                                  | デフォルト | 説明                                                     |
+| ------------------------------------- | ---------- | -------------------------------------------------------- |
+| `projectLanes.initializationMode`     | `manual`   | 未管理ワークスペースをコマンドまたは起動時に初期化       |
+| `projectLanes.activity.showIndicator` | `true`     | バッジ・デコレーション・ステータスバーへの活動状態表示   |
+| `projectLanes.terminal.shellPath`     | `""`       | Lane Terminal のシェルパス。空欄の場合は `$SHELL` を使用 |
 
 ## 制約事項
 
@@ -54,7 +58,7 @@
 - 活動状態検出はシェル統合 (`bash` / `zsh`) と OSC 633 が前提。`fish` / `pwsh` 等は注入をスキップし `no-agent` 固定でフォールバック
 - タブの復元は通常のファイルタブのみ（差分ビューやノートブック等は対象外）
 - ターミナルセッションは VS Code ウィンドウのリロードでは保持されない
-- `.code-workspace` の隣に `.lanes-root/` が作成される。必要に応じて `.gitignore` に追加すること
+- ワークスペースを初期化すると `.code-workspace` の隣に `.lanes-root/` が作成される。必要に応じて `.gitignore` に追加すること
 
 ## ライセンス
 

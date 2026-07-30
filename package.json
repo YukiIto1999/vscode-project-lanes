@@ -56,6 +56,11 @@
     },
     "commands": [
       {
+        "command": "projectLanes.initializeWorkspace",
+        "title": "Initialize Workspace",
+        "category": "Project Lanes"
+      },
+      {
         "command": "projectLanes.switchLane",
         "title": "Switch Lane",
         "category": "Project Lanes"
@@ -132,6 +137,16 @@
     "configuration": {
       "title": "Project Lanes",
       "properties": {
+        "projectLanes.initializationMode": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "automatic"
+          ],
+          "default": "manual",
+          "scope": "window",
+          "description": "Choose whether an unmanaged workspace is initialized only by command or automatically when Project Lanes starts."
+        },
         "projectLanes.terminal.shellPath": {
           "type": "string",
           "default": "",
@@ -160,8 +175,13 @@
       },
       {
         "view": "projectLanes",
+        "contents": "Initialize this workspace before Project Lanes changes its folders or settings.\n[Initialize Workspace](command:projectLanes.initializeWorkspace)",
+        "when": "workbenchState == workspace && projectLanes.workspaceStatus =~ /^(unmanaged|recoverable)$/"
+      },
+      {
+        "view": "projectLanes",
         "contents": "No lanes yet.\n[Add Folder to Workspace](command:projectLanes.addFolder)",
-        "when": "workbenchState == workspace"
+        "when": "workbenchState == workspace && projectLanes.workspaceStatus == ready"
       }
     ]
   },
