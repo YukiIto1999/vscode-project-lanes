@@ -16,7 +16,7 @@ export const createEditorAdapter = (): EditorPort & FileOpenPort => ({
       group.tabs
         .filter(
           (tab): tab is vscode.Tab & { input: vscode.TabInputText } =>
-            tab.input instanceof vscode.TabInputText,
+            tab.input instanceof vscode.TabInputText && tab.input.uri.scheme === 'file',
         )
         .map((tab) => ({
           uri: tab.input.uri.toString() as UriString,
@@ -26,7 +26,9 @@ export const createEditorAdapter = (): EditorPort & FileOpenPort => ({
   }),
 
   closeAll: async () => {
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    const tabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
+    if (tabs.length === 0) return true;
+    return vscode.window.tabGroups.close(tabs, true);
   },
 
   restoreSnapshot: async (snapshot) => {

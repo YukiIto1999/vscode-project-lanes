@@ -7,10 +7,10 @@ import { planActiveLaneReconciliation } from '../workspace/active-lane-reconcili
 import { createLaneFocusTransaction } from './focus-transaction';
 import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
 import type {
+  EditorSnapshotStorePort,
   EditorPort,
   LanePromptPort,
   LaneSelectionStorePort,
-  LaneSessionStore,
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
@@ -41,7 +41,7 @@ export interface LaneServiceDeps {
   /** カタログ正本の操作 */
   readonly registry: WorkspaceCatalogRegistry;
   /** エディタ snapshot ストア */
-  readonly editorStore: LaneSessionStore;
+  readonly editorStore: EditorSnapshotStorePort;
   /** runtime 共通の非同期操作 queue */
   readonly operationQueue: OperationQueue;
   /** レーンルート利用可否の検査 */
@@ -149,6 +149,15 @@ interface PendingRenameFinalization {
   readonly viewRebound: boolean;
 }
 
+interface PendingRemovalFinalization {
+  /** 削除対象レーン識別子 */
+  readonly laneId: LaneId;
+  /** ターミナル終了の完了状態 */
+  readonly terminalClosed: boolean;
+  /** エディタ状態除外の永続化完了状態 */
+  readonly snapshotRemoved: boolean;
+}
+
 /**
  * レーンサービスの生成
  * @param deps - 依存
@@ -172,6 +181,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
   } = deps;
   let activeLaneId: LaneId | undefined;
   let pendingRename: PendingRenameFinalization | undefined;
+  let pendingRemoval: PendingRemovalFinalization | undefined;
 
   const focusTransaction = createLaneFocusTransaction({
     getCatalog,
@@ -202,9 +212,41 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     pendingRename = undefined;
   };
 
+  const finalizePendingRemoval = async (): Promise<void> => {
+    let current = pendingRemoval;
+    if (!current) return;
+
+    const failures: unknown[] = [];
+    if (!current.terminalClosed) {
+      try {
+        await terminal.closeLane(current.laneId);
+        current = { ...current, terminalClosed: true };
+        pendingRemoval = current;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (!current.snapshotRemoved) {
+      try {
+        await editorStore.remove(current.laneId);
+        current = { ...current, snapshotRemoved: true };
+        pendingRemoval = current;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+
+    if (current.terminalClosed && current.snapshotRemoved) pendingRemoval = undefined;
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'Lane removal finalization failed.');
+    }
+  };
+
   const finalizePendingOperations = async (): Promise<void> => {
     await focusTransaction.finalizePending();
     await finalizePendingRename();
+    await finalizePendingRemoval();
   };
 
   const executeActiveLaneReconciliation = async (
@@ -513,11 +555,12 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         }
 
         await registry.remove(plan.target.id, async () => {
-          try {
-            await terminal.closeLane(plan.target.id);
-          } finally {
-            editorStore.clear(plan.target.id);
-          }
+          pendingRemoval = {
+            laneId: plan.target.id,
+            terminalClosed: false,
+            snapshotRemoved: false,
+          };
+          await finalizePendingRemoval();
         });
       });
     },

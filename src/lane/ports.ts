@@ -16,14 +16,17 @@ export type StoredLaneSelection =
       readonly label: string;
     };
 
-/** レーン別エディタ状態の保存ストア */
-export interface LaneSessionStore {
+/** エディタ状態のカタログ収束結果 */
+export type EditorSnapshotPruneResult = 'unchanged' | 'pruned' | 'protected';
+
+/** レーン別エディタ状態の永続化ストア */
+export interface EditorSnapshotStorePort {
   /**
    * エディタ状態の保存
    * @param laneId - 対象レーン識別子
    * @param snapshot - 保存対象スナップショット
    */
-  readonly save: (laneId: LaneId, snapshot: EditorSnapshot) => void;
+  readonly save: (laneId: LaneId, snapshot: EditorSnapshot) => Promise<void>;
   /**
    * エディタ状態の取得
    * @param laneId - 対象レーン識別子
@@ -34,7 +37,13 @@ export interface LaneSessionStore {
    * エディタ状態の破棄
    * @param laneId - 対象レーン識別子
    */
-  readonly clear: (laneId: LaneId) => void;
+  readonly remove: (laneId: LaneId) => Promise<void>;
+  /**
+   * 現行カタログに存在しないエディタ状態の除外
+   * @param retainedLaneIds - 維持するレーン識別子列
+   * @returns 変更有無、または将来スキーマ保護
+   */
+  readonly prune: (retainedLaneIds: readonly LaneId[]) => Promise<EditorSnapshotPruneResult>;
 }
 
 /** エディタ操作ポート */
@@ -51,9 +60,9 @@ export interface EditorPort {
   readonly captureSnapshot: () => EditorSnapshot;
   /**
    * 全タブの破棄
-   * @returns 破棄完了の Promise
+   * @returns 全タブを破棄できた場合は true
    */
-  readonly closeAll: () => Promise<void>;
+  readonly closeAll: () => Promise<boolean>;
   /**
    * エディタ状態の復元
    * @param snapshot - 復元対象スナップショット

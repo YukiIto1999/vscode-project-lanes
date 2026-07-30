@@ -24,6 +24,7 @@ Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Ini
 - Lane switching
   - Explorer and Git show only the active lane
   - Editor tabs are saved and restored per lane
+  - Saved tabs survive VS Code restarts. Tabs for an inactive lane are restored only when you switch back to it, not during startup
   - Terminals persist in the background across switches
 - Activity indicator
   - Shows `working` / `waiting` / `no-agent` per lane, including lanes that aren't currently active

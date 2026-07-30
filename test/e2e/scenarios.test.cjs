@@ -83,6 +83,18 @@ const laneSwitchTransactionScenario = {
   suitePath: path.join(__dirname, 'suite', 'lane-switch-transaction.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'transaction' }, { phase: 'restart' }],
 };
+const editorSnapshotPersistenceScenario = {
+  name: 'editor-snapshot-persistence',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-persistence'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'editor-snapshot-persistence',
+    'editor-snapshot-persistence.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'editor-snapshot-persistence.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'capture' }, { phase: 'restore' }],
+};
 const activeLaneReconciliationScenario = {
   name: 'active-lane-reconciliation',
   fixtureRoot: path.join(__dirname, 'fixtures', 'active-lane-reconciliation'),
@@ -280,6 +292,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceAnchorIsolationScenario,
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
+    editorSnapshotPersistenceScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
     legacyAnchorClassificationScenario,
@@ -3306,6 +3319,88 @@ test('the workspace-bootstrap suite rejects an unknown phase', async () => {
     }),
     /Unknown E2E phase: unknown/,
   );
+});
+
+test('the editor snapshot persistence suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/editor-snapshot-persistence.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the editor snapshot restore phase requires exactly one tab in each saved column', async () => {
+  const { run } = require('./suite/editor-snapshot-persistence.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-editor-snapshot/workspace';
+  const workspaceFile = path.join(workspaceDirectory, 'editor-snapshot-persistence.code-workspace');
+  const activeLink = activeLinkForPath(workspaceFile);
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const firstPath = path.join(laneA, 'first.txt');
+  const secondPath = path.join(laneA, 'second.txt');
+  const commands = [];
+  const messages = [];
+  let activeTarget = laneB;
+
+  class TabInputText {
+    constructor(filePath) {
+      this.uri = { fsPath: filePath };
+    }
+  }
+
+  const tabGroups = { all: [] };
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'restore' }),
+    },
+    vscodeApi: {
+      ViewColumn: { One: 1, Two: 2 },
+      TabInputText,
+      workspace: {
+        workspaceFile: { fsPath: workspaceFile },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-b' }],
+      },
+      window: { tabGroups },
+      extensions: {
+        getExtension() {
+          return { async activate() {} };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneLabel) {
+          commands.push([command, laneLabel]);
+          activeTarget = laneA;
+          tabGroups.all = [
+            {
+              viewColumn: 1,
+              tabs: [{ input: new TabInputText(firstPath) }],
+            },
+            {
+              viewColumn: 2,
+              tabs: [{ input: new TabInputText(secondPath) }],
+            },
+          ];
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(linkPath) {
+        assert.equal(linkPath, activeLink);
+        return activeTarget;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-a']]);
+  assert.deepEqual(messages, ['E2E PASS: lane-a editor snapshot restored once after restart']);
 });
 
 test('the workspace-bootstrap phase accepts host cancellation after reaching lane-a', async () => {
