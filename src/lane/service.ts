@@ -240,16 +240,66 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     const catalog = getCatalog();
     const currentLinkTarget = link.readTarget();
     const cachedLaneId = selectionStore.load(workspaceKey);
+    const availabilityByLaneId = new Map(
+      catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
+    );
+    const linkedLane = catalog.lanes.find((lane) => lane.rootPath === currentLinkTarget);
+    const linkedLaneUnavailable =
+      linkedLane !== undefined && availabilityByLaneId.get(linkedLane.id) !== 'available';
     const plan = planActiveLaneReconciliation({
       catalog,
       linkPath: link.linkPath,
       currentLinkTarget,
       cachedLaneId,
       ...(preferredLaneId ? { preferredLaneId } : {}),
-      availabilityByLaneId: new Map(
-        catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
-      ),
+      availabilityByLaneId,
     });
+
+    const preserveLinkedLane = async (): Promise<ActiveLaneReconciliationResult> => {
+      if (!linkedLane) throw new Error('linked-lane-missing');
+      activeLaneId = linkedLane.id;
+      if (cachedLaneId === linkedLane.id) return { kind: 'active', cache: 'saved' };
+      try {
+        await selectionStore.save(workspaceKey, linkedLane.id);
+        return { kind: 'active', cache: 'saved' };
+      } catch (error) {
+        return { kind: 'active', cache: 'pending', error };
+      }
+    };
+
+    if (linkedLaneUnavailable && plan.kind === 'activate' && plan.lane.id !== linkedLane.id) {
+      activeLaneId = linkedLane.id;
+      const transition = await focusTransaction.focus(plan.lane.id);
+      if (transition.kind === 'focus') return { kind: 'active', cache: 'saved' };
+      if (transition.kind === 'blocked' && transition.reason === 'dirty-editors') {
+        prompt.warnDirtyEditors();
+        return preserveLinkedLane();
+      }
+      if (transition.kind === 'failed') {
+        if (activeLaneId === plan.lane.id && link.readTarget() === plan.lane.rootPath) {
+          return { kind: 'active', cache: 'pending', error: transition.error };
+        }
+        const preserved = await preserveLinkedLane();
+        const cause =
+          preserved.cache === 'pending'
+            ? new AggregateError(
+                [transition.error, preserved.error],
+                'Active lane evacuation and cache rollback failed.',
+              )
+            : transition.error;
+        throw new ActiveLaneReconciliationError('workspace-folder-mutation-rejected', cause);
+      }
+      return preserveLinkedLane();
+    }
+
+    if (linkedLaneUnavailable && (plan.kind === 'empty' || plan.kind === 'inactive')) {
+      activeLaneId = linkedLane.id;
+      if (editor.hasDirtyEditors()) {
+        prompt.warnDirtyEditors();
+        return preserveLinkedLane();
+      }
+    }
+
     if (plan.kind === 'empty' || plan.kind === 'inactive') {
       try {
         link.clear();
@@ -339,10 +389,22 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     },
 
     relocateLane: async (laneId) => {
-      const targetId = laneId ?? (await prompt.pickLane(getCatalog().lanes));
-      if (!targetId) return undefined;
-      const initialTarget = getCatalog().byId.get(targetId);
+      const initialCatalog = getCatalog();
+      let targetId = laneId;
+      if (!targetId) {
+        const unavailableLanes = initialCatalog.lanes.filter(
+          (lane) => rootAvailability.inspect(lane.rootPath) !== 'available',
+        );
+        if (unavailableLanes.length === 0) return { kind: 'noop', reason: 'no-target' };
+        targetId = await prompt.pickLane(unavailableLanes);
+        if (!targetId) return undefined;
+      }
+
+      const initialTarget = initialCatalog.byId.get(targetId);
       if (!initialTarget) return { kind: 'noop', reason: 'no-target' };
+      if (rootAvailability.inspect(initialTarget.rootPath) === 'available') {
+        return { kind: 'noop', reason: 'no-target' };
+      }
 
       const replacementUri = await prompt.pickReplacementFolder(
         parentDirectory(initialTarget.rootPath),
@@ -353,6 +415,9 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         await finalizePendingOperations();
         const catalog = getCatalog();
         const target = catalog.byId.get(targetId);
+        if (!target || rootAvailability.inspect(target.rootPath) === 'available') {
+          return { kind: 'noop', reason: 'no-target' };
+        }
         const replacementPath = uriToAbsolutePath(replacementUri);
         const plan = planLaneRelocation({
           target,
@@ -362,12 +427,42 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         });
         if (plan.kind !== 'relocate') return plan;
 
-        const relocationWasActive = activeLaneId === targetId;
+        const relocationWasActive = link.readTarget() === plan.target.rootPath;
+        if (relocationWasActive) {
+          activeLaneId = plan.target.id;
+          const relocatedTarget: Lane = {
+            ...plan.target,
+            rootUri: plan.replacementUri,
+            rootPath: plan.replacementPath,
+          };
+          let catalogPublished = false;
+          const transition = await focusTransaction.relocateActive(
+            plan.target,
+            relocatedTarget,
+            async () => {
+              let relocated = false;
+              try {
+                relocated = await registry.relocate(targetId, plan.replacementUri);
+              } finally {
+                catalogPublished = getCatalog().byId.get(targetId)?.rootUri === plan.replacementUri;
+              }
+              if (!relocated || !catalogPublished) {
+                throw new Error('relocation-catalog-not-published');
+              }
+            },
+            () => catalogPublished,
+          );
+          if (transition.kind === 'blocked') {
+            if (transition.reason === 'dirty-editors') prompt.warnDirtyEditors();
+            return transition;
+          }
+          if (transition.kind === 'failed') throw transition.error;
+          return plan;
+        }
+
         const relocated = await registry.relocate(targetId, plan.replacementUri);
         if (!relocated) return { kind: 'noop', reason: 'no-target' };
-        const reconciliation = await executeActiveLaneReconciliation(
-          relocationWasActive ? targetId : undefined,
-        );
+        const reconciliation = await executeActiveLaneReconciliation();
         if (reconciliation.cache === 'pending') throw reconciliation.error;
         return plan;
       });

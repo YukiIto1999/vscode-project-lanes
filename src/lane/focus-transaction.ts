@@ -43,6 +43,20 @@ export interface LaneFocusTransaction {
    * @returns 切替結果
    */
   readonly focus: (targetLaneId: LaneId) => Promise<LaneFocusPlan>;
+  /**
+   * active lane の root 所在変更
+   * @param source - 変更前レーン
+   * @param target - 変更後レーン
+   * @param commitCatalog - link と view の確定後に行う catalog 永続化
+   * @param isCatalogCommitted - commit callback が失敗した場合の公開状態判定
+   * @returns 切替結果
+   */
+  readonly relocateActive: (
+    source: Lane,
+    target: Lane,
+    commitCatalog: () => Promise<void>,
+    isCatalogCommitted?: () => boolean,
+  ) => Promise<LaneFocusPlan>;
   /** commit 後に残った finalization の再試行 */
   readonly finalizePending: () => Promise<void>;
 }
@@ -134,6 +148,67 @@ export const createLaneFocusTransaction = (
     return failures;
   };
 
+  const executeTransition = async (
+    source: Lane,
+    target: Lane,
+    commitPrepared?: () => Promise<void>,
+    isPreparationCommitted?: () => boolean,
+  ): Promise<LaneFocusPlan> => {
+    let sourceSnapshot: ReturnType<EditorPort['captureSnapshot']> | undefined;
+    let closeAttempted = false;
+    let swapAttempted = false;
+    try {
+      sourceSnapshot = editor.captureSnapshot();
+      editorStore.save(source.id, sourceSnapshot);
+      closeAttempted = true;
+      await editor.closeAll();
+
+      const swap = planActiveLinkSwap(link.linkPath, source.rootPath, target.rootPath);
+      if (swap) {
+        swapAttempted = true;
+        link.swap(swap.to);
+      }
+
+      const rebound = await viewRebind.rebindActiveFolder(target);
+      if (!rebound) throw new Error('workspace-folder-mutation-rejected');
+      if (commitPrepared) {
+        try {
+          await commitPrepared();
+        } catch (error) {
+          if (isPreparationCommitted?.() !== true) throw error;
+        }
+      }
+    } catch (error) {
+      const rollbackFailures: unknown[] = [];
+      if (sourceSnapshot && closeAttempted) {
+        rollbackFailures.push(...(await rollbackPrepared(source, sourceSnapshot, swapAttempted)));
+      }
+      const failure =
+        rollbackFailures.length === 0
+          ? error
+          : new AggregateError(
+              [error, ...rollbackFailures],
+              'Lane focus transition and rollback failed.',
+            );
+      return transitionFailed(failure);
+    }
+
+    pending = {
+      target,
+      selectionSaved: false,
+      terminalRevealed: false,
+      targetSnapshotRestored: false,
+    };
+    commitActiveLane(target.id);
+
+    try {
+      await finalizePending();
+      return { kind: 'focus', from: source, to: target };
+    } catch (error) {
+      return transitionFailed(error);
+    }
+  };
+
   const focus = async (targetLaneId: LaneId): Promise<LaneFocusPlan> => {
     const catalog = getCatalog();
     const target = catalog.byId.get(targetLaneId);
@@ -151,52 +226,27 @@ export const createLaneFocusTransaction = (
     const plan = planLaneFocus(source, target, targetAvailability, hasDirtyEditors);
     if (plan.kind !== 'focus') return plan;
 
-    let sourceSnapshot: ReturnType<EditorPort['captureSnapshot']> | undefined;
-    let closeAttempted = false;
-    let swapAttempted = false;
-    try {
-      sourceSnapshot = editor.captureSnapshot();
-      editorStore.save(source.id, sourceSnapshot);
-      closeAttempted = true;
-      await editor.closeAll();
-
-      const swap = planActiveLinkSwap(link.linkPath, linkTarget, target.rootPath);
-      if (swap) {
-        swapAttempted = true;
-        link.swap(swap.to);
-      }
-
-      const rebound = await viewRebind.rebindActiveFolder(target);
-      if (!rebound) throw new Error('workspace-folder-mutation-rejected');
-    } catch (error) {
-      let failure = error;
-      if (sourceSnapshot && closeAttempted) {
-        const rollbackFailures = await rollbackPrepared(source, sourceSnapshot, swapAttempted);
-        if (rollbackFailures.length > 0) {
-          failure = new AggregateError(
-            [error, ...rollbackFailures],
-            'Lane focus transition and rollback failed.',
-          );
-        }
-      }
-      return transitionFailed(failure);
-    }
-
-    pending = {
-      target,
-      selectionSaved: false,
-      terminalRevealed: false,
-      targetSnapshotRestored: false,
-    };
-    commitActiveLane(target.id);
-
-    try {
-      await finalizePending();
-      return plan;
-    } catch (error) {
-      return transitionFailed(error);
-    }
+    return executeTransition(source, target);
   };
 
-  return { focus, finalizePending };
+  const relocateActive = async (
+    source: Lane,
+    target: Lane,
+    commitCatalog: () => Promise<void>,
+    isCatalogCommitted?: () => boolean,
+  ): Promise<LaneFocusPlan> => {
+    if (link.readTarget() !== source.rootPath) {
+      return { kind: 'blocked', reason: 'reconciliation-required' };
+    }
+    if (rootAvailability.inspect(target.rootPath) !== 'available') {
+      return { kind: 'blocked', reason: 'root-unavailable' };
+    }
+    if (editor.hasDirtyEditors()) {
+      return { kind: 'blocked', reason: 'dirty-editors' };
+    }
+
+    return executeTransition(source, target, commitCatalog, isCatalogCommitted);
+  };
+
+  return { focus, relocateActive, finalizePending };
 };

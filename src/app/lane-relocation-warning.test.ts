@@ -12,6 +12,14 @@ describe('laneRelocationWarningMessage', () => {
       { kind: 'rejected', reason: 'duplicate-root' },
       'The selected folder is already registered as another lane.',
     ],
+    [
+      { kind: 'blocked', reason: 'root-unavailable' },
+      'The selected folder became unavailable. Choose it again.',
+    ],
+    [
+      { kind: 'blocked', reason: 'reconciliation-required' },
+      'The active lane changed. Retry locating the folder.',
+    ],
   ] satisfies ReadonlyArray<readonly [LaneRelocationPlan, string]>)(
     '%o の警告文を返す',
     (plan, expected) => {
@@ -23,6 +31,7 @@ describe('laneRelocationWarningMessage', () => {
     undefined,
     { kind: 'noop', reason: 'no-target' },
     { kind: 'noop', reason: 'same-root' },
+    { kind: 'blocked', reason: 'dirty-editors' },
   ] satisfies ReadonlyArray<LaneRelocationPlan | undefined>)('%o は通知しない', (plan) => {
     expect(laneRelocationWarningMessage(plan)).toBeUndefined();
   });
