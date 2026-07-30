@@ -33,7 +33,7 @@ import { baseName, parentDirectory, uriToAbsolutePath } from '../foundation/path
 import { projectLaneActivities } from '../lane-activity/reducer';
 import type { MonotonicClockPort } from '../lane-activity/ports';
 import { createLaneActivityService } from '../lane-activity/service';
-import { toLaneId } from '../lane/model';
+import { toLaneId, type Lane } from '../lane/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
 import { createLaneSearchService } from '../search/service';
@@ -240,8 +240,12 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
     const editor = createEditorAdapter();
     const selectionStore = createSelectionStoreAdapter(extensionContext.workspaceState);
-    const prompt = createPromptAdapter();
+    const prompt = createPromptAdapter({
+      extensionMode: extensionContext.extensionMode,
+    });
     const rootAvailability = createLaneRootAvailabilityAdapter();
+    const isLaneAvailable = (lane: Lane): boolean =>
+      rootAvailability.inspect(lane.rootPath) === 'available';
     const extensionPath = extensionContext.extensionPath as AbsolutePath;
     const clock: MonotonicClockPort = { now: () => Date.now() as Instant };
     const laneActivity = createLaneActivityService({ clock });
@@ -272,7 +276,9 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       editor,
       link,
       terminal: {
-        revealLane: async (lane) => terminalService.revealLane(lane),
+        revealLane: async (lane) => {
+          if (isLaneAvailable(lane)) await terminalService.revealLane(lane);
+        },
         closeLane: async (laneId) => terminalService.closeLane(laneId),
       },
       viewRebind: createLaneViewRebindAdapter(workspaceHost, toUri(link.linkPath)),
@@ -344,6 +350,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       reconcileActiveLane: () => laneService.reconcileActiveLane(),
       getActiveLaneId: () => laneService.snapshot().activeLaneId,
       getLane: (laneId) => registry.snapshot().byId.get(laneId),
+      isLaneAvailable,
       revealLane: async (lane) => terminalService.revealLane(lane),
       render,
       reportPendingCache: reportAsyncFailure,
@@ -362,7 +369,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const initialLane = laneService.snapshot().activeLaneId;
     if (initialLane) {
       const lane = registry.snapshot().byId.get(initialLane);
-      if (lane) terminalService.revealLane(lane);
+      if (lane && isLaneAvailable(lane)) terminalService.revealLane(lane);
     }
 
     track(
@@ -377,7 +384,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
           const activeLaneId = laneService.snapshot().activeLaneId;
           if (!activeLaneId) return undefined;
           const lane = registry.snapshot().byId.get(activeLaneId);
-          if (!lane) return undefined;
+          if (!lane || !isLaneAvailable(lane)) return undefined;
           const { sessionId, handle } = terminalService.requestSession(lane);
           return presentation.presentAsProfile(handle, lane.label, (terminalId) => {
             terminalService.bindTerminal(sessionId, terminalId);

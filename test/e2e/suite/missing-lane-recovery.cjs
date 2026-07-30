@@ -11,8 +11,8 @@ const POLL_TIMEOUT_MS = 12_000;
 const WORKSPACE_FIXTURE = 'missing-lane-recovery.code-workspace';
 const PHASES = new Set([
   'prepare-missing-active',
-  'evacuate-and-remove-link',
-  'restore-from-cache-and-switch',
+  'locate-and-reconcile',
+  'restart-and-switch-recovered',
 ]);
 
 const readPhase = (environment) => {
@@ -63,8 +63,8 @@ const assertWorkspaceState = ({
   const folders = vscodeApi.workspace.workspaceFolders;
   assert.equal(folders?.length, 1, 'Expected one active workspace folder');
   assert.equal(path.resolve(folders[0].uri.fsPath), activeLink);
-  assert.equal(folders[0].name, expectedLabel);
   assert.equal(path.resolve(fileSystem.realpathSync(activeLink)), expectedTarget);
+  assert.equal(folders[0].name, expectedLabel);
 };
 
 const resolveLinkTarget = (fileSystem, activeLink) =>
@@ -75,7 +75,6 @@ const run = async ({
   fileSystem = fs,
   vscodeApi,
   renameLaneDirectory,
-  removeActiveLink,
   delay,
   now,
   log = (message) => console.log(message),
@@ -101,7 +100,8 @@ const run = async ({
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const renameDirectory =
     renameLaneDirectory ?? ((source, destination) => fileSystem.renameSync(source, destination));
-  const removeLink = removeActiveLink ?? (() => fileSystem.unlinkSync(activeLink));
+  const pause =
+    delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const waitForWorkspaceState = (expectedTarget, expectedLabel) =>
     waitFor(
       () =>
@@ -112,7 +112,7 @@ const run = async ({
           expectedTarget,
           expectedLabel,
         }),
-      { delay, now },
+      { delay: pause, now },
     );
 
   if (phase === 'prepare-missing-active') {
@@ -132,24 +132,40 @@ const run = async ({
     return;
   }
 
-  if (phase === 'evacuate-and-remove-link') {
+  if (phase === 'locate-and-reconcile') {
     await waitForWorkspaceState(laneB, 'lane-b');
     assert.equal(fileSystem.existsSync(movedLaneA), true, 'Expected moved lane-a to exist');
     assert.equal(fileSystem.existsSync(laneA), false, 'Expected original lane-a to be absent');
 
-    renameDirectory(movedLaneA, laneA);
-    assert.equal(fileSystem.existsSync(laneA), true, 'Expected lane-a to be restored');
-    assert.equal(fileSystem.existsSync(movedLaneA), false, 'Expected moved lane-a to be absent');
-    removeLink();
-    assert.equal(fileSystem.existsSync(activeLink), false, 'Expected active link to be removed');
-    log('E2E PASS: lane-b evacuation persisted before active link removal');
+    let locateSettled = false;
+    const locating = resolvedVscodeApi.commands
+      .executeCommand('projectLanes.locateFolder')
+      .finally(() => {
+        locateSettled = true;
+      });
+    await pause(POLL_INTERVAL_MS);
+    assert.equal(locateSettled, false, 'Expected unavailable lane picker to remain open');
+    for (let attempt = 0; attempt < 50 && !locateSettled; attempt += 1) {
+      await resolvedVscodeApi.commands.executeCommand(
+        'workbench.action.acceptSelectedQuickOpenItem',
+      );
+      await pause(POLL_INTERVAL_MS);
+    }
+    assert.equal(locateSettled, true, 'Expected unavailable lane picker to accept its selection');
+    await locating;
+
+    await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-a');
+    await waitForWorkspaceState(movedLaneA, 'lane-a');
+    await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-b');
+    await waitForWorkspaceState(laneB, 'lane-b');
+    log('E2E PASS: missing lane-a located and reconciled before restart');
     return;
   }
 
   await waitForWorkspaceState(laneB, 'lane-b');
   await resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-a');
-  await waitForWorkspaceState(laneA, 'lane-a');
-  log('E2E PASS: lane-b restored from cache before switching to lane-a');
+  await waitForWorkspaceState(movedLaneA, 'lane-a');
+  log('E2E PASS: relocated lane-a persisted and switched after restart');
 };
 
 module.exports = { run };

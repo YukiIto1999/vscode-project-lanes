@@ -85,8 +85,8 @@ const missingLaneRecoveryScenario = {
   suitePath: path.join(__dirname, 'suite', 'missing-lane-recovery.cjs'),
   launches: [
     { phase: 'prepare-missing-active' },
-    { phase: 'evacuate-and-remove-link' },
-    { phase: 'restore-from-cache-and-switch' },
+    { phase: 'locate-and-reconcile' },
+    { phase: 'restart-and-switch-recovered' },
   ],
 };
 const legacyAnchorClassificationScenario = {
@@ -445,28 +445,53 @@ test('the prepare-missing-active phase leaves a broken lane-a symlink after movi
   assert.deepEqual(messages, ['E2E PASS: active lane-a moved while its symlink remained broken']);
 });
 
-test('the evacuate-and-remove-link phase waits for lane-b before restoring lane-a and removing the link', async () => {
+test('the locate-and-reconcile phase drives the no-argument public command through the lane picker and switches both lanes', async () => {
   const { run } = require('./suite/missing-lane-recovery.cjs');
-  const workspaceDirectory = '/tmp/project-lanes-missing-evacuate/workspace';
+  const workspaceDirectory = '/tmp/project-lanes-missing-locate/workspace';
   const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const directories = new Set([movedLaneA, laneB]);
+  const commands = [];
   const messages = [];
-  const renames = [];
-  let linkPresent = true;
+  let activeTarget = laneB;
+  let relocatedLaneA = laneA;
+  let completeLocate;
+  const workspace = {
+    workspaceFile: {
+      fsPath: path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+    },
+    workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-b' }],
+  };
 
   await run({
     environment: {
-      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'evacuate-and-remove-link' }),
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'locate-and-reconcile' }),
     },
     vscodeApi: {
-      workspace: {
-        workspaceFile: {
-          fsPath: path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+      workspace,
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.locateFolder') {
+            assert.equal(laneId, undefined);
+            return new Promise((resolve) => {
+              completeLocate = () => {
+                relocatedLaneA = movedLaneA;
+                resolve();
+              };
+            });
+          }
+          if (command === 'workbench.action.acceptSelectedQuickOpenItem') {
+            assert.ok(completeLocate, 'Expected the lane picker to be open');
+            completeLocate();
+          }
+          if (command === 'projectLanes.switchLane') {
+            activeTarget = laneId === 'lane-a' ? relocatedLaneA : laneB;
+            workspace.workspaceFolders = [{ uri: { fsPath: activeLink }, name: laneId }];
+          }
         },
-        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-b' }],
       },
       extensions: {
         getExtension() {
@@ -476,40 +501,36 @@ test('the evacuate-and-remove-link phase waits for lane-b before restoring lane-
     },
     fileSystem: {
       existsSync(target) {
-        if (target === activeLink) return linkPresent;
+        if (target === activeLink) return true;
         return directories.has(target);
       },
       realpathSync(target) {
         assert.equal(target, activeLink);
-        assert.equal(linkPresent, true);
-        return laneB;
+        return activeTarget;
       },
     },
-    renameLaneDirectory(source, destination) {
-      assert.equal(directories.delete(source), true);
-      directories.add(destination);
-      renames.push([source, destination]);
-    },
-    removeActiveLink() {
-      linkPresent = false;
-    },
+    delay: async () => {},
     log(message) {
       messages.push(message);
     },
   });
 
-  assert.deepEqual(renames, [[movedLaneA, laneA]]);
-  assert.equal(directories.has(laneA), true);
-  assert.equal(directories.has(movedLaneA), false);
-  assert.equal(linkPresent, false);
-  assert.deepEqual(messages, ['E2E PASS: lane-b evacuation persisted before active link removal']);
+  assert.deepEqual(commands, [
+    ['projectLanes.locateFolder', undefined],
+    ['workbench.action.acceptSelectedQuickOpenItem', undefined],
+    ['projectLanes.switchLane', 'lane-a'],
+    ['projectLanes.switchLane', 'lane-b'],
+  ]);
+  assert.equal(relocatedLaneA, movedLaneA);
+  assert.equal(activeTarget, laneB);
+  assert.deepEqual(messages, ['E2E PASS: missing lane-a located and reconciled before restart']);
 });
 
-test('the restore-from-cache-and-switch phase restores lane-b before switching to available lane-a', async () => {
+test('the restart-and-switch-recovered phase switches to the persisted relocated lane', async () => {
   const { run } = require('./suite/missing-lane-recovery.cjs');
   const workspaceDirectory = '/tmp/project-lanes-missing-restore/workspace';
   const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
-  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const movedLaneA = path.join(workspaceDirectory, 'lane-a-moved');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const commands = [];
   const messages = [];
@@ -523,7 +544,7 @@ test('the restore-from-cache-and-switch phase restores lane-b before switching t
 
   await run({
     environment: {
-      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'restore-from-cache-and-switch' }),
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'restart-and-switch-recovered' }),
     },
     vscodeApi: {
       workspace,
@@ -536,7 +557,7 @@ test('the restore-from-cache-and-switch phase restores lane-b before switching t
         async executeCommand(command, laneId) {
           commands.push([command, laneId]);
           if (command === 'projectLanes.switchLane' && laneId === 'lane-a') {
-            activeTarget = laneA;
+            activeTarget = movedLaneA;
             workspace.workspaceFolders = [{ uri: { fsPath: activeLink }, name: 'lane-a' }];
           }
         },
@@ -554,8 +575,8 @@ test('the restore-from-cache-and-switch phase restores lane-b before switching t
   });
 
   assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-a']]);
-  assert.equal(activeTarget, laneA);
-  assert.deepEqual(messages, ['E2E PASS: lane-b restored from cache before switching to lane-a']);
+  assert.equal(activeTarget, movedLaneA);
+  assert.deepEqual(messages, ['E2E PASS: relocated lane-a persisted and switched after restart']);
 });
 
 test('the empty-workspace suite verifies activation and reports success', async () => {
@@ -1283,6 +1304,50 @@ test('the driver extension activates on startup without defining an extension te
 
   assert.equal(manifest.main, './extension.cjs');
   assert.deepEqual(manifest.activationEvents, ['onStartupFinished']);
+});
+
+test('the driver private replacement picker asserts options and returns the relocated folder URI', () => {
+  const { registerReplacementPickerCommand } = require('./driver/extension.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-driver-picker/workspace';
+  const registrations = [];
+  const disposable = { dispose() {} };
+  const registered = registerReplacementPickerCommand({
+    resultIdentity: {
+      scenario: 'missing-lane-recovery',
+      phase: 'locate-and-reconcile',
+    },
+    vscodeApi: {
+      Uri: {
+        file: (fsPath) => ({ fsPath }),
+      },
+      commands: {
+        registerCommand(command, handler) {
+          registrations.push([command, handler]);
+          return disposable;
+        },
+      },
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'missing-lane-recovery.code-workspace'),
+        },
+      },
+    },
+  });
+
+  assert.equal(registered, disposable);
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0][0], 'projectLanes.e2e.pickReplacementFolder');
+  assert.deepEqual(
+    registrations[0][1]({
+      title: 'Locate Lane Folder',
+      openLabel: 'Locate Folder',
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      defaultUri: { fsPath: workspaceDirectory },
+    }),
+    { fsPath: path.join(workspaceDirectory, 'lane-a-moved') },
+  );
 });
 
 test('the driver quits when a required initialization environment variable is missing', async () => {

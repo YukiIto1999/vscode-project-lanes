@@ -84,8 +84,8 @@ const scenarios = Object.freeze([
     suitePath: path.join(__dirname, 'suite', 'missing-lane-recovery.cjs'),
     launches: Object.freeze([
       Object.freeze({ phase: 'prepare-missing-active' }),
-      Object.freeze({ phase: 'evacuate-and-remove-link' }),
-      Object.freeze({ phase: 'restore-from-cache-and-switch' }),
+      Object.freeze({ phase: 'locate-and-reconcile' }),
+      Object.freeze({ phase: 'restart-and-switch-recovered' }),
     ]),
   }),
   Object.freeze({
