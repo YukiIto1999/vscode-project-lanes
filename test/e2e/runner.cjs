@@ -14,13 +14,46 @@ const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const E2E_RESULT_PATH_KEY = 'PROJECT_LANES_E2E_RESULT_PATH';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_SUITE_PATH_KEY = 'PROJECT_LANES_E2E_SUITE_PATH';
+const FORCE_KILL_CONFIRMATION_MS = 5_000;
 const FORCE_KILL_GRACE_MS = 5_000;
 const LAUNCH_TIMEOUT_MS = 120_000;
+const PROCESS_GROUP_PROBE_MS = 50;
+const PROCESS_TERMINATION_UNCONFIRMED_CODE = 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED';
 const PROJECT_LANES_EXTENSION_ID = 'yukiito1999.project-lanes';
 const VSCODE_VERSION = '1.101.0';
 const extensionDevelopmentPath = path.resolve(__dirname, '..', '..');
 const driverDevelopmentPath = path.join(__dirname, 'driver');
 const processCleanupRegistries = new WeakMap();
+
+const identifyProcessTerminationUnconfirmed = (error) =>
+  Object.assign(error, { code: PROCESS_TERMINATION_UNCONFIRMED_CODE });
+
+const createProcessTerminationUnconfirmedError = (cause) =>
+  identifyProcessTerminationUnconfirmed(
+    new Error(
+      `VS Code process termination failed: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      { cause },
+    ),
+  );
+
+const isProcessTerminationUnconfirmedError = (error) =>
+  error?.code === PROCESS_TERMINATION_UNCONFIRMED_CODE;
+
+const preserveRootWhenCleanupIsUnsafe = (error, cleanupRegistry, cleanup) => {
+  if (!cleanupRegistry.cleanupSuppressed && !isProcessTerminationUnconfirmedError(error)) {
+    return false;
+  }
+  cleanupRegistry.activeCleanups.delete(cleanup);
+  return true;
+};
+
+const waitForTerminationCleanupDecision = async (cleanupRegistry) => {
+  if (cleanupRegistry.terminationCompletion) {
+    await cleanupRegistry.terminationCompletion;
+  }
+};
 
 const createProcessCleanupRegistry = (
   processApi,
@@ -35,12 +68,16 @@ const createProcessCleanupRegistry = (
   const cleanupRegistry = {
     activeCleanups,
     activeTerminations,
+    cleanupSuppressed: false,
+    terminationCompletion: undefined,
     terminationRequested: false,
   };
   const cleanupAll = () => {
+    if (cleanupRegistry.cleanupSuppressed) return;
     for (const cleanup of activeCleanups) {
       try {
         cleanup();
+        activeCleanups.delete(cleanup);
       } catch (error) {
         reportCleanupError(error);
       }
@@ -54,12 +91,36 @@ const createProcessCleanupRegistry = (
   processApi.once('exit', cleanupAll);
   processApi.once('SIGTERM', () => {
     cleanupRegistry.terminationRequested = true;
-    const terminations = [...activeTerminations].map((terminate) => terminate());
-    if (terminations.length === 0) {
+    const completeTermination = async () => {
+      const terminations = [...activeTerminations].map((terminate) => {
+        try {
+          return terminate();
+        } catch (error) {
+          return Promise.reject(error);
+        }
+      });
+      if (terminations.length === 0) {
+        cleanupAndReraise();
+        return;
+      }
+      const results = await Promise.allSettled(terminations);
+      const failures = results
+        .filter((result) => result.status === 'rejected')
+        .map((result) => result.reason);
+      if (failures.length > 0) {
+        cleanupRegistry.cleanupSuppressed = true;
+        reportCleanupError(
+          identifyProcessTerminationUnconfirmed(
+            new AggregateError(failures, 'VS Code process termination failed'),
+          ),
+        );
+        processApi.kill(processApi.pid, 'SIGTERM');
+        return;
+      }
       cleanupAndReraise();
-      return;
-    }
-    return Promise.allSettled(terminations).then(cleanupAndReraise);
+    };
+    cleanupRegistry.terminationCompletion = completeTermination();
+    return cleanupRegistry.terminationCompletion;
   });
   return cleanupRegistry;
 };
@@ -295,6 +356,12 @@ const runInstalledVSIXVerification = async (
     verificationError = error;
   }
 
+  await waitForTerminationCleanupDecision(cleanupRegistry);
+  if (preserveRootWhenCleanupIsUnsafe(verificationError, cleanupRegistry, cleanup)) {
+    if (verificationError) throw verificationError;
+    return;
+  }
+
   try {
     cleanup();
   } catch (cleanupError) {
@@ -432,26 +499,94 @@ const terminateChild = (
   {
     scheduleTimeout = setTimeout,
     cancelTimeout = clearTimeout,
+    childAlreadyClosed = false,
+    confirmationMilliseconds = FORCE_KILL_CONFIRMATION_MS,
     graceMilliseconds = FORCE_KILL_GRACE_MS,
+    probeMilliseconds = PROCESS_GROUP_PROBE_MS,
+    probeProcessGroup,
+    signalProcess = (signal) => child.kill(signal),
   } = {},
 ) =>
-  new Promise((resolve) => {
+  new Promise((resolve, reject) => {
+    let confirmationTimeout;
     let graceTimeout;
-    let terminated = false;
-    const finish = () => {
-      if (terminated) return;
-      terminated = true;
+    let probeTimeout;
+    let childClosed = childAlreadyClosed;
+    let groupGone = probeProcessGroup === undefined;
+    let killSent = false;
+    let settled = false;
+
+    const cancelTimers = () => {
+      if (confirmationTimeout !== undefined) cancelTimeout(confirmationTimeout);
       if (graceTimeout !== undefined) cancelTimeout(graceTimeout);
+      if (probeTimeout !== undefined) cancelTimeout(probeTimeout);
+    };
+    const finish = () => {
+      if (settled || !childClosed || !groupGone) return;
+      settled = true;
+      cancelTimers();
+      child.removeListener?.('close', onClose);
       resolve();
     };
-
-    child.once('close', finish);
-    child.kill('SIGINT');
-    if (terminated) return;
-    graceTimeout = scheduleTimeout(() => {
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cancelTimers();
+      child.removeListener?.('close', onClose);
+      reject(error);
+    };
+    const scheduleProbe = () => {
+      if (settled || probeTimeout !== undefined) return;
+      probeTimeout = scheduleTimeout(() => {
+        probeTimeout = undefined;
+        observeGroup();
+      }, probeMilliseconds);
+    };
+    const observeGroup = () => {
+      if (settled || probeProcessGroup === undefined || groupGone) return;
+      try {
+        groupGone = !probeProcessGroup();
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      finish();
+      if (!settled && killSent && !groupGone) scheduleProbe();
+    };
+    const onClose = () => {
+      childClosed = true;
+      observeGroup();
+      finish();
+    };
+    const sendSignal = (signal) => {
+      try {
+        if (signalProcess(signal) === 'gone') groupGone = true;
+      } catch (error) {
+        fail(error);
+      }
+    };
+    const escalate = () => {
       graceTimeout = undefined;
-      child.kill('SIGKILL');
-    }, graceMilliseconds);
+      killSent = true;
+      sendSignal('SIGKILL');
+      observeGroup();
+      finish();
+      if (settled) return;
+      confirmationTimeout = scheduleTimeout(() => {
+        confirmationTimeout = undefined;
+        fail(
+          new Error(
+            `VS Code process did not exit within ${confirmationMilliseconds}ms after SIGKILL`,
+          ),
+        );
+      }, confirmationMilliseconds);
+    };
+
+    if (!childAlreadyClosed) child.once('close', onClose);
+    sendSignal('SIGINT');
+    finish();
+    if (settled || (probeProcessGroup !== undefined && groupGone)) return;
+    graceTimeout = scheduleTimeout(escalate, graceMilliseconds);
   });
 
 const launchVSCodeProcess = (
@@ -472,6 +607,7 @@ const launchVSCodeProcess = (
 
   const expectedIdentity = resultIdentity ?? JSON.parse(environment[E2E_RUN_KEY] || 'null');
   const activeTerminations = getProcessCleanupRegistry(processApi).activeTerminations;
+  const usePosixProcessGroup = (processApi.platform ?? process.platform) !== 'win32';
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -486,14 +622,45 @@ const launchVSCodeProcess = (
     };
 
     const child = spawn(command, args, {
+      ...(usePosixProcessGroup ? { detached: true } : {}),
       env: environment,
       stdio: 'inherit',
     });
+    const signalProcess = usePosixProcessGroup
+      ? (signal) => {
+          try {
+            processApi.kill(-child.pid, signal);
+            return 'sent';
+          } catch (error) {
+            if (error?.code === 'ESRCH') return 'gone';
+            throw error;
+          }
+        }
+      : (signal) => {
+          child.kill(signal);
+          return 'sent';
+        };
+    const probeProcessGroup = usePosixProcessGroup
+      ? () => {
+          try {
+            processApi.kill(-child.pid, 0);
+            return true;
+          } catch (error) {
+            if (error?.code === 'ESRCH') return false;
+            throw error;
+          }
+        }
+      : undefined;
+    let terminationRequested = false;
     let terminationPromise;
-    const terminate = () => {
+    const terminate = ({ childAlreadyClosed = false } = {}) => {
+      terminationRequested = true;
       terminationPromise ??= terminateChild(child, {
         scheduleTimeout,
         cancelTimeout,
+        childAlreadyClosed,
+        probeProcessGroup,
+        signalProcess,
       });
       return terminationPromise;
     };
@@ -501,12 +668,34 @@ const launchVSCodeProcess = (
     const timeout = scheduleTimeout(async () => {
       if (settled) return;
       timedOut = true;
-      await terminate();
+      try {
+        await terminate();
+      } catch (error) {
+        settle(() => reject(createProcessTerminationUnconfirmedError(error)));
+        return;
+      }
       settle(() => reject(new Error(`VS Code launch timed out after ${timeoutMilliseconds}ms`)));
     }, timeoutMilliseconds);
 
     child.once('error', (error) => settle(() => reject(error)));
-    child.once('close', (code, signal) => {
+    child.once('close', async (code, signal) => {
+      const terminationWasRequested = terminationRequested;
+      if (terminationWasRequested) {
+        // A fast child can close while terminateChild is still assigning its promise.
+        if (terminationPromise === undefined) await Promise.resolve();
+        try {
+          await terminationPromise;
+        } catch {
+          return;
+        }
+      } else if (usePosixProcessGroup) {
+        try {
+          if (probeProcessGroup()) await terminate({ childAlreadyClosed: true });
+        } catch (error) {
+          settle(() => reject(createProcessTerminationUnconfirmedError(error)));
+          return;
+        }
+      }
       if (timedOut) return;
       settle(() => {
         if (code !== 0) {
@@ -598,6 +787,12 @@ const runScenario = async (
   } catch (error) {
     scenarioFailed = true;
     scenarioError = error;
+  }
+
+  await waitForTerminationCleanupDecision(cleanupRegistry);
+  if (preserveRootWhenCleanupIsUnsafe(scenarioError, cleanupRegistry, cleanup)) {
+    if (scenarioFailed) throw scenarioError;
+    return;
   }
 
   try {
