@@ -38,18 +38,19 @@ v0.1.13 から更新した場合、現在のワークスペースフォルダと
 
 ## コマンド
 
-| コマンド                                 | 説明                                                                                 |
-| ---------------------------------------- | ------------------------------------------------------------------------------------ |
-| `Project Lanes: Initialize Workspace`    | 現在のワークスペースを Project Lanes の管理対象として初期化                          |
-| `Project Lanes: Switch Lane`             | レーンに切替                                                                         |
-| `Project Lanes: Add Folder to Workspace` | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加                         |
-| `Project Lanes: Reload Lanes`            | 追加されたワークスペースフォルダを取り込み、アクティブリンクと選択キャッシュを再整合 |
-| `Project Lanes: Locate Folder`           | missing または inaccessible のレーンを、読み取り可能なフォルダへ再関連付け           |
-| `Project Lanes: Rename Lane`             | 選択レーンの表示名を変更。同じ表示名のレーンはフォルダーパスで区別                   |
-| `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）                           |
-| `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                                       |
-| `Project Lanes: Find in Lanes`           | 全レーンを横断して ripgrep でファイル内容を検索し一致箇所へ移動                      |
-| `Project Lanes: Go to File in Lanes`     | 全レーンを横断してファイルを絞り込み開く                                             |
+| コマンド                                   | 説明                                                                                 |
+| ------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `Project Lanes: Initialize Workspace`      | 現在のワークスペースを Project Lanes の管理対象として初期化                          |
+| `Project Lanes: Switch Lane`               | レーンに切替                                                                         |
+| `Project Lanes: Add Folder to Workspace`   | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加                         |
+| `Project Lanes: Reload Lanes`              | 追加されたワークスペースフォルダを取り込み、アクティブリンクと選択キャッシュを再整合 |
+| `Project Lanes: Locate Folder`             | missing または inaccessible のレーンを、読み取り可能なフォルダへ再関連付け           |
+| `Project Lanes: Rename Lane`               | 選択レーンの表示名を変更。同じ表示名のレーンはフォルダーパスで区別                   |
+| `Project Lanes: Remove Lane`               | 選択レーンをカタログから除外（ディスク上のフォルダは保持）                           |
+| `Project Lanes: Close Terminals`           | アクティブレーンの全ターミナルセッションを終了                                       |
+| `Project Lanes: Toggle Activity Indicator` | 活動状態表示を再起動せずに切り替え                                                   |
+| `Project Lanes: Find in Lanes`             | 全レーンを横断して ripgrep でファイル内容を検索し一致箇所へ移動                      |
+| `Project Lanes: Go to File in Lanes`       | 全レーンを横断してファイルを絞り込み開く                                             |
 
 ## 設定
 
