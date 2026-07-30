@@ -71,7 +71,7 @@ export interface WorkspaceSettingsPort {
    * 既定ターミナルプロファイル設定
    * @param profileTitle - 対象プロファイルの title
    */
-  readonly setDefaultTerminalProfile: (profileTitle: string) => void;
+  readonly setDefaultTerminalProfile: (profileTitle: string) => Promise<void>;
   /** ターミナルセッションの永続化抑止 */
-  readonly disablePersistentTerminals: () => void;
+  readonly disablePersistentTerminals: () => Promise<void>;
 }

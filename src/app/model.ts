@@ -1,7 +1,12 @@
 import type { AbsolutePath, Disposable } from '../foundation/model';
 
+/** 未管理 workspace の初期化方式 */
+export type InitializationMode = 'manual' | 'automatic';
+
 /** 拡張機能の設定値 */
 export interface ProjectLanesConfig {
+  /** 未管理 workspace の初期化方式 */
+  readonly initializationMode: InitializationMode;
   /** レーン活動インジケータの表示有無 */
   readonly showActivityIndicator: boolean;
   /** シェル絶対パス */

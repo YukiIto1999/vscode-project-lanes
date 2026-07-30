@@ -106,19 +106,19 @@ export const createDirectoryAdapter = (): DirectoryPort => ({
  * @returns ワークスペース設定ポート
  */
 export const createWorkspaceSettingsAdapter = (): WorkspaceSettingsPort => ({
-  setDefaultTerminalProfile: (profileTitle) => {
+  setDefaultTerminalProfile: async (profileTitle) => {
     const cfg = vscode.workspace.getConfiguration('terminal.integrated');
     const current = cfg.get<string>('defaultProfile.linux');
     if (current !== profileTitle) {
-      cfg.update('defaultProfile.linux', profileTitle, vscode.ConfigurationTarget.Workspace);
+      await cfg.update('defaultProfile.linux', profileTitle, vscode.ConfigurationTarget.Workspace);
     }
   },
 
-  disablePersistentTerminals: () => {
+  disablePersistentTerminals: async () => {
     const cfg = vscode.workspace.getConfiguration('terminal.integrated');
     const current = cfg.get<boolean>('enablePersistentSessions');
     if (current !== false) {
-      cfg.update('enablePersistentSessions', false, vscode.ConfigurationTarget.Workspace);
+      await cfg.update('enablePersistentSessions', false, vscode.ConfigurationTarget.Workspace);
     }
   },
 });

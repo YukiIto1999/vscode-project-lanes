@@ -17,6 +17,8 @@ When running many projects:
 Each project becomes a "lane". Switching lanes swaps Explorer, editor tabs, terminals, and Git together.
 The switch is a view change — background terminals keep running because the workspace folder URI stays stable (a `.lanes-root/active` symlink whose target is updated on switch).
 
+Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Initialize Workspace`. Set `projectLanes.initializationMode` to `automatic` to initialize new workspaces during extension startup. Already managed workspaces are repaired during startup in either mode.
+
 - Lane switching
   - Explorer and Git show only the active lane
   - Editor tabs are saved and restored per lane
@@ -32,6 +34,7 @@ The switch is a view change — background terminals keep running because the wo
 
 | Command                                  | Description                                                                          |
 | ---------------------------------------- | ------------------------------------------------------------------------------------ |
+| `Project Lanes: Initialize Workspace`    | Convert the current workspace into a managed Project Lanes workspace                 |
 | `Project Lanes: Switch Lane`             | Switch to a lane                                                                     |
 | `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent    |
 | `Project Lanes: Reload Lanes`            | Re-scan `workspaceFolders` / symlink target / catalog store and rebuild the registry |
@@ -43,10 +46,11 @@ The switch is a view change — background terminals keep running because the wo
 
 ## Settings
 
-| Setting                               | Default | Description                                                  |
-| ------------------------------------- | ------- | ------------------------------------------------------------ |
-| `projectLanes.activity.showIndicator` | `true`  | Show activity indicator in badge, decoration, and status bar |
-| `projectLanes.terminal.shellPath`     | `""`    | Shell path for Lane Terminal (empty = `$SHELL`)              |
+| Setting                               | Default  | Description                                                          |
+| ------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `projectLanes.initializationMode`     | `manual` | Initialize unmanaged workspaces by command or automatically at start |
+| `projectLanes.activity.showIndicator` | `true`   | Show activity indicator in badge, decoration, and status bar         |
+| `projectLanes.terminal.shellPath`     | `""`     | Shell path for Lane Terminal (empty = `$SHELL`)                      |
 
 ## Limitations
 
@@ -54,7 +58,7 @@ The switch is a view change — background terminals keep running because the wo
 - Activity detection requires shell integration via `bash` or `zsh` and OSC 633. Other shells (`fish`, `pwsh`, etc.) skip injection and fall back to `no-agent`
 - Tab restore covers normal file tabs only (not diff views, notebooks, etc.)
 - Terminal sessions don't survive VS Code window reloads
-- The extension creates `.lanes-root/` next to the `.code-workspace` file; add it to `.gitignore` if you don't want it tracked
+- Workspace initialization creates `.lanes-root/` next to the `.code-workspace` file; add it to `.gitignore` if you don't want it tracked
 
 ## License
 
