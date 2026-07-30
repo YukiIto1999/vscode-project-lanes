@@ -257,6 +257,18 @@ describe('managed runtime の共通 operation queue', () => {
     );
   });
 
+  it('runtime の editor snapshot は workspaceState 永続化アダプターを使う', () => {
+    expect(managedRuntime).toMatch(
+      /const editorStore = createEditorSnapshotStoreAdapter\(extensionContext\.workspaceState\);/,
+    );
+    expect(managedRuntime).toMatch(/createLaneService\(\{[\s\S]*?\beditorStore,[\s\S]*?\}\);/);
+    expect(managedRuntime).toMatch(
+      /await editorStore\.prune\(registry\.snapshot\(\)\.lanes\.map\(\(lane\) => lane\.id\)\);/,
+    );
+    expect(managedRuntime).not.toMatch(/createLaneSessionStore\(\)/);
+    expect(managedRuntime).not.toMatch(/createEditorSnapshotStore\(\)/);
+  });
+
   it('公開 switch の transition failure を共通失敗境界へ渡す', () => {
     const switchCommand = managedRuntime.slice(
       managedRuntime.indexOf("'projectLanes.switchLane'"),

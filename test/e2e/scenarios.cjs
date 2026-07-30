@@ -82,6 +82,22 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'editor-snapshot-persistence',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-persistence'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'editor-snapshot-persistence',
+      'editor-snapshot-persistence.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'editor-snapshot-persistence.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'capture' }),
+      Object.freeze({ phase: 'restore' }),
+    ]),
+  }),
+  Object.freeze({
     name: 'active-lane-reconciliation',
     fixtureRoot: path.join(__dirname, 'fixtures', 'active-lane-reconciliation'),
     workspaceFixture: path.join(

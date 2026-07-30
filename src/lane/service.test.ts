@@ -5,10 +5,10 @@ import type { CatalogEntry } from '../workspace/model';
 import type { CatalogStorePort } from '../workspace/ports';
 import { createCatalogRegistry } from '../workspace/registry';
 import type {
+  EditorSnapshotStorePort,
   EditorPort,
   LanePromptPort,
   LaneSelectionStorePort,
-  LaneSessionStore,
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
@@ -70,6 +70,7 @@ const createHarness = ({
   hasDirtyEditors = () => false,
   captureSnapshot = () => ({ tabs: [] }),
   restoreSnapshot = async () => {},
+  removeSnapshot = async () => {},
 }: {
   readonly initial?: readonly CatalogEntry[];
   readonly saveCatalog?: CatalogStorePort['save'];
@@ -94,6 +95,7 @@ const createHarness = ({
   readonly hasDirtyEditors?: EditorPort['hasDirtyEditors'];
   readonly captureSnapshot?: EditorPort['captureSnapshot'];
   readonly restoreSnapshot?: EditorPort['restoreSnapshot'];
+  readonly removeSnapshot?: EditorSnapshotStorePort['remove'];
 } = {}) => {
   let persistedFolders = initial;
   const store: CatalogStorePort = {
@@ -127,15 +129,17 @@ const createHarness = ({
     revealLane: terminalReveal,
     closeLane: terminalClose,
   };
-  const editorClear = vi.fn<LaneSessionStore['clear']>(() => {
-    effectEvents.push('clear');
+  const editorRemove = vi.fn<EditorSnapshotStorePort['remove']>(async (laneId) => {
+    effectEvents.push('remove');
+    await removeSnapshot(laneId);
   });
-  const editorStore: LaneSessionStore = {
-    save: () => {},
+  const editorStore: EditorSnapshotStorePort = {
+    save: async () => {},
     get: () => undefined,
-    clear: editorClear,
+    remove: editorRemove,
+    prune: async () => 'unchanged',
   };
-  const editorClose = vi.fn<EditorPort['closeAll']>(async () => {});
+  const editorClose = vi.fn<EditorPort['closeAll']>(async () => true);
   const editorHasDirty = vi.fn<EditorPort['hasDirtyEditors']>(hasDirtyEditors);
   const editorCapture = vi.fn<EditorPort['captureSnapshot']>(captureSnapshot);
   const editorRestore = vi.fn<EditorPort['restoreSnapshot']>(restoreSnapshot);
@@ -214,7 +218,7 @@ const createHarness = ({
     rootAvailability,
     terminalReveal,
     terminalClose,
-    editorClear,
+    editorRemove,
     effectEvents,
     viewRebind,
     editorHasDirty,
@@ -377,6 +381,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.rootAvailability.inspect.mock.calls.map(([path]) => path)).toEqual([
       '/repo/web',
       '/repo/api',
+      '/repo/web',
       '/repo/web',
     ]);
   });
@@ -1513,7 +1518,7 @@ describe('createLaneService catalog mutation ordering', () => {
     expect(h.viewRebind).not.toHaveBeenCalled();
   });
 
-  it('remove の catalog 保存失敗時は close と clear を実行しない', async () => {
+  it('remove の catalog 保存失敗時は terminal と snapshot を変更しない', async () => {
     const failure = new Error('save failed');
     const h = createHarness({
       saveCatalog: async () => {
@@ -1524,15 +1529,17 @@ describe('createLaneService catalog mutation ordering', () => {
     await expect(h.service.removeLane('api' as LaneId)).rejects.toBe(failure);
 
     expect(h.terminalClose).not.toHaveBeenCalled();
-    expect(h.editorClear).not.toHaveBeenCalled();
+    expect(h.editorRemove).not.toHaveBeenCalled();
     expect(h.registry.snapshot().byId.has('api' as LaneId)).toBe(true);
   });
 
-  it('remove の close 失敗時も catalog を公開して clear 後に失敗を返す', async () => {
+  it('remove の terminal close 失敗時も snapshot を除外し、未完了 close を再試行する', async () => {
     const failure = new Error('close failed');
+    let closeCount = 0;
     const h = createHarness({
       closeLane: async () => {
-        throw failure;
+        closeCount += 1;
+        if (closeCount === 1) throw failure;
       },
     });
     let notificationCount = 0;
@@ -1544,8 +1551,80 @@ describe('createLaneService catalog mutation ordering', () => {
 
     expect(h.registry.snapshot().byId.has('api' as LaneId)).toBe(false);
     expect(notificationCount).toBe(1);
-    expect(h.editorClear).toHaveBeenCalledOnce();
-    expect(h.editorClear).toHaveBeenCalledWith('api');
-    expect(h.effectEvents).toEqual(['close', 'clear']);
+    expect(h.editorRemove).toHaveBeenCalledOnce();
+    expect(h.editorRemove).toHaveBeenCalledWith('api');
+    expect(h.effectEvents).toEqual(['close', 'remove']);
+
+    await h.service.finalizePendingOperations();
+    expect(h.effectEvents).toEqual(['close', 'remove', 'close']);
+  });
+
+  it('remove は snapshot 除外の永続化を待ってから catalog を公開する', async () => {
+    const pending = deferred();
+    const removeStarted = deferred();
+    let completed = false;
+    const h = createHarness({
+      removeSnapshot: () => {
+        removeStarted.resolve();
+        return pending.promise;
+      },
+    });
+
+    const removing = h.service.removeLane('api' as LaneId).then(() => {
+      completed = true;
+    });
+    await removeStarted.promise;
+
+    expect(h.effectEvents).toEqual(['close', 'remove']);
+    expect(completed).toBe(false);
+    expect(h.registry.snapshot().byId.has('api' as LaneId)).toBe(true);
+
+    pending.resolve();
+    await removing;
+    expect(h.registry.snapshot().byId.has('api' as LaneId)).toBe(false);
+  });
+
+  it('snapshot 除外失敗は catalog 公開後に返し、未完了 snapshot だけを再試行する', async () => {
+    const failure = new Error('snapshot remove failed');
+    let removeCount = 0;
+    const h = createHarness({
+      removeSnapshot: async () => {
+        removeCount += 1;
+        if (removeCount === 1) throw failure;
+      },
+    });
+
+    await expect(h.service.removeLane('api' as LaneId)).rejects.toBe(failure);
+    expect(h.registry.snapshot().byId.has('api' as LaneId)).toBe(false);
+    expect(h.effectEvents).toEqual(['close', 'remove']);
+
+    await h.service.finalizePendingOperations();
+    expect(h.effectEvents).toEqual(['close', 'remove', 'remove']);
+  });
+
+  it('terminal と snapshot の両方の失敗を保持し、両方を再試行する', async () => {
+    const closeFailure = new Error('close failed');
+    const removeFailure = new Error('snapshot remove failed');
+    let fail = true;
+    const h = createHarness({
+      closeLane: async () => {
+        if (fail) throw closeFailure;
+      },
+      removeSnapshot: async () => {
+        if (fail) throw removeFailure;
+      },
+    });
+
+    const removing = h.service.removeLane('api' as LaneId);
+    await expect(removing).rejects.toBeInstanceOf(AggregateError);
+    await expect(removing).rejects.toMatchObject({
+      errors: [closeFailure, removeFailure],
+    });
+    expect(h.registry.snapshot().byId.has('api' as LaneId)).toBe(false);
+    expect(h.effectEvents).toEqual(['close', 'remove']);
+
+    fail = false;
+    await h.service.finalizePendingOperations();
+    expect(h.effectEvents).toEqual(['close', 'remove', 'close', 'remove']);
   });
 });
