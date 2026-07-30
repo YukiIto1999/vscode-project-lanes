@@ -750,7 +750,7 @@ const runScenario = async (
     const userDataDir = path.join(temporaryRoot, 'user-data');
     const extensionsDir = path.join(temporaryRoot, 'extensions');
     const workspaceDir = path.join(temporaryRoot, 'workspace');
-    const workspacePath = path.join(workspaceDir, path.basename(scenario.workspaceFixture));
+    const defaultWorkspaceFixtureName = path.basename(scenario.workspaceFixture);
 
     fileSystem.mkdirSync(userDataDir);
     fileSystem.mkdirSync(extensionsDir);
@@ -758,13 +758,21 @@ const runScenario = async (
       fileSystem.cpSync(scenario.fixtureRoot, workspaceDir, { recursive: true });
     } else {
       fileSystem.mkdirSync(workspaceDir);
-      fileSystem.copyFileSync(scenario.workspaceFixture, workspacePath);
+      fileSystem.copyFileSync(
+        scenario.workspaceFixture,
+        path.join(workspaceDir, defaultWorkspaceFixtureName),
+      );
     }
 
     const runId = createRunId();
     const launches = scenario.launches ?? [undefined];
     for (const [launchIndex, launch] of launches.entries()) {
       if (cleanupRegistry.terminationRequested) break;
+      const workspaceFixtureName = launch?.workspaceFixtureName ?? defaultWorkspaceFixtureName;
+      if (path.basename(workspaceFixtureName) !== workspaceFixtureName) {
+        throw new Error(`Invalid workspace fixture name: ${workspaceFixtureName}`);
+      }
+      const workspacePath = path.join(workspaceDir, workspaceFixtureName);
       const resultIdentity = {
         runId,
         scenario: scenario.name,

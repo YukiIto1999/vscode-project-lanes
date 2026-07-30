@@ -3,7 +3,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as nodePath from 'node:path';
 import type { AbsolutePath } from '../../foundation/model';
-import { createSymlinkOps, createWorkspaceLinkAdapter } from './symlink';
+import type { WorkspaceAnchor } from '../../workspace/anchor';
+import {
+  createLegacyWorkspaceLinkReader,
+  createSymlinkOps,
+  createWorkspaceLinkAdapter,
+} from './symlink';
 
 describe('SymlinkOps', () => {
   const ops = createSymlinkOps();
@@ -18,6 +23,19 @@ describe('SymlinkOps', () => {
   });
 
   const abs = (rel: string): AbsolutePath => nodePath.join(tmpDir, rel) as AbsolutePath;
+  const makeAnchor = (): WorkspaceAnchor => {
+    const hash = 'a'.repeat(64);
+    const rootDirectoryPath = abs('.lanes-root');
+    const namespaceDirectoryPath = abs(`.lanes-root/${hash}`);
+    return {
+      workspaceKey: 'workspace:file:///tmp/workspace.code-workspace',
+      hash,
+      rootDirectoryPath,
+      namespaceDirectoryPath,
+      activeLinkPath: abs(`.lanes-root/${hash}/active`),
+      legacyActiveLinkPath: abs('.lanes-root/active'),
+    };
+  };
 
   const captureError = (action: () => void): unknown => {
     try {
@@ -63,6 +81,30 @@ describe('SymlinkOps', () => {
     expect(ops.read(link)).toBe(t2);
   });
 
+  it('replace は既存の通常ファイルを上書きせず拒否する', () => {
+    const target = abs('target');
+    const link = abs('link');
+    fs.mkdirSync(target);
+    fs.writeFileSync(link, 'preserve');
+
+    expect(() => ops.replace(link, target)).toThrowError(
+      `Workspace link path is not a symbolic link: ${link}`,
+    );
+    expect(fs.readFileSync(link, 'utf8')).toBe('preserve');
+  });
+
+  it('replace は既存のディレクトリを上書きせず拒否する', () => {
+    const target = abs('target');
+    const link = abs('link');
+    fs.mkdirSync(target);
+    fs.mkdirSync(link);
+
+    expect(() => ops.replace(link, target)).toThrowError(
+      `Workspace link path is not a symbolic link: ${link}`,
+    );
+    expect(fs.lstatSync(link).isDirectory()).toBe(true);
+  });
+
   it('置換後に tmp リンクが残留しない', () => {
     const target = abs('target');
     fs.mkdirSync(target);
@@ -78,6 +120,13 @@ describe('SymlinkOps', () => {
     const link = abs('link');
     ops.replace(link, target);
     expect(ops.read(link)).toBe(target);
+  });
+
+  it('相対 symlink の参照先を link の親から解決した絶対パスで返す', () => {
+    const link = abs('link');
+    fs.symlinkSync('../relative-target', link);
+
+    expect(ops.read(link)).toBe(nodePath.resolve(nodePath.dirname(link), '../relative-target'));
   });
 
   it('clear は通常 symlink だけを削除', () => {
@@ -175,16 +224,92 @@ describe('SymlinkOps', () => {
     expect(fs.readlinkSync(externalLink)).toBe(target);
   });
 
-  it('WorkspaceLinkPort は束縛した linkPath を read と clear に使う', () => {
+  it('WorkspaceLinkPort は束縛した namespaced linkPath を read と clear に使う', () => {
     const target = abs('target');
     fs.mkdirSync(target);
-    const link = abs('link');
-    const adapter = createWorkspaceLinkAdapter(link);
+    const anchor = makeAnchor();
+    fs.mkdirSync(anchor.namespaceDirectoryPath, { recursive: true });
+    const adapter = createWorkspaceLinkAdapter(anchor);
     adapter.swap(target);
 
     expect(adapter.readTarget()).toBe(target);
     adapter.clear();
 
     expect(adapter.readTarget()).toBeUndefined();
+  });
+
+  it('legacy reader は旧 active が通常ファイルなら移行入力なしとして保持する', () => {
+    const anchor = makeAnchor();
+    fs.mkdirSync(anchor.rootDirectoryPath);
+    fs.writeFileSync(anchor.legacyActiveLinkPath, 'preserve');
+    const reader = createLegacyWorkspaceLinkReader(anchor);
+
+    expect(reader.readTarget()).toBeUndefined();
+    expect(fs.readFileSync(anchor.legacyActiveLinkPath, 'utf8')).toBe('preserve');
+  });
+
+  it('legacy reader は旧 active がディレクトリなら移行入力なしとして保持する', () => {
+    const anchor = makeAnchor();
+    fs.mkdirSync(anchor.legacyActiveLinkPath, { recursive: true });
+    const reader = createLegacyWorkspaceLinkReader(anchor);
+
+    expect(reader.readTarget()).toBeUndefined();
+    expect(fs.lstatSync(anchor.legacyActiveLinkPath).isDirectory()).toBe(true);
+  });
+
+  it('legacy reader は relative broken symlink を絶対パスの移行入力として読む', () => {
+    const anchor = makeAnchor();
+    fs.mkdirSync(anchor.rootDirectoryPath);
+    fs.symlinkSync('../missing-legacy-target', anchor.legacyActiveLinkPath);
+    const reader = createLegacyWorkspaceLinkReader(anchor);
+
+    expect(reader.readTarget()).toBe(abs('missing-legacy-target'));
+    expect(fs.existsSync(abs('missing-legacy-target'))).toBe(false);
+    expect(fs.lstatSync(anchor.legacyActiveLinkPath).isSymbolicLink()).toBe(true);
+  });
+
+  it('WorkspaceLinkPort は namespaced active が通常ファイルなら read でも拒否する', () => {
+    const anchor = makeAnchor();
+    fs.mkdirSync(anchor.namespaceDirectoryPath, { recursive: true });
+    fs.writeFileSync(anchor.activeLinkPath, 'preserve');
+    const adapter = createWorkspaceLinkAdapter(anchor);
+
+    expect(captureError(() => adapter.readTarget())).toMatchObject({
+      code: 'EINVAL',
+      syscall: 'readlink',
+      path: anchor.activeLinkPath,
+    });
+    expect(fs.readFileSync(anchor.activeLinkPath, 'utf8')).toBe('preserve');
+  });
+
+  it('WorkspaceLinkPort は symlink 化された `.lanes-root` を辿らない', () => {
+    const externalDirectory = abs('external');
+    const target = abs('target');
+    fs.mkdirSync(externalDirectory);
+    fs.mkdirSync(target);
+    const anchor = makeAnchor();
+    fs.symlinkSync(externalDirectory, anchor.rootDirectoryPath);
+    const adapter = createWorkspaceLinkAdapter(anchor);
+
+    expect(() => adapter.swap(target)).toThrowError(
+      `Workspace link parent is not a real directory: ${anchor.rootDirectoryPath}`,
+    );
+    expect(fs.readdirSync(externalDirectory)).toEqual([]);
+  });
+
+  it('WorkspaceLinkPort は symlink 化された hash directory を辿らない', () => {
+    const externalDirectory = abs('external');
+    const target = abs('target');
+    fs.mkdirSync(externalDirectory);
+    fs.mkdirSync(target);
+    const anchor = makeAnchor();
+    fs.mkdirSync(anchor.rootDirectoryPath);
+    fs.symlinkSync(externalDirectory, anchor.namespaceDirectoryPath);
+    const adapter = createWorkspaceLinkAdapter(anchor);
+
+    expect(() => adapter.swap(target)).toThrowError(
+      `Workspace link parent is not a real directory: ${anchor.namespaceDirectoryPath}`,
+    );
+    expect(fs.readdirSync(externalDirectory)).toEqual([]);
   });
 });

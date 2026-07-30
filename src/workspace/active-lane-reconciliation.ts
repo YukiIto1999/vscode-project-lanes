@@ -12,6 +12,8 @@ export interface ActiveLaneReconciliationInput {
   readonly linkPath: AbsolutePath;
   /** 評価時点の symlink 参照先 */
   readonly currentLinkTarget: AbsolutePath | undefined;
+  /** 新 link 未作成時だけ参照する旧 symlink 参照先 */
+  readonly legacyLinkTarget?: AbsolutePath;
   /** 永続化済み選択 */
   readonly cachedSelection: StoredLaneSelection | undefined;
   /** 呼出操作が維持を要求するレーン識別子 */
@@ -54,6 +56,7 @@ export const planActiveLaneReconciliation = (
     catalog,
     linkPath,
     currentLinkTarget,
+    legacyLinkTarget,
     cachedSelection,
     preferredLaneId,
     availabilityByLaneId,
@@ -77,6 +80,11 @@ export const planActiveLaneReconciliation = (
         : undefined;
   const cachedCandidate = cachedLaneId ? catalog.byId.get(cachedLaneId) : undefined;
   const cachedLane = cachedCandidate && isAvailable(cachedCandidate) ? cachedCandidate : undefined;
+  const legacyCandidate =
+    currentLinkTarget === undefined && legacyLinkTarget !== undefined
+      ? catalog.lanes.find((lane) => lane.rootPath === legacyLinkTarget)
+      : undefined;
+  const legacyLane = legacyCandidate && isAvailable(legacyCandidate) ? legacyCandidate : undefined;
   const preferredCandidate = preferredLaneId ? catalog.byId.get(preferredLaneId) : undefined;
   const preferredLane =
     preferredCandidate && isAvailable(preferredCandidate) ? preferredCandidate : undefined;
@@ -85,7 +93,7 @@ export const planActiveLaneReconciliation = (
       ? linkedLane
       : linkedLane
         ? firstAvailable
-        : (preferredLane ?? cachedLane ?? firstAvailable);
+        : (preferredLane ?? cachedLane ?? legacyLane ?? firstAvailable);
 
   return {
     kind: 'activate',

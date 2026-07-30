@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { deriveWorkspaceAnchor } = require('../workspace-anchor.cjs');
 
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const EXTENSION_ID = 'yukiito1999.project-lanes';
@@ -108,7 +109,7 @@ const run = async ({
   assert.equal(extension.isActive, true, `Extension did not activate: ${EXTENSION_ID}`);
 
   const workspaceDirectory = path.dirname(workspaceFile.fsPath);
-  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const activeLink = deriveWorkspaceAnchor(workspaceFile).activeLinkPath;
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
 

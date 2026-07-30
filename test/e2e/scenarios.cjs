@@ -24,6 +24,31 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'workspace-anchor-isolation',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'workspace-anchor-isolation'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'workspace-anchor-isolation',
+      'alpha.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'workspace-anchor-isolation.cjs'),
+    launches: Object.freeze([
+      Object.freeze({
+        phase: 'alpha-initialize',
+        workspaceFixtureName: 'alpha.code-workspace',
+      }),
+      Object.freeze({
+        phase: 'beta-switch',
+        workspaceFixtureName: 'beta.code-workspace',
+      }),
+      Object.freeze({
+        phase: 'alpha-reopen',
+        workspaceFixtureName: 'alpha.code-workspace',
+      }),
+    ]),
+  }),
+  Object.freeze({
     name: 'workspace-manual-initialization',
     fixtureRoot: path.join(__dirname, 'fixtures', 'workspace-manual-initialization'),
     workspaceFixture: path.join(
