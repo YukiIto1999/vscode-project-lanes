@@ -475,7 +475,6 @@ export const bootstrapRuntime = async (
         catalogStore,
         directory,
         resources.link,
-        toUri,
       );
       if (result.kind === 'disabled') return result;
 
