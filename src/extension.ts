@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { bootstrapRuntime } from './app/bootstrap';
+import { bootstrapRuntime, deactivateRuntime } from './app/bootstrap';
 import { workspaceWarningMessage } from './app/workspace-warning';
 
 /**
@@ -17,4 +17,6 @@ export const activate = async (context: vscode.ExtensionContext): Promise<void> 
 };
 
 /** 拡張機能の非活性化エントリ */
-export const deactivate = (): void => {};
+export const deactivate = async (): Promise<void> => {
+  await deactivateRuntime();
+};

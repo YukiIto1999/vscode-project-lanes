@@ -295,6 +295,37 @@ describe('managed runtime の共通 operation queue', () => {
   });
 });
 
+describe('ターミナル設定の可逆所有境界', () => {
+  const bootstrap = readSource(nodePath.join(SRC_ROOT, 'app/bootstrap.ts'));
+  const workspaceAdapter = readSource(nodePath.join(SRC_ROOT, 'adapters/vscode/workspace.ts'));
+  const extension = readSource(nodePath.join(SRC_ROOT, 'extension.ts'));
+
+  it('managed runtime だけが versioned lease を取得する', () => {
+    const managedRuntime = bootstrap.slice(
+      bootstrap.indexOf('const createManagedRuntime'),
+      bootstrap.indexOf('export const bootstrapRuntime'),
+    );
+    expect(managedRuntime).toContain('await terminalSettings.activate(laneProfile.title)');
+    expect(managedRuntime).toContain('cleanupFailedRuntime({ disposeResources, terminalSettings }');
+    expect(managedRuntime).toContain('disposeRuntime({ disposeResources, terminalSettings })');
+    expect(managedRuntime).not.toContain('createTerminalSettingsLeaseAdapter');
+    expect(bootstrap.match(/createTerminalSettingsLeaseAdapter/g)).toHaveLength(2);
+    expect(bootstrap).not.toContain('disablePersistentTerminals');
+    expect(bootstrap).not.toContain('setDefaultTerminalProfile');
+  });
+
+  it('workspace adapter は terminal.integrated 設定を書き換えない', () => {
+    expect(workspaceAdapter).not.toContain('defaultProfile.');
+    expect(workspaceAdapter).not.toContain('enablePersistentSessions');
+    expect(workspaceAdapter).not.toContain('WorkspaceSettingsPort');
+  });
+
+  it('extension deactivate は非同期復元の完了を待つ', () => {
+    expect(extension).toMatch(/export const deactivate = async \(\): Promise<void>/);
+    expect(extension).toContain('await deactivateRuntime()');
+  });
+});
+
 describe('workspace bootstrap と active lane 再整合の責務境界', () => {
   const scanner = readSource(nodePath.join(SRC_ROOT, 'workspace/scanner.ts'));
   const bootstrap = readSource(nodePath.join(SRC_ROOT, 'app/bootstrap.ts'));

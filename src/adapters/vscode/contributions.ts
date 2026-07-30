@@ -4,7 +4,7 @@ import type * as vscode from 'vscode';
 export interface LaneTerminalProfileContract {
   /** `registerTerminalProfileProvider` に渡す識別子 */
   readonly id: string;
-  /** `terminal.integrated.defaultProfile.linux` の照合先となる表示名 */
+  /** platform 別 `terminal.integrated.defaultProfile.*` の照合先となる表示名 */
   readonly title: string;
 }
 

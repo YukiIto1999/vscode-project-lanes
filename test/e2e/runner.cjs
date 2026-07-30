@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { resolveCliArgsFromVSCodeExecutablePath } = require('@vscode/test-electron');
+const { VSCODE_VERSION } = require('./vscode-version.cjs');
 
 const DEFAULT_CACHE_PATH = '/tmp/vscode-project-lanes-vscode-test-cache';
 const E2E_EXPECTED_EXTENSIONS_DIR_KEY = 'PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR';
@@ -20,7 +21,6 @@ const LAUNCH_TIMEOUT_MS = 120_000;
 const PROCESS_GROUP_PROBE_MS = 50;
 const PROCESS_TERMINATION_UNCONFIRMED_CODE = 'ERR_VSCODE_PROCESS_TERMINATION_UNCONFIRMED';
 const PROJECT_LANES_EXTENSION_ID = 'yukiito1999.project-lanes';
-const VSCODE_VERSION = '1.101.0';
 const extensionDevelopmentPath = path.resolve(__dirname, '..', '..');
 const driverDevelopmentPath = path.join(__dirname, 'driver');
 const processCleanupRegistries = new WeakMap();

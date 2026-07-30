@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const { createRequire } = require('node:module');
 const path = require('node:path');
 const { deriveWorkspaceAnchor } = require('../workspace-anchor.cjs');
+const { VSCODE_VERSION } = require('../vscode-version.cjs');
 
 const EXTENSION_ID = 'yukiito1999.project-lanes';
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
@@ -14,6 +15,7 @@ const EXPECTED_VERSION_KEY = 'PROJECT_LANES_E2E_EXPECTED_VERSION';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
 const UPGRADE_WORKSPACE_FIXTURE = 'workspace-bootstrap.code-workspace';
+const LEGACY_PROMPT_COMMANDS = ['notifications.focusToasts', 'notification.acceptPrimaryAction'];
 
 const requiredEnvironmentValue = (environment, key) => {
   const value = environment[key];
@@ -71,6 +73,40 @@ const waitFor = async (
 
 const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
 
+const activateWithLegacyRemoval = async ({
+  activation,
+  commands,
+  delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  now = () => Date.now(),
+}) => {
+  const availableCommands = new Set(await commands.getCommands(true));
+  const missingCommands = LEGACY_PROMPT_COMMANDS.filter(
+    (command) => !availableCommands.has(command),
+  );
+  if (missingCommands.length > 0) {
+    throw new Error(
+      `VS Code ${VSCODE_VERSION} is missing required notification commands: ${missingCommands.join(', ')}`,
+    );
+  }
+
+  let settled = false;
+  const observedActivation = Promise.resolve(activation).finally(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  const deadline = now() + POLL_TIMEOUT_MS;
+
+  while (!settled) {
+    await commands.executeCommand('notifications.focusToasts');
+    await commands.executeCommand('notification.acceptPrimaryAction');
+    await Promise.race([observedActivation, delay(POLL_INTERVAL_MS)]);
+    if (!settled && now() > deadline) {
+      throw new Error('Timed out while selecting Remove Legacy Settings');
+    }
+  }
+  await observedActivation;
+};
+
 const run = async ({
   environment = process.env,
   fileSystem = fs,
@@ -84,6 +120,7 @@ const run = async ({
     childProcess.spawnSync(ripgrepPath, ['--version'], {
       encoding: 'utf8',
     }),
+  respondToLegacySettings = activateWithLegacyRemoval,
   log = (message) => console.log(message),
 } = {}) => {
   const phase = readPhase(environment);
@@ -106,7 +143,17 @@ const run = async ({
     `Extension is outside the isolated extensions directory: ${installedExtensionPath}`,
   );
 
-  await extension.activate();
+  const activation = extension.activate();
+  if (phase === 'candidate-migrate') {
+    await respondToLegacySettings({
+      activation,
+      commands: vscodeApi.commands,
+      delay,
+      now,
+    });
+  } else {
+    await activation;
+  }
   assert.equal(extension.isActive, true, `Extension did not activate: ${EXTENSION_ID}`);
 
   const nodePty = loadNodePty(installedExtensionPath);
@@ -166,6 +213,17 @@ const run = async ({
     return;
   }
 
+  const terminalConfiguration = vscodeApi.workspace.getConfiguration('terminal.integrated');
+  assert.equal(
+    terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
+    undefined,
+    'Candidate retained the matching legacy default profile',
+  );
+  assert.equal(
+    terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
+    undefined,
+    'Candidate retained the matching legacy persistence override',
+  );
   await waitForLane(laneB);
   assert.equal(
     path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
@@ -182,4 +240,4 @@ const run = async ({
   log(`E2E PASS: ${phase} preserved the legacy link and namespaced workspace state`);
 };
 
-module.exports = { run };
+module.exports = { activateWithLegacyRemoval, run };

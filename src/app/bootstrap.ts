@@ -14,6 +14,13 @@ import { createPromptAdapter } from '../adapters/vscode/prompt';
 import { createSearchUiAdapter } from '../adapters/vscode/search-pick';
 import { createStatusBarAdapter } from '../adapters/vscode/status-bar';
 import { createCatalogStoreAdapter, createSelectionStoreAdapter } from '../adapters/vscode/storage';
+import {
+  cleanupFailedRuntime,
+  createTerminalSettingsLifecycle,
+  disposeRuntime,
+  type TerminalSettingsLifecycle,
+} from '../adapters/vscode/terminal-settings-lifecycle';
+import { createTerminalSettingsLeaseAdapter } from '../adapters/vscode/terminal-settings-vscode';
 import { createTerminalPresentationAdapter } from '../adapters/vscode/terminals';
 import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
@@ -22,7 +29,6 @@ import {
   createLaneRootAvailabilityAdapter,
   createWorkspaceFileAdapter,
   createWorkspaceHostAdapter,
-  createWorkspaceSettingsAdapter,
 } from '../adapters/vscode/workspace';
 import type {
   AbsolutePath,
@@ -92,6 +98,17 @@ const MISSING_LANE_GUIDANCE =
   'Project Lanes: Add at least one folder to the workspace before initializing it.';
 const OPERATION_FAILURE_MESSAGE =
   'Project Lanes operation failed. See the Developer Tools console for details.';
+const TERMINAL_SETTINGS_RELEASE_FAILURE_MESSAGE =
+  'Project Lanes failed to restore terminal workspace settings.';
+
+const activeTerminalSettingsLifecycles = new Set<TerminalSettingsLifecycle>();
+
+/** 有効な runtime が所有するターミナル設定の非同期復元 */
+export const deactivateRuntime = async (): Promise<void> => {
+  await Promise.all(
+    [...activeTerminalSettingsLifecycles].map((terminalSettings) => terminalSettings.release()),
+  );
+};
 
 const reportWorkspaceMutationFailure = createWorkspaceMutationFailureReporter({
   log: (message, error) => console.error(message, error),
@@ -133,6 +150,7 @@ interface ManagedRuntimeDeps {
   readonly laneIdFactory: LaneIdFactoryPort;
   readonly config: ConfigPort;
   readonly toUri: (path: string) => UriString;
+  readonly terminalSettings: TerminalSettingsLifecycle;
 }
 
 /** ブートストラップ結果 */
@@ -225,6 +243,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     laneIdFactory,
     config,
     toUri,
+    terminalSettings,
   } = deps;
   const { anchor, fileInfo, link } = resources;
   const disposables: Disposable[] = [];
@@ -232,8 +251,19 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     disposables.push(disposable);
     return disposable;
   };
-  const dispose = (): void => {
-    for (const disposable of disposables.splice(0).reverse()) disposable.dispose();
+  const disposeResources = (): void => {
+    const failures: unknown[] = [];
+    for (const disposable of disposables.splice(0).reverse()) {
+      try {
+        disposable.dispose();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, 'Managed runtime resource disposal failed');
+    }
   };
 
   try {
@@ -244,6 +274,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     );
     const operationQueue = createOperationQueue();
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
+    await terminalSettings.activate(laneProfile.title);
     const editor = createEditorAdapter();
     const editorStore = createEditorSnapshotStoreAdapter(extensionContext.workspaceState);
     await editorStore.prune(registry.snapshot().lanes.map((lane) => lane.id));
@@ -470,10 +501,14 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         runAsyncBoundary(() => laneSearchService.goToFileInLanes(), reportAsyncFailure),
     };
 
-    return { commands, disposable: { dispose } };
+    return {
+      commands,
+      disposable: {
+        dispose: () => disposeRuntime({ disposeResources, terminalSettings }),
+      },
+    };
   } catch (error) {
-    dispose();
-    throw error;
+    return cleanupFailedRuntime({ disposeResources, terminalSettings }, error);
   }
 };
 
@@ -489,10 +524,16 @@ export const bootstrapRuntime = async (
   const workspaceHost = createWorkspaceHostAdapter();
   const workspaceFile = createWorkspaceFileAdapter();
   const directory = createDirectoryAdapter();
-  const settings = createWorkspaceSettingsAdapter();
   const catalogStore = createCatalogStoreAdapter(context.workspaceState);
   const laneIdFactory: LaneIdFactoryPort = { next: () => toLaneId(randomUUID()) };
-  const laneProfile = readLaneTerminalProfile(context.extension);
+  const terminalSettings = createTerminalSettingsLifecycle({
+    lease: createTerminalSettingsLeaseAdapter(context.workspaceState, process.platform),
+    register: (lifecycle) => activeTerminalSettingsLifecycles.add(lifecycle),
+    unregister: (lifecycle) => activeTerminalSettingsLifecycles.delete(lifecycle),
+    reportReleaseFailure: (error) => {
+      console.error(TERMINAL_SETTINGS_RELEASE_FAILURE_MESSAGE, error);
+    },
+  });
   const toUri = (path: string): UriString => vscode.Uri.file(path).toString() as UriString;
   let initializedResources: WorkspaceResources | undefined;
   let runtimeCommands: ManagedCommandHandlers | undefined;
@@ -537,8 +578,6 @@ export const bootstrapRuntime = async (
       );
       if (result.kind === 'disabled') return result;
 
-      await settings.setDefaultTerminalProfile(laneProfile.title);
-      await settings.disablePersistentTerminals();
       initializedResources = resources;
       return result;
     },
@@ -555,6 +594,7 @@ export const bootstrapRuntime = async (
         laneIdFactory,
         config,
         toUri,
+        terminalSettings,
       });
       runtimeCommands = runtime.commands;
       return {

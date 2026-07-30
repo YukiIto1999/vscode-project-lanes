@@ -126,7 +126,14 @@ export const createInitializationCoordinator = (
       try {
         await updateStatus('ready');
       } catch (error) {
-        startedRuntime?.dispose();
+        try {
+          startedRuntime?.dispose();
+        } catch (disposeError) {
+          throw new AggregateError(
+            [error, disposeError],
+            'Ready status publication and runtime disposal failed',
+          );
+        }
         throw error;
       }
       if (disposed) {
