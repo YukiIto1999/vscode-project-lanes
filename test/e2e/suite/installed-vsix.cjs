@@ -7,8 +7,12 @@ const { createRequire } = require('node:module');
 const path = require('node:path');
 
 const EXTENSION_ID = 'yukiito1999.project-lanes';
+const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const EXPECTED_EXTENSIONS_DIR_KEY = 'PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR';
 const EXPECTED_VERSION_KEY = 'PROJECT_LANES_E2E_EXPECTED_VERSION';
+const POLL_INTERVAL_MS = 100;
+const POLL_TIMEOUT_MS = 12_000;
+const UPGRADE_WORKSPACE_FIXTURE = 'workspace-bootstrap.code-workspace';
 
 const requiredEnvironmentValue = (environment, key) => {
   const value = environment[key];
@@ -26,9 +30,52 @@ const isDescendant = (parentPath, candidatePath) => {
   );
 };
 
+const readPhase = (environment) => {
+  const serialized = environment[E2E_PAYLOAD_KEY];
+  if (!serialized) return 'fresh';
+  const phase = JSON.parse(serialized).phase;
+  if (
+    phase !== 'fresh' &&
+    phase !== 'baseline-create-v1' &&
+    phase !== 'candidate-migrate' &&
+    phase !== 'candidate-restart'
+  ) {
+    throw new Error(`Unknown installed VSIX E2E phase: ${String(phase)}`);
+  }
+  return phase;
+};
+
+const waitFor = async (
+  assertion,
+  {
+    delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    now = () => Date.now(),
+  },
+) => {
+  const deadline = now() + POLL_TIMEOUT_MS;
+  let lastError;
+  do {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    await delay(POLL_INTERVAL_MS);
+  } while (now() <= deadline);
+  throw new Error(`Timed out waiting for installed VSIX workspace state: ${lastError.message}`, {
+    cause: lastError,
+  });
+};
+
+const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
+
 const run = async ({
   environment = process.env,
+  fileSystem = fs,
   vscodeApi = require('vscode'),
+  delay,
+  now,
   resolveRealPath = fs.realpathSync,
   loadNodePty = (extensionPath) =>
     createRequire(path.join(extensionPath, 'package.json'))('node-pty'),
@@ -38,6 +85,7 @@ const run = async ({
     }),
   log = (message) => console.log(message),
 } = {}) => {
+  const phase = readPhase(environment);
   const expectedExtensionsDir = resolveRealPath(
     requiredEnvironmentValue(environment, EXPECTED_EXTENSIONS_DIR_KEY),
   );
@@ -76,7 +124,55 @@ const run = async ({
   assert.equal(ripgrep.status, 0, `Bundled ripgrep failed: ${ripgrep.stderr || ripgrep.stdout}`);
   assert.match(ripgrep.stdout, /^ripgrep \d+\./, 'Bundled ripgrep did not report its version');
 
-  log(`E2E PASS: installed ${EXTENSION_ID}@${expectedVersion} activated`);
+  if (phase === 'fresh') {
+    log(`E2E PASS: installed ${EXTENSION_ID}@${expectedVersion} activated`);
+    return;
+  }
+
+  const workspaceFile = vscodeApi.workspace.workspaceFile;
+  assert.ok(workspaceFile, `Workspace file not found: ${UPGRADE_WORKSPACE_FIXTURE}`);
+  assert.equal(path.basename(workspaceFile.fsPath), UPGRADE_WORKSPACE_FIXTURE);
+  const workspaceDirectory = path.dirname(workspaceFile.fsPath);
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const waitForLane = (expectedTarget) =>
+    waitFor(
+      () => {
+        const folders = vscodeApi.workspace.workspaceFolders;
+        assert.equal(folders?.length, 1, 'Expected one active workspace folder');
+        assert.equal(path.resolve(folders[0].uri.fsPath), activeLink);
+        assert.equal(path.resolve(fileSystem.realpathSync(activeLink)), expectedTarget);
+      },
+      { delay, now },
+    );
+  const switchTo = async (label, expectedTarget) => {
+    await vscodeApi.commands.executeCommand('projectLanes.switchLane', label);
+    await waitForLane(expectedTarget);
+  };
+  const removeActiveLink = () => {
+    fileSystem.unlinkSync(activeLink);
+    assert.equal(fileSystem.existsSync(activeLink), false, 'Expected active link to be removed');
+  };
+
+  if (phase === 'baseline-create-v1') {
+    try {
+      await vscodeApi.commands.executeCommand('projectLanes.initializeWorkspace');
+    } catch (error) {
+      if (!isCancellation(error)) throw error;
+    }
+    await waitForLane(laneA);
+    await switchTo('lane-b', laneB);
+    removeActiveLink();
+    log(`E2E PASS: baseline ${EXTENSION_ID}@${expectedVersion} created v1 state`);
+    return;
+  }
+
+  await waitForLane(laneB);
+  await switchTo('lane-a', laneA);
+  await switchTo('lane-b', laneB);
+  if (phase === 'candidate-migrate') removeActiveLink();
+  log(`E2E PASS: ${phase} preserved migration and legacy-label commands`);
 };
 
 module.exports = { run };

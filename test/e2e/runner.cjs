@@ -160,44 +160,24 @@ const installAndVerifyExtension = (
   assertListedExtensionVersion(listedExtensions, extensionId, expectedVersion);
 };
 
-const installCandidateProfiles = (
-  { vscodeExecutablePath, vsixPath, candidateVersion, baselineVersion, profiles },
-  { installExtension = installAndVerifyExtension } = {},
-) => {
-  installExtension({
-    vscodeExecutablePath,
-    ...profiles.fresh,
-    extensionReference: vsixPath,
-    extensionId: PROJECT_LANES_EXTENSION_ID,
-    expectedVersion: candidateVersion,
-  });
-  installExtension({
-    vscodeExecutablePath,
-    ...profiles.upgrade,
-    extensionReference: `${PROJECT_LANES_EXTENSION_ID}@${baselineVersion}`,
-    extensionId: PROJECT_LANES_EXTENSION_ID,
-    expectedVersion: baselineVersion,
-  });
-  installExtension({
-    vscodeExecutablePath,
-    ...profiles.upgrade,
-    extensionReference: vsixPath,
-    extensionId: PROJECT_LANES_EXTENSION_ID,
-    expectedVersion: candidateVersion,
-  });
-};
-
 const runInstalledVSIXVerification = async (
   { vscodeExecutablePath, vsixPath, candidateVersion, baselineVersion },
   {
     createRunId = () => crypto.randomUUID(),
     environment = process.env,
     fileSystem = fs,
-    installProfiles = installCandidateProfiles,
+    installExtension = installAndVerifyExtension,
     launchVSCode = launchVSCodeProcess,
     processApi = process,
     temporaryDirectory = os.tmpdir(),
-    workspaceFixture = path.join(__dirname, 'fixtures', 'empty.code-workspace'),
+    freshWorkspaceFixture = path.join(__dirname, 'fixtures', 'empty.code-workspace'),
+    upgradeFixtureRoot = path.join(__dirname, 'fixtures', 'workspace-bootstrap'),
+    upgradeWorkspaceFixture = path.join(
+      __dirname,
+      'fixtures',
+      'workspace-bootstrap',
+      'workspace-bootstrap.code-workspace',
+    ),
     suitePath = path.join(__dirname, 'suite', 'installed-vsix.cjs'),
   } = {},
 ) => {
@@ -226,26 +206,35 @@ const runInstalledVSIXVerification = async (
         extensionsDir: path.join(temporaryRoot, 'upgrade', 'extensions'),
       },
     };
-    const workspaceDirectory = path.join(temporaryRoot, 'workspace');
-    const workspacePath = path.join(workspaceDirectory, path.basename(workspaceFixture));
     for (const profile of Object.values(profiles)) {
       fileSystem.mkdirSync(profile.userDataDir, { recursive: true });
       fileSystem.mkdirSync(profile.extensionsDir, { recursive: true });
     }
-    fileSystem.mkdirSync(workspaceDirectory, { recursive: true });
-    fileSystem.copyFileSync(workspaceFixture, workspacePath);
+    const freshWorkspaceDirectory = path.join(temporaryRoot, 'fresh', 'workspace');
+    const freshWorkspacePath = path.join(
+      freshWorkspaceDirectory,
+      path.basename(freshWorkspaceFixture),
+    );
+    const upgradeWorkspaceDirectory = path.join(temporaryRoot, 'upgrade', 'workspace');
+    const upgradeWorkspacePath = path.join(
+      upgradeWorkspaceDirectory,
+      path.basename(upgradeWorkspaceFixture),
+    );
+    fileSystem.mkdirSync(freshWorkspaceDirectory, { recursive: true });
+    fileSystem.copyFileSync(freshWorkspaceFixture, freshWorkspacePath);
+    fileSystem.cpSync(upgradeFixtureRoot, upgradeWorkspaceDirectory, { recursive: true });
 
-    installProfiles({
-      vscodeExecutablePath,
-      vsixPath,
-      candidateVersion,
-      baselineVersion,
-      profiles,
-    });
-
+    const install = (profile, extensionReference, expectedVersion) =>
+      installExtension({
+        vscodeExecutablePath,
+        ...profile,
+        extensionReference,
+        extensionId: PROJECT_LANES_EXTENSION_ID,
+        expectedVersion,
+      });
     const runId = createRunId();
-    for (const [profileName, profile] of Object.entries(profiles)) {
-      if (cleanupRegistry.terminationRequested) break;
+    const launch = async ({ profileName, profile, workspacePath, phase, expectedVersion }) => {
+      if (cleanupRegistry.terminationRequested) return;
       const scenario = {
         name: `installed-vsix-${profileName}`,
         suitePath,
@@ -256,17 +245,52 @@ const runInstalledVSIXVerification = async (
           scenario,
           workspacePath,
           ...profile,
-          markerPath: path.join(temporaryRoot, `${profileName}-result.json`),
+          markerPath: path.join(temporaryRoot, `${profileName}-${phase}-result.json`),
           resultIdentity: {
             runId,
             scenario: scenario.name,
-            phase: 'default',
+            phase,
           },
-          expectedVersion: candidateVersion,
+          launch: { phase },
+          expectedVersion,
           environment,
         }),
       );
-    }
+    };
+
+    install(profiles.fresh, vsixPath, candidateVersion);
+    await launch({
+      profileName: 'fresh',
+      profile: profiles.fresh,
+      workspacePath: freshWorkspacePath,
+      phase: 'fresh',
+      expectedVersion: candidateVersion,
+    });
+
+    install(profiles.upgrade, `${PROJECT_LANES_EXTENSION_ID}@${baselineVersion}`, baselineVersion);
+    await launch({
+      profileName: 'upgrade',
+      profile: profiles.upgrade,
+      workspacePath: upgradeWorkspacePath,
+      phase: 'baseline-create-v1',
+      expectedVersion: baselineVersion,
+    });
+
+    install(profiles.upgrade, vsixPath, candidateVersion);
+    await launch({
+      profileName: 'upgrade',
+      profile: profiles.upgrade,
+      workspacePath: upgradeWorkspacePath,
+      phase: 'candidate-migrate',
+      expectedVersion: candidateVersion,
+    });
+    await launch({
+      profileName: 'upgrade',
+      profile: profiles.upgrade,
+      workspacePath: upgradeWorkspacePath,
+      phase: 'candidate-restart',
+      expectedVersion: candidateVersion,
+    });
   } catch (error) {
     verificationError = error;
   }
@@ -339,6 +363,7 @@ const buildInstalledLaunchOptions = ({
   extensionsDir,
   markerPath,
   resultIdentity,
+  launch,
   expectedVersion,
   environment = process.env,
 }) => {
@@ -352,6 +377,7 @@ const buildInstalledLaunchOptions = ({
     [E2E_RUN_KEY]: JSON.stringify(resultIdentity),
     [E2E_SUITE_PATH_KEY]: scenario.suitePath,
   });
+  if (launch) launchEnvironment[E2E_PAYLOAD_KEY] = JSON.stringify(launch);
 
   return {
     command: vscodeExecutablePath,
@@ -598,7 +624,6 @@ module.exports = {
   createProcessCleanupRegistry,
   executeExtensionManagementRequest,
   installAndVerifyExtension,
-  installCandidateProfiles,
   launchVSCodeProcess,
   runInstalledVSIXVerification,
   runScenario,
