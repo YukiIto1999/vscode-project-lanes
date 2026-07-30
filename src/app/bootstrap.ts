@@ -98,6 +98,7 @@ type ManagedCommandHandlers = Readonly<Record<ManagedCommandId, ManagedCommandHa
 interface WorkspaceResources {
   readonly fileInfo: WorkspaceFileInfo;
   readonly link: WorkspaceLinkPort;
+  readonly legacyAnchorUri: UriString;
 }
 
 interface ManagedRuntime {
@@ -322,6 +323,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       finalizePendingOperations: () => laneService.finalizePendingOperations(),
       linkPath: link.linkPath,
       linkUri: toUri(link.linkPath),
+      legacyAnchorUri: resources.legacyAnchorUri,
     });
     const runtimeReconciler = createRuntimeReconciler({
       reconcileWorkspaceFolders: () => workspaceFolderReconciler.reconcileWorkspaceFolders(),
@@ -450,8 +452,13 @@ export const bootstrapRuntime = async (
   const readResources = (): WorkspaceResources | undefined => {
     const fileInfo = workspaceFile.read();
     if (!fileInfo) return undefined;
-    const linkPath = nodePath.join(fileInfo.directoryPath, '.lanes-root', 'active') as AbsolutePath;
-    return { fileInfo, link: createWorkspaceLinkAdapter(linkPath) };
+    const legacyAnchorPath = nodePath.join(fileInfo.directoryPath, '.lanes-root') as AbsolutePath;
+    const linkPath = nodePath.join(legacyAnchorPath, 'active') as AbsolutePath;
+    return {
+      fileInfo,
+      link: createWorkspaceLinkAdapter(linkPath),
+      legacyAnchorUri: toUri(legacyAnchorPath),
+    };
   };
 
   const inspect = (): InitializationClassification => {
@@ -477,6 +484,7 @@ export const bootstrapRuntime = async (
         resources.fileInfo,
         catalogStore,
         directory,
+        resources.legacyAnchorUri,
         resources.link,
       );
       if (result.kind === 'disabled') return result;

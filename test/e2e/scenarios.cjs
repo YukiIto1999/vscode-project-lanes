@@ -72,6 +72,17 @@ const scenarios = Object.freeze([
       Object.freeze({ phase: 'restore-missing-link' }),
     ]),
   }),
+  Object.freeze({
+    name: 'legacy-anchor-classification',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'legacy-anchor-classification',
+      'legacy-anchor-classification.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'legacy-anchor-classification.cjs'),
+  }),
 ]);
 
 const resolveScenarios = (requestedNames, availableScenarios = scenarios) => {
