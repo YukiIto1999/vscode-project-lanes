@@ -6,7 +6,7 @@ import type { LaneTreeItemViewModel, UiSnapshot } from '../../ui/model';
  * @param vm - 変換元ビューモデル
  * @returns TreeItem
  */
-const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
+export const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
   const item = new vscode.TreeItem(vm.label);
   item.id = vm.laneId;
   item.description = vm.description;
@@ -14,12 +14,19 @@ const toTreeItem = (vm: LaneTreeItemViewModel): vscode.TreeItem => {
     ? new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.blue'))
     : new vscode.ThemeIcon('circle-outline');
   item.resourceUri = vscode.Uri.parse(vm.resourceUri);
-  item.contextValue = 'projectLane';
-  item.command = {
-    command: 'projectLanes.switchLane',
-    title: 'Switch Lane',
-    arguments: [vm.laneId],
-  };
+  const available = vm.action === 'switch';
+  item.contextValue = available ? 'projectLaneAvailable' : 'projectLaneUnavailable';
+  item.command = available
+    ? {
+        command: 'projectLanes.switchLane',
+        title: 'Switch Lane',
+        arguments: [vm.laneId],
+      }
+    : {
+        command: 'projectLanes.locateFolder',
+        title: 'Locate Folder',
+        arguments: [vm.laneId],
+      };
   return item;
 };
 
