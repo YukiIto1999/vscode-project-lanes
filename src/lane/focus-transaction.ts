@@ -4,9 +4,9 @@ import { planActiveLinkSwap } from './active-link';
 import { planLaneFocus } from './focus-plan';
 import type { Lane, LaneCatalog, LaneFocusPlan } from './model';
 import type {
+  EditorSnapshotStorePort,
   EditorPort,
   LaneSelectionStorePort,
-  LaneSessionStore,
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
@@ -20,7 +20,7 @@ export interface LaneFocusTransactionDeps {
   /** エディタ操作ポート */
   readonly editor: EditorPort;
   /** エディタ snapshot ストア */
-  readonly editorStore: LaneSessionStore;
+  readonly editorStore: EditorSnapshotStorePort;
   /** symlink 操作ポート */
   readonly link: WorkspaceLinkPort;
   /** ビュー再走査ポート */
@@ -73,6 +73,11 @@ const transitionFailed = (error: unknown): LaneFocusPlan => ({
   reason: 'transition-failed',
   error,
 });
+
+const sameLaneTopology = (current: Lane | undefined, expected: Lane): boolean =>
+  current?.id === expected.id &&
+  current.rootUri === expected.rootUri &&
+  current.rootPath === expected.rootPath;
 
 /**
  * focus transaction の生成
@@ -151,6 +156,7 @@ export const createLaneFocusTransaction = (
   const executeTransition = async (
     source: Lane,
     target: Lane,
+    revalidatePrepared: () => LaneFocusPlan | undefined,
     commitPrepared?: () => Promise<void>,
     isPreparationCommitted?: () => boolean,
   ): Promise<LaneFocusPlan> => {
@@ -159,9 +165,12 @@ export const createLaneFocusTransaction = (
     let swapAttempted = false;
     try {
       sourceSnapshot = editor.captureSnapshot();
-      editorStore.save(source.id, sourceSnapshot);
+      await editorStore.save(source.id, sourceSnapshot);
+      const revalidation = revalidatePrepared();
+      if (revalidation) return revalidation;
       closeAttempted = true;
-      await editor.closeAll();
+      const closed = await editor.closeAll();
+      if (!closed) throw new Error('editor-close-rejected');
 
       const swap = planActiveLinkSwap(link.linkPath, source.rootPath, target.rootPath);
       if (swap) {
@@ -226,7 +235,21 @@ export const createLaneFocusTransaction = (
     const plan = planLaneFocus(source, target, targetAvailability, hasDirtyEditors);
     if (plan.kind !== 'focus') return plan;
 
-    return executeTransition(source, target);
+    return executeTransition(source, target, () => {
+      const currentCatalog = getCatalog();
+      if (
+        !sameLaneTopology(currentCatalog.byId.get(source.id), source) ||
+        !sameLaneTopology(currentCatalog.byId.get(target.id), target) ||
+        link.readTarget() !== source.rootPath
+      ) {
+        return { kind: 'blocked', reason: 'reconciliation-required' };
+      }
+      if (rootAvailability.inspect(target.rootPath) !== 'available') {
+        return { kind: 'blocked', reason: 'root-unavailable' };
+      }
+      if (editor.hasDirtyEditors()) return { kind: 'blocked', reason: 'dirty-editors' };
+      return undefined;
+    });
   };
 
   const relocateActive = async (
@@ -245,7 +268,26 @@ export const createLaneFocusTransaction = (
       return { kind: 'blocked', reason: 'dirty-editors' };
     }
 
-    return executeTransition(source, target, commitCatalog, isCatalogCommitted);
+    return executeTransition(
+      source,
+      target,
+      () => {
+        const currentCatalog = getCatalog();
+        if (
+          !sameLaneTopology(currentCatalog.byId.get(source.id), source) ||
+          link.readTarget() !== source.rootPath
+        ) {
+          return { kind: 'blocked', reason: 'reconciliation-required' };
+        }
+        if (rootAvailability.inspect(target.rootPath) !== 'available') {
+          return { kind: 'blocked', reason: 'root-unavailable' };
+        }
+        if (editor.hasDirtyEditors()) return { kind: 'blocked', reason: 'dirty-editors' };
+        return undefined;
+      },
+      commitCatalog,
+      isCatalogCommitted,
+    );
   };
 
   return { focus, relocateActive, finalizePending };
