@@ -301,7 +301,8 @@ describe('workspace bootstrap と active lane 再整合の責務境界', () => {
     expect(bootstrapWorkspaceIndex).toBeGreaterThan(-1);
     expect(signatureEndIndex).toBeGreaterThan(bootstrapWorkspaceIndex);
     expect(bootstrapWorkspaceSignature).toMatch(/host: Pick<WorkspaceHostPort, 'readFolders'>/);
-    expect(bootstrapWorkspaceSignature).toMatch(/link: Pick<WorkspaceLinkPort, 'linkPath'>/);
+    expect(bootstrapWorkspaceSignature).toMatch(/fileInfo: WorkspaceFileInfo/);
+    expect(bootstrapWorkspaceSignature).not.toMatch(/WorkspaceLinkPort/);
   });
 
   it('startup は active lane 再整合の完了を待って runtime を公開する', () => {
@@ -310,6 +311,33 @@ describe('workspace bootstrap と active lane 再整合の責務境界', () => {
     expect(managedRuntime).toMatch(/const createManagedRuntime = async/);
     expect(managedRuntime).toMatch(/await laneService\.reconcileActiveLane\(\);/);
     expect(managedRuntime).not.toMatch(/laneService\.initialize\(\)/);
+  });
+});
+
+describe('workspace anchor path と folder role の単一定義', () => {
+  const anchor = readSource(nodePath.join(SRC_ROOT, 'workspace/anchor.ts'));
+  const consumers = [
+    nodePath.join(SRC_ROOT, 'app/bootstrap.ts'),
+    nodePath.join(SRC_ROOT, 'workspace/inspection.ts'),
+    nodePath.join(SRC_ROOT, 'workspace/scanner.ts'),
+    nodePath.join(SRC_ROOT, 'workspace/reconciler.ts'),
+  ];
+
+  it('anchor module が workspace key、hash、namespaced link、旧 link を一括導出する', () => {
+    expect(anchor).toContain('project-lanes:workspace-anchor:v1\\0');
+    expect(anchor).toMatch(/createHash\('sha256'\)/);
+    expect(anchor).toContain('classifyWorkspaceFolder');
+    expect(anchor).toContain('legacyActiveLinkPath');
+  });
+
+  it.each(consumers)('%s は `.lanes-root` の path を再構築しない', (file) => {
+    expect(readSource(file)).not.toContain("'.lanes-root'");
+  });
+
+  it('inspection は link target だけを管理根拠にしない', () => {
+    const inspection = readSource(nodePath.join(SRC_ROOT, 'workspace/inspection.ts'));
+    expect(inspection).not.toContain('active-target');
+    expect(inspection).not.toContain('readTarget');
   });
 });
 

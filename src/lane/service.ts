@@ -1,4 +1,4 @@
-import type { LaneId, WorkspaceKey } from '../foundation/model';
+import type { AbsolutePath, LaneId, WorkspaceKey } from '../foundation/model';
 import type { OperationQueue } from '../foundation/operation-queue';
 import { parentDirectory, uriToAbsolutePath } from '../foundation/path';
 import type { LaneRootAvailabilityPort, WorkspaceLinkPort } from '../workspace/ports';
@@ -28,6 +28,8 @@ export interface LaneServiceDeps {
   readonly editor: EditorPort;
   /** symlink 操作ポート */
   readonly link: WorkspaceLinkPort;
+  /** new link 未作成時に限って利用する旧 link target の読取 */
+  readonly readLegacyLinkTarget: () => AbsolutePath | undefined;
   /** ターミナル切替ポート */
   readonly terminal: LaneTerminalPort;
   /** ビュー再走査ポート */
@@ -158,6 +160,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     workspaceKey,
     editor,
     link,
+    readLegacyLinkTarget,
     terminal,
     viewRebind,
     selectionStore,
@@ -211,6 +214,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
 
     const catalog = getCatalog();
     const currentLinkTarget = link.readTarget();
+    const legacyLinkTarget = currentLinkTarget === undefined ? readLegacyLinkTarget() : undefined;
     const cachedSelection = selectionStore.load(workspaceKey);
     const availabilityByLaneId = new Map(
       catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
@@ -222,6 +226,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       catalog,
       linkPath: link.linkPath,
       currentLinkTarget,
+      ...(legacyLinkTarget !== undefined ? { legacyLinkTarget } : {}),
       cachedSelection,
       ...(preferredLaneId ? { preferredLaneId } : {}),
       availabilityByLaneId,
