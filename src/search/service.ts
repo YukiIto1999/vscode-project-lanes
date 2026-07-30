@@ -39,7 +39,11 @@ export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearch
 
   const navigate = async (result: LaneSearchResult): Promise<void> => {
     const plan = await focus(result.laneId);
-    if (plan.kind === 'blocked') return;
+    if (plan.kind === 'failed') throw plan.error;
+    const targetActive =
+      (plan.kind === 'focus' && plan.to.id === result.laneId) ||
+      (plan.kind === 'noop' && plan.reason === 'same-lane');
+    if (!targetActive) return;
     const position =
       result.kind === 'content' ? { line: result.line, column: result.column } : undefined;
     await fileOpen.openAt(result.path, position);

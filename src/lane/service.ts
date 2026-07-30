@@ -1,9 +1,9 @@
 import type { LaneId, WorkspaceKey } from '../foundation/model';
+import type { OperationQueue } from '../foundation/operation-queue';
 import type { WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
 import { selectByLinkTarget } from '../workspace/scanner';
-import { planActiveLinkSwap } from './active-link';
-import { planLaneFocus } from './focus-plan';
+import { createLaneFocusTransaction } from './focus-transaction';
 import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
 import type {
   EditorPort,
@@ -40,12 +40,16 @@ export interface LaneServiceDeps {
   readonly terminalRekey: { readonly rekeyLane: (oldId: LaneId, newId: LaneId) => void };
   /** エディタ snapshot ストア */
   readonly editorStore: LaneSessionStore;
+  /** runtime 共通の非同期操作 queue */
+  readonly operationQueue: OperationQueue;
 }
 
 /** レーンサービスの操作インターフェース */
 export interface LaneService {
   /** 起動時初期化 */
-  readonly initialize: () => void;
+  readonly initialize: () => Promise<void>;
+  /** 共通 queue 内で commit 後の未完了処理を再試行 */
+  readonly finalizePendingOperations: () => Promise<void>;
   /**
    * レーンへのフォーカス
    * @param laneId - 切替先レーン識別子、または未指定で対話選択
@@ -76,6 +80,16 @@ export interface LaneService {
   readonly snapshot: () => LaneServiceSnapshot;
 }
 
+interface PendingRenameFinalization {
+  readonly fromId: LaneId;
+  readonly target: Lane;
+  readonly terminalRekeyed: boolean;
+  readonly editorRekeyed: boolean;
+  readonly activeCommitted: boolean;
+  readonly selectionSaved: boolean;
+  readonly viewRebound: boolean;
+}
+
 /**
  * レーンサービスの生成
  * @param deps - 依存
@@ -94,62 +108,97 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     registry,
     terminalRekey,
     editorStore,
+    operationQueue,
   } = deps;
   let activeLaneId: LaneId | undefined = selectionStore.load(workspaceKey);
+  let pendingRename: PendingRenameFinalization | undefined;
 
-  const initialize = (): void => {
+  const focusTransaction = createLaneFocusTransaction({
+    getCatalog,
+    workspaceKey,
+    editor,
+    editorStore,
+    link,
+    viewRebind,
+    selectionStore,
+    terminal,
+    commitActiveLane: (laneId) => {
+      activeLaneId = laneId;
+    },
+  });
+
+  const initialize = async (): Promise<void> => {
     const catalog = getCatalog();
     if (activeLaneId && !catalog.byId.has(activeLaneId)) {
       activeLaneId = undefined;
-      selectionStore.save(workspaceKey, undefined);
+      await selectionStore.save(workspaceKey, undefined);
     }
     if (!activeLaneId && catalog.lanes.length > 0) {
       const chosen = selectByLinkTarget(catalog.lanes, link.readTarget(), (l) => l.rootPath);
       activeLaneId = chosen!.id;
-      selectionStore.save(workspaceKey, activeLaneId);
+      await selectionStore.save(workspaceKey, activeLaneId);
     }
   };
 
-  const executeFocus = async (targetLane: Lane): Promise<LaneFocusPlan> => {
-    const catalog = getCatalog();
-    const currentLane = activeLaneId ? catalog.byId.get(activeLaneId) : undefined;
-    const plan = planLaneFocus(currentLane, targetLane, editor.hasDirtyEditors());
-    if (plan.kind !== 'focus') return plan;
+  const finalizePendingRename = async (): Promise<void> => {
+    let current = pendingRename;
+    if (!current) return;
 
-    if (plan.from) {
-      editorStore.save(plan.from.id, editor.captureSnapshot());
+    if (!current.terminalRekeyed) {
+      terminalRekey.rekeyLane(current.fromId, current.target.id);
+      current = { ...current, terminalRekeyed: true };
+      pendingRename = current;
     }
-    await editor.closeAll();
-
-    const currentTarget = link.readTarget();
-    const swap = planActiveLinkSwap(link.linkPath, currentTarget, plan.to.rootPath);
-    if (swap) {
-      link.swap(swap.to);
-      await viewRebind.rebindActiveFolder(plan.to);
+    if (!current.editorRekeyed) {
+      editorStore.rekey(current.fromId, current.target.id);
+      current = { ...current, editorRekeyed: true };
+      pendingRename = current;
+    }
+    if (!current.activeCommitted) {
+      activeLaneId = current.target.id;
+      current = { ...current, activeCommitted: true };
+      pendingRename = current;
+    }
+    if (!current.selectionSaved) {
+      await selectionStore.save(workspaceKey, current.target.id);
+      current = { ...current, selectionSaved: true };
+      pendingRename = current;
+    }
+    if (!current.viewRebound) {
+      const rebound = await viewRebind.rebindActiveFolder(current.target);
+      if (!rebound) throw new Error('workspace-folder-mutation-rejected');
+      current = { ...current, viewRebound: true };
+      pendingRename = current;
     }
 
-    await terminal.revealLane(plan.to);
-    const saved = editorStore.get(plan.to.id);
-    if (saved) await editor.restoreSnapshot(saved);
+    pendingRename = undefined;
+  };
 
-    activeLaneId = plan.to.id;
-    selectionStore.save(workspaceKey, activeLaneId);
-    return plan;
+  const finalizePendingOperations = async (): Promise<void> => {
+    await focusTransaction.finalizePending();
+    await finalizePendingRename();
   };
 
   return {
     initialize,
+    finalizePendingOperations,
 
     focus: async (laneId) => {
-      const catalog = getCatalog();
-      const targetId = laneId ?? (await prompt.pickLane(catalog.lanes));
+      const targetId = laneId ?? (await prompt.pickLane(getCatalog().lanes));
       if (!targetId) return { kind: 'noop', reason: 'no-target' };
-      const targetLane = catalog.byId.get(targetId);
-      if (!targetLane) return { kind: 'noop', reason: 'no-target' };
 
-      const result = await executeFocus(targetLane);
-      if (result.kind === 'blocked') prompt.warnDirtyEditors();
-      return result;
+      return operationQueue.enqueue(async () => {
+        try {
+          await finalizePendingOperations();
+        } catch (error) {
+          return { kind: 'failed', reason: 'transition-failed', error };
+        }
+        const result = await focusTransaction.focus(targetId);
+        if (result.kind === 'blocked' && result.reason === 'dirty-editors') {
+          prompt.warnDirtyEditors();
+        }
+        return result;
+      });
     },
 
     closeActiveLaneTerminals: async () => {
@@ -173,44 +222,60 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       const raw = await prompt.promptRename(target.label, validate);
       if (raw === undefined) return;
 
-      const plan = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
-      if (plan.kind !== 'rename') return;
+      await operationQueue.enqueue(async () => {
+        await finalizePendingOperations();
+        const plan = planLaneRename({ targetId, newLabel: raw, catalog: getCatalog() });
+        if (plan.kind !== 'rename') return;
 
-      await registry.rename(plan.from.label, plan.to.label, () => {
-        terminalRekey.rekeyLane(plan.from.id, plan.to.id);
-        editorStore.rekey(plan.from.id, plan.to.id);
-        if (activeLaneId === plan.from.id) {
-          activeLaneId = plan.to.id;
-          selectionStore.save(workspaceKey, activeLaneId);
+        const renameWasActive = activeLaneId === plan.from.id;
+        pendingRename = {
+          fromId: plan.from.id,
+          target: { ...plan.from, id: plan.to.id, label: plan.to.label },
+          terminalRekeyed: false,
+          editorRekeyed: false,
+          activeCommitted: !renameWasActive,
+          selectionSaved: !renameWasActive,
+          viewRebound: !renameWasActive,
+        };
+        let catalogCommitted = false;
+        try {
+          const renamed = await registry.rename(plan.from.label, plan.to.label, async () => {
+            catalogCommitted = true;
+            await finalizePendingRename();
+          });
+          if (!renamed) pendingRename = undefined;
+        } catch (error) {
+          if (!catalogCommitted) pendingRename = undefined;
+          throw error;
         }
       });
-
-      if (activeLaneId === plan.to.id) {
-        const newLane = getCatalog().byId.get(plan.to.id);
-        if (newLane) await viewRebind.rebindActiveFolder(newLane);
-      }
     },
 
     removeLane: async (laneId) => {
       const targetId = laneId ?? (await prompt.pickLane(getCatalog().lanes));
       if (!targetId) return;
+      const target = getCatalog().byId.get(targetId);
+      if (!target) return;
 
-      const plan = planLaneRemoval({ targetId, activeLaneId, catalog: getCatalog() });
-      if (plan.kind === 'noop') return;
-      if (plan.kind === 'blocked') {
-        prompt.warnActiveLaneRemoval();
-        return;
-      }
-
-      const confirmed = await prompt.confirmRemoval(plan.target);
+      const confirmed = await prompt.confirmRemoval(target);
       if (!confirmed) return;
 
-      await registry.remove(plan.target.label, async () => {
-        try {
-          await terminal.closeLane(plan.target.id);
-        } finally {
-          editorStore.clear(plan.target.id);
+      await operationQueue.enqueue(async () => {
+        await finalizePendingOperations();
+        const plan = planLaneRemoval({ targetId, activeLaneId, catalog: getCatalog() });
+        if (plan.kind === 'noop') return;
+        if (plan.kind === 'blocked') {
+          prompt.warnActiveLaneRemoval();
+          return;
         }
+
+        await registry.remove(plan.target.label, async () => {
+          try {
+            await terminal.closeLane(plan.target.id);
+          } finally {
+            editorStore.clear(plan.target.id);
+          }
+        });
       });
     },
 

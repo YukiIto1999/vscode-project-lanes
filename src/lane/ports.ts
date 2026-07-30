@@ -58,9 +58,9 @@ export interface LaneViewRebindPort {
   /**
    * 切替先レーンへの active folder ビューの再走査要求
    * @param activeLane - 切替先レーン
-   * @returns 再走査要求の完了 Promise
+   * @returns workspace folder mutation が受理された場合は true
    */
-  readonly rebindActiveFolder: (activeLane: Lane) => Promise<void>;
+  readonly rebindActiveFolder: (activeLane: Lane) => Promise<boolean>;
 }
 
 /** ターミナル切替ポート */
@@ -91,8 +91,9 @@ export interface LaneSelectionStorePort {
    * 選択レーンの保存
    * @param key - ワークスペース永続キー
    * @param laneId - 対象レーン識別子
+   * @returns 保存完了の Promise
    */
-  readonly save: (key: WorkspaceKey, laneId: LaneId | undefined) => void;
+  readonly save: (key: WorkspaceKey, laneId: LaneId | undefined) => Promise<void>;
 }
 
 /** ユーザー対話ポート */
