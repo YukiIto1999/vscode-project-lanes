@@ -45,6 +45,18 @@ const workspaceManualInitializationScenario = {
     { phase: 'managed-restart' },
   ],
 };
+const laneSwitchTransactionScenario = {
+  name: 'lane-switch-transaction',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'lane-switch-transaction'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'lane-switch-transaction',
+    'lane-switch-transaction.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'lane-switch-transaction.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'transaction' }, { phase: 'restart' }],
+};
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
   workspaceFixture: '/fixtures/empty.code-workspace',
@@ -104,7 +116,20 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     },
     workspaceBootstrapScenario,
     workspaceManualInitializationScenario,
+    laneSwitchTransactionScenario,
   ]);
+});
+
+test('lane switch search fixture exposes a selectable file only in lane-b', () => {
+  const laneAEntries = fs
+    .readdirSync(path.join(laneSwitchTransactionScenario.fixtureRoot, 'lane-a'))
+    .filter((name) => !name.startsWith('.'));
+  const laneBEntries = fs
+    .readdirSync(path.join(laneSwitchTransactionScenario.fixtureRoot, 'lane-b'))
+    .filter((name) => !name.startsWith('.'));
+
+  assert.deepEqual(laneAEntries, []);
+  assert.deepEqual(laneBEntries, ['fixture.txt']);
 });
 
 test('the empty-workspace suite verifies activation and reports success', async () => {
