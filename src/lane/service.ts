@@ -62,6 +62,29 @@ export type ActiveLaneReconciliationResult =
       readonly error: unknown;
     };
 
+/** active lane 再整合の commit 前失敗理由 */
+export type ActiveLaneReconciliationFailureReason =
+  | 'link-swap-failed'
+  | 'workspace-folder-mutation-rejected'
+  | 'rollback-failed';
+
+/** active lane 再整合の commit 前失敗 */
+export class ActiveLaneReconciliationError extends Error {
+  /** 失敗理由 */
+  readonly reason: ActiveLaneReconciliationFailureReason;
+
+  /**
+   * commit 前失敗の生成
+   * @param reason - 失敗理由
+   * @param cause - 原因
+   */
+  constructor(reason: ActiveLaneReconciliationFailureReason, cause: unknown) {
+    super(`Active lane reconciliation failed: ${reason}`, { cause });
+    this.name = 'ActiveLaneReconciliationError';
+    this.reason = reason;
+  }
+}
+
 /** レーンサービスの操作インターフェース */
 export interface LaneService {
   /**
@@ -215,25 +238,34 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       }
 
       let swapped = false;
-      try {
-        if (plan.linkSwap) {
+      if (plan.linkSwap) {
+        try {
           link.swap(plan.linkSwap.to);
           swapped = true;
+        } catch (error) {
+          throw new ActiveLaneReconciliationError('link-swap-failed', error);
         }
+      }
+
+      try {
         const rebound = await viewRebind.rebindActiveFolder(plan.lane);
         if (!rebound) throw new Error('workspace-folder-mutation-rejected');
       } catch (error) {
-        if (!swapped) throw error;
-        try {
-          if (currentLinkTarget !== undefined) link.swap(currentLinkTarget);
-          else link.clear();
-        } catch (rollbackError) {
-          throw new AggregateError(
-            [error, rollbackError],
-            'Active lane reconciliation and link rollback failed.',
-          );
+        if (swapped) {
+          try {
+            if (currentLinkTarget !== undefined) link.swap(currentLinkTarget);
+            else link.clear();
+          } catch (rollbackError) {
+            throw new ActiveLaneReconciliationError(
+              'rollback-failed',
+              new AggregateError(
+                [error, rollbackError],
+                'Active lane reconciliation and link rollback failed.',
+              ),
+            );
+          }
         }
-        throw error;
+        throw new ActiveLaneReconciliationError('workspace-folder-mutation-rejected', error);
       }
 
       activeLaneId = plan.lane.id;
