@@ -64,6 +64,7 @@ import {
   createRuntimeReconciler,
   isWorkspaceMutationReconciliationError,
 } from './runtime-reconciliation';
+import { createWorkspaceMutationFailureReporter } from './workspace-mutation-failure-reporter';
 import { workspaceWarningMessage } from './workspace-warning';
 
 const INITIALIZE_ACTION = 'Initialize Workspace';
@@ -76,19 +77,10 @@ const MISSING_LANE_GUIDANCE =
 const OPERATION_FAILURE_MESSAGE =
   'Project Lanes operation failed. See the Developer Tools console for details.';
 
-const reportWorkspaceMutationFailure = async (
-  logMessage: string,
-  error: unknown,
-): Promise<void> => {
-  console.error(logMessage, error);
-  const message = workspaceWarningMessage('workspace-folder-mutation-rejected');
-  if (!message) return;
-  try {
-    await vscode.window.showWarningMessage(message);
-  } catch (notificationError) {
-    console.error('Project Lanes workspace warning notification failed.', notificationError);
-  }
-};
+const reportWorkspaceMutationFailure = createWorkspaceMutationFailureReporter({
+  log: (message, error) => console.error(message, error),
+  notify: (message) => vscode.window.showWarningMessage(message),
+});
 
 type ManagedCommandId =
   | 'projectLanes.switchLane'
