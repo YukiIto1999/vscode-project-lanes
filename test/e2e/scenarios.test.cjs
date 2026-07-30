@@ -931,6 +931,101 @@ test('the installed VSIX suite selects Remove Legacy Settings while candidate ac
   assert.deepEqual(commands, ['notifications.focusToasts', 'notification.acceptPrimaryAction']);
 });
 
+test('the installed VSIX suite accepts only the measured host cancellation contracts', () => {
+  const {
+    isActivationHostCancellation,
+    isCommandCancellation,
+  } = require('./suite/installed-vsix.cjs');
+
+  assert.equal(
+    isActivationHostCancellation(
+      new Error("Activating extension 'yukiito1999.project-lanes' failed: Canceled."),
+    ),
+    true,
+  );
+  assert.equal(isActivationHostCancellation(new Error('Canceled')), true);
+  assert.equal(
+    isActivationHostCancellation(
+      new Error("Activating extension 'another.extension' failed: Canceled."),
+    ),
+    false,
+  );
+  assert.equal(isCommandCancellation(new Error('Canceled')), true);
+  assert.equal(isCommandCancellation(new Error('Operation Canceled')), false);
+  assert.equal(isCommandCancellation(new Error('Canceled.')), false);
+});
+
+test('the installed VSIX suite rejects activation cancellation outside candidate migration', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  const extensionsDir = '/tmp/installed/restart/extensions';
+  const activationError = new Error(
+    "Activating extension 'yukiito1999.project-lanes' failed: Canceled.",
+  );
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
+        PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.14',
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'candidate-restart' }),
+      },
+      vscodeApi: {
+        extensions: {
+          getExtension() {
+            return {
+              extensionPath: path.join(extensionsDir, 'yukiito1999.project-lanes-0.1.14-linux-x64'),
+              packageJSON: { version: '0.1.14' },
+              isActive: false,
+              async activate() {
+                throw activationError;
+              },
+            };
+          },
+        },
+      },
+      resolveRealPath(value) {
+        return value;
+      },
+    }),
+    activationError,
+  );
+});
+
+test('the installed VSIX suite propagates a similar cancellation during candidate migration', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  const extensionsDir = '/tmp/installed/migrate/extensions';
+  const activationError = new Error('Operation Canceled');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
+        PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.14',
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'candidate-migrate' }),
+      },
+      vscodeApi: {
+        extensions: {
+          getExtension() {
+            return {
+              extensionPath: path.join(extensionsDir, 'yukiito1999.project-lanes-0.1.14-linux-x64'),
+              packageJSON: { version: '0.1.14' },
+              isActive: false,
+              async activate() {},
+            };
+          },
+        },
+      },
+      async respondToLegacySettings() {
+        throw activationError;
+      },
+      resolveRealPath(value) {
+        return value;
+      },
+    }),
+    activationError,
+  );
+});
+
 test('the installed VSIX suite rejects a VS Code build without its required notification commands', async () => {
   const { activateWithLegacyRemoval } = require('./suite/installed-vsix.cjs');
 
@@ -954,7 +1049,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   const { run } = require('./suite/installed-vsix.cjs');
   const extensionsDir = '/tmp/installed/upgrade/extensions';
   const workspaceDirectory = '/tmp/installed/upgrade/workspace';
-  const workspaceFile = path.join(workspaceDirectory, 'workspace-bootstrap.code-workspace');
+  const workspaceFile = path.join(workspaceDirectory, 'installed-vsix-upgrade.code-workspace');
   const anchor = deriveWorkspaceAnchor({ fsPath: workspaceFile });
   const namespacedLink = anchor.activeLinkPath;
   const legacyLink = anchor.legacyActiveLinkPath;
@@ -995,6 +1090,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
               linkTargets.set(namespacedLink, laneB);
               recreatedTargets.push(laneB);
               workspace.workspaceFolders = [{ name: 'lane-b', uri: { fsPath: namespacedLink } }];
+              throw new Error("Activating extension 'yukiito1999.project-lanes' failed: Canceled.");
             }
           },
         };
@@ -1015,6 +1111,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
             { name: path.basename(activeTarget), uri: { fsPath: activeLink } },
           ];
         }
+        if (command === 'projectLanes.switchLane') throw new Error('Canceled');
       },
     },
   };
@@ -1456,6 +1553,32 @@ test('extension install is followed by an exact version listing in the same isol
   assert.deepEqual(outputs, []);
 });
 
+test('installed VSIX upgrade fixture keeps baseline activation manual', () => {
+  const fixturePath = path.join(
+    __dirname,
+    'fixtures',
+    'installed-vsix-upgrade',
+    'installed-vsix-upgrade.code-workspace',
+  );
+  const fixtureSource = fs.readFileSync(fixturePath, 'utf8');
+  const fixture = JSON.parse(fixtureSource.replace(/,\s*([}\]])/g, '$1'));
+
+  assert.deepEqual(fixture, {
+    folders: [{ path: 'lane-a' }, { path: 'lane-b' }],
+    settings: {
+      'projectLanes.initializationMode': 'manual',
+    },
+  });
+  assert.equal(
+    fs.readFileSync(path.join(path.dirname(fixturePath), 'lane-a', 'fixture.txt'), 'utf8'),
+    'lane-a\n',
+  );
+  assert.equal(
+    fs.readFileSync(path.join(path.dirname(fixturePath), 'lane-b', 'fixture.txt'), 'utf8'),
+    'lane-b\n',
+  );
+});
+
 test('installed VSIX verification launches baseline before upgrading the same profile and restarts the candidate', async () => {
   const temporaryRoot = '/tmp/project-lanes-installed-vsix-test';
   const operations = [];
@@ -1489,7 +1612,7 @@ test('installed VSIX verification launches baseline before upgrading the same pr
           );
         },
         cpSync(source, destination, options) {
-          assert.equal(source, path.join(__dirname, 'fixtures', 'workspace-bootstrap'));
+          assert.equal(source, path.join(__dirname, 'fixtures', 'installed-vsix-upgrade'));
           assert.equal(destination, path.join(temporaryRoot, 'upgrade', 'workspace'));
           assert.deepEqual(options, { recursive: true });
         },
@@ -1546,7 +1669,7 @@ test('installed VSIX verification launches baseline before upgrading the same pr
   assert.deepEqual(
     upgradeLaunches.map((launch) => launch.args[0]),
     Array(3).fill(
-      path.join(temporaryRoot, 'upgrade', 'workspace', 'workspace-bootstrap.code-workspace'),
+      path.join(temporaryRoot, 'upgrade', 'workspace', 'installed-vsix-upgrade.code-workspace'),
     ),
   );
   assert.deepEqual(
