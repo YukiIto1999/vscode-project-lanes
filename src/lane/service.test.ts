@@ -12,7 +12,7 @@ import type {
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
-import { createLaneService } from './service';
+import { ActiveLaneReconciliationError, createLaneService } from './service';
 
 const workspaceKey = 'workspace:test' as WorkspaceKey;
 const linkPath = '/repo/.lanes-root/active' as AbsolutePath;
@@ -301,9 +301,9 @@ describe('createLaneService active lane reconciliation', () => {
       rebindActiveFolder: async () => false,
     });
 
-    await expect(h.service.reconcileActiveLane()).rejects.toThrow(
-      'workspace-folder-mutation-rejected',
-    );
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+    });
 
     expect(h.linkSwap.mock.calls).toEqual([['/repo/api'], ['/repo/unknown']]);
     expect(h.currentLinkTarget()).toBe('/repo/unknown');
@@ -321,7 +321,10 @@ describe('createLaneService active lane reconciliation', () => {
       },
     });
 
-    await expect(h.service.reconcileActiveLane()).rejects.toBe(failure);
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+      cause: failure,
+    });
 
     expect(h.linkSwap.mock.calls).toEqual([['/repo/api'], ['/repo/unknown']]);
     expect(h.currentLinkTarget()).toBe('/repo/unknown');
@@ -334,9 +337,9 @@ describe('createLaneService active lane reconciliation', () => {
       rebindActiveFolder: async () => false,
     });
 
-    await expect(h.service.reconcileActiveLane()).rejects.toThrow(
-      'workspace-folder-mutation-rejected',
-    );
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+    });
 
     expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
     expect(h.linkClear).toHaveBeenCalledOnce();
@@ -358,8 +361,10 @@ describe('createLaneService active lane reconciliation', () => {
 
     const failure = await h.service.reconcileActiveLane().catch((error: unknown) => error);
 
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).errors).toEqual([
+    expect(failure).toBeInstanceOf(ActiveLaneReconciliationError);
+    expect(failure).toMatchObject({ reason: 'rollback-failed' });
+    expect((failure as ActiveLaneReconciliationError).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as ActiveLaneReconciliationError).cause as AggregateError).errors).toEqual([
       expect.objectContaining({ message: 'workspace-folder-mutation-rejected' }),
       rollbackError,
     ]);
@@ -378,8 +383,10 @@ describe('createLaneService active lane reconciliation', () => {
 
     const failure = await h.service.reconcileActiveLane().catch((error: unknown) => error);
 
-    expect(failure).toBeInstanceOf(AggregateError);
-    expect((failure as AggregateError).errors).toEqual([
+    expect(failure).toBeInstanceOf(ActiveLaneReconciliationError);
+    expect(failure).toMatchObject({ reason: 'rollback-failed' });
+    expect((failure as ActiveLaneReconciliationError).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as ActiveLaneReconciliationError).cause as AggregateError).errors).toEqual([
       expect.objectContaining({ message: 'workspace-folder-mutation-rejected' }),
       rollbackError,
     ]);
@@ -395,7 +402,10 @@ describe('createLaneService active lane reconciliation', () => {
       },
     });
 
-    await expect(h.service.reconcileActiveLane()).rejects.toBe(failure);
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'link-swap-failed',
+      cause: failure,
+    });
 
     expect(h.linkSwap).toHaveBeenCalledOnce();
     expect(h.linkClear).not.toHaveBeenCalled();

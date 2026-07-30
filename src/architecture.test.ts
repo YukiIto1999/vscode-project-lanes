@@ -165,25 +165,30 @@ describe('managed runtime の共通 operation queue', () => {
     expect(managedRuntime).toMatch(/createLaneService\(\{[\s\S]*?\boperationQueue,\s*\}\);/);
   });
 
-  it('workspace folder reconciliation を runtime 共通 queue へ載せる', () => {
+  it('lane と workspace folder の executor へ同じ runtime queue を渡す', () => {
+    expect(managedRuntime).toMatch(
+      /createWorkspaceFolderReconciler\(\{[\s\S]*?\boperationQueue,[\s\S]*?\}\);/,
+    );
+  });
+
+  it('workspace folder event は共通 runtime reconciler を呼ぶ', () => {
     const listener = managedRuntime.slice(
       managedRuntime.indexOf('vscode.workspace.onDidChangeWorkspaceFolders'),
       managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
     );
 
-    expect(listener).toMatch(/operationQueue\.enqueue\(async \(\) => \{/);
-    expect(listener).toMatch(
-      /operationQueue\.enqueue\(async \(\) => \{\s*await laneService\.finalizePendingOperations\(\);/,
-    );
+    expect(listener).toMatch(/runtimeReconciler\.reconcile\(\)/);
+    expect(listener).not.toMatch(/operationQueue\.enqueue/);
+    expect(listener).not.toMatch(/registry\.absorb/);
   });
 
-  it('Reload は lane service 自身が管理する queue 境界を一度だけ通す', () => {
+  it('Reload は workspace folder event と同じ runtime reconciler を呼ぶ', () => {
     const reload = managedRuntime.slice(
       managedRuntime.indexOf("'projectLanes.reloadLanes'"),
       managedRuntime.indexOf("'projectLanes.switchLane'"),
     );
 
-    expect(reload).toMatch(/await laneService\.reconcileActiveLane\(\)/);
+    expect(reload).toMatch(/runtimeReconciler\.reconcile\(\)/);
     expect(reload).not.toMatch(/operationQueue\.enqueue/);
     expect(reload).not.toMatch(/laneService\.finalizePendingOperations/);
     expect(reload).not.toMatch(/collectLaneCandidates/);
@@ -191,20 +196,20 @@ describe('managed runtime の共通 operation queue', () => {
     expect(reload).not.toMatch(/registry\.replace/);
   });
 
-  it('post-commit cache failure を通知しても startup と Reload の描画を継続する', () => {
+  it('startup と runtime reconciler が post-commit cache failure の通知を所有する', () => {
     const startup = managedRuntime.slice(
       managedRuntime.indexOf('const laneService = createLaneService'),
       managedRuntime.indexOf('const laneSearchService'),
     );
-    const reload = managedRuntime.slice(
-      managedRuntime.indexOf("'projectLanes.reloadLanes'"),
-      managedRuntime.indexOf("'projectLanes.switchLane'"),
+    const runtimeReconciler = managedRuntime.slice(
+      managedRuntime.indexOf('const runtimeReconciler = createRuntimeReconciler'),
+      managedRuntime.indexOf('track(laneActivity.onChange'),
     );
 
     expect(startup).toMatch(/cache === 'pending'/);
     expect(startup).toMatch(/await reportAsyncFailure\(/);
-    expect(reload).toMatch(/cache === 'pending'/);
-    expect(reload).toMatch(/finally\s*\{[\s\S]*?render\(\);[\s\S]*?\}/);
+    expect(runtimeReconciler).toMatch(/reportPendingCache: reportAsyncFailure/);
+    expect(runtimeReconciler).toMatch(/reportWorkspaceMutationRejected:/);
   });
 
   it('公開 switch の transition failure を共通失敗境界へ渡す', () => {
