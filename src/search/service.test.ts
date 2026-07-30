@@ -52,6 +52,8 @@ const harness = (
   const openAt = vi.fn(async () => undefined);
   const warnUnavailable = vi.fn();
   const notifyEmpty = vi.fn();
+  const pickContentResult = vi.fn(async () => over.picked);
+  const pickFileResult = vi.fn(async () => over.picked);
   const searchContent = vi.fn(
     async (): Promise<LaneSearchOutcome> =>
       over.contentOutcome ?? { kind: 'results', results: [], truncated: false },
@@ -66,19 +68,21 @@ const harness = (
   };
   const ui: SearchUiPort = {
     promptQuery: async () => over.query,
-    pickContentResult: async () => over.picked,
-    pickFileResult: async () => over.picked,
+    pickContentResult,
+    pickFileResult,
     notifyEmpty,
     warnUnavailable,
   };
   const fileOpen: FileOpenPort = { openAt };
-  const focus = async (): Promise<LaneFocusPlan> => over.focusResult ?? focusOk('web');
+  const focus = vi.fn(async (): Promise<LaneFocusPlan> => over.focusResult ?? focusOk('web'));
   const inspectRoot = vi.fn((_: AbsolutePath): LaneRootAvailability => 'available');
   const rootAvailability: LaneRootAvailabilityPort = { inspect: inspectRoot };
   return {
     openAt,
     warnUnavailable,
     notifyEmpty,
+    pickContentResult,
+    pickFileResult,
     searchContent,
     listFiles,
     search,
@@ -114,6 +118,29 @@ describe('createLaneSearchService.findInLanes', () => {
     await service.findInLanes();
     expect(h.warnUnavailable).toHaveBeenCalledOnce();
     expect(h.openAt).not.toHaveBeenCalled();
+  });
+
+  it('検索が cancelled のとき通知、選択、focus、openを行わず終了する', async () => {
+    const h = harness({ query: 'foo', contentOutcome: { kind: 'cancelled' } });
+    const service = serviceFrom(h);
+
+    await service.findInLanes();
+
+    expect(h.warnUnavailable).not.toHaveBeenCalled();
+    expect(h.notifyEmpty).not.toHaveBeenCalled();
+    expect(h.pickContentResult).not.toHaveBeenCalled();
+    expect(h.focus).not.toHaveBeenCalled();
+    expect(h.openAt).not.toHaveBeenCalled();
+  });
+
+  it('検索 backend の Error を同じ instance のまま拒否する', async () => {
+    const error = new Error('backend failed');
+    const h = harness({ query: 'foo' });
+    h.searchContent.mockRejectedValueOnce(error);
+    const service = serviceFrom(h);
+
+    await expect(service.findInLanes()).rejects.toBe(error);
+    expect(h.warnUnavailable).not.toHaveBeenCalled();
   });
 
   it('0 件のとき空を通知する', async () => {
@@ -245,6 +272,19 @@ describe('createLaneSearchService.findInLanes', () => {
 });
 
 describe('createLaneSearchService.goToFileInLanes', () => {
+  it('ファイル列挙が cancelled のとき通知、選択、focus、openを行わず終了する', async () => {
+    const h = harness({ filesOutcome: { kind: 'cancelled' } });
+    const service = serviceFrom(h);
+
+    await service.goToFileInLanes();
+
+    expect(h.warnUnavailable).not.toHaveBeenCalled();
+    expect(h.notifyEmpty).not.toHaveBeenCalled();
+    expect(h.pickFileResult).not.toHaveBeenCalled();
+    expect(h.focus).not.toHaveBeenCalled();
+    expect(h.openAt).not.toHaveBeenCalled();
+  });
+
   it('実行時に各rootを検査し、availableだけをfile検索へ渡す', async () => {
     const h = harness({});
     h.inspectRoot.mockImplementation((path) => {

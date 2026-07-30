@@ -1,6 +1,10 @@
 import * as nodePath from 'node:path';
+import { TextDecoder } from 'node:util';
 import type { AbsolutePath } from '../foundation/model';
 import type { LaneQuery, LaneRoot, LaneSearchResult } from './model';
+
+/** 検索結果 preview の UTF-16 code unit 上限 */
+const PREVIEW_CODE_UNIT_LIMIT = 1000;
 
 /**
  * content 検索の ripgrep 引数組立
@@ -12,6 +16,7 @@ export const buildContentArgs = (
   query: LaneQuery,
   roots: readonly LaneRoot[],
 ): readonly string[] => [
+  '--no-config',
   '--json',
   '--fixed-strings',
   '--smart-case',
@@ -26,7 +31,9 @@ export const buildContentArgs = (
  * @returns ripgrep 引数列
  */
 export const buildFileListArgs = (roots: readonly LaneRoot[]): readonly string[] => [
+  '--no-config',
   '--files',
+  '--',
   ...roots.map((root) => root.rootPath),
 ];
 
@@ -52,16 +59,108 @@ export const attributeLane = (
 const toRelative = (root: LaneRoot, absolutePath: string): string =>
   nodePath.relative(root.rootPath, absolutePath);
 
-/** ripgrep --json の match イベント形状 */
-interface RipgrepEvent {
-  readonly type?: string;
-  readonly data?: {
-    readonly path?: { readonly text?: string };
-    readonly lines?: { readonly text?: string };
-    readonly line_number?: number;
-    readonly submatches?: ReadonlyArray<{ readonly start?: number }>;
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null;
+
+/**
+ * UTF-8 byte offset から UTF-16 offset への変換
+ * @param text - UTF-8 へ符号化する行テキスト
+ * @param byteOffset - 0 始まり byte offset
+ * @returns 0 始まり UTF-16 offset
+ */
+const toUtf16Offset = (text: string, byteOffset: number): number => {
+  const bytes = Buffer.from(text, 'utf8');
+  if (!Number.isInteger(byteOffset) || byteOffset < 0 || byteOffset > bytes.length) {
+    throw new Error('Malformed ripgrep match byte offset');
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, byteOffset)).length;
+  } catch {
+    throw new Error('Malformed ripgrep match byte offset');
+  }
+};
+
+/**
+ * 行末改行だけを除いた match 周辺 preview の生成
+ * @param text - ripgrep の行テキスト
+ * @param matchOffset - 0 始まり UTF-16 match offset
+ * @returns 上限内の preview
+ */
+const createPreview = (text: string, matchOffset: number): string => {
+  const withoutLineEnding = text.replace(/\r\n$|\n$/, '');
+  if (withoutLineEnding.length <= PREVIEW_CODE_UNIT_LIMIT) return withoutLineEnding;
+
+  const halfWindow = Math.floor(PREVIEW_CODE_UNIT_LIMIT / 2);
+  let start = Math.max(0, matchOffset - halfWindow);
+  start = Math.min(start, withoutLineEnding.length - PREVIEW_CODE_UNIT_LIMIT);
+  let end = start + PREVIEW_CODE_UNIT_LIMIT;
+
+  // surrogate pair の中間で preview を切らないための境界補正
+  if (start > 0 && /[\uDC00-\uDFFF]/.test(withoutLineEnding[start] ?? '')) start += 1;
+  if (/[\uD800-\uDBFF]/.test(withoutLineEnding[end - 1] ?? '')) end -= 1;
+  return withoutLineEnding.slice(start, end);
+};
+
+/**
+ * ripgrep --json の一行からの content ヒット抽出
+ * @param line - JSON Lines の一行
+ * @param roots - 帰属判定用レーンルート列
+ * @returns content ヒット、match 以外または帰属不能で undefined
+ */
+export const parseContentMatchLine = (
+  line: string,
+  roots: readonly LaneRoot[],
+): LaneSearchResult | undefined => {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    throw new Error('Malformed ripgrep JSON output');
+  }
+  if (!isRecord(value) || typeof value.type !== 'string') {
+    throw new Error('Malformed ripgrep JSON event');
+  }
+  if (value.type !== 'match') return undefined;
+  if (!isRecord(value.data)) throw new Error('Malformed ripgrep match event');
+
+  const path = value.data.path;
+  const lines = value.data.lines;
+  if (
+    !isRecord(path) ||
+    'bytes' in path ||
+    typeof path.text !== 'string' ||
+    !isRecord(lines) ||
+    'bytes' in lines ||
+    typeof lines.text !== 'string'
+  ) {
+    throw new Error('Unsupported ripgrep bytes payload');
+  }
+
+  const lineNumber = value.data.line_number;
+  const submatches = value.data.submatches;
+  if (
+    !Number.isInteger(lineNumber) ||
+    (lineNumber as number) < 1 ||
+    !Array.isArray(submatches) ||
+    !isRecord(submatches[0]) ||
+    !Number.isInteger(submatches[0].start)
+  ) {
+    throw new Error('Malformed ripgrep match event');
+  }
+
+  const root = attributeLane(roots, path.text);
+  if (!root) return undefined;
+  const utf16Offset = toUtf16Offset(lines.text, submatches[0].start as number);
+  return {
+    kind: 'content',
+    laneId: root.laneId,
+    path: path.text as AbsolutePath,
+    relativePath: toRelative(root, path.text),
+    line: lineNumber as number,
+    column: utf16Offset + 1,
+    preview: createPreview(lines.text, utf16Offset),
   };
-}
+};
 
 /**
  * ripgrep --json 出力からの content ヒット抽出
@@ -79,36 +178,36 @@ export const parseContentMatches = (
   let truncated = false;
   for (const line of stdout.split('\n')) {
     if (line.length === 0) continue;
+    const result = parseContentMatchLine(line, roots);
+    if (!result) continue;
     if (results.length >= limit) {
       truncated = true;
       break;
     }
-    let event: RipgrepEvent;
-    try {
-      event = JSON.parse(line) as RipgrepEvent;
-    } catch {
-      continue;
-    }
-    if (event.type !== 'match' || !event.data) continue;
-    const pathText = event.data.path?.text;
-    const lineNumber = event.data.line_number;
-    if (pathText === undefined || lineNumber === undefined) continue;
-    const root = attributeLane(roots, pathText);
-    if (!root) continue;
-    // submatches[0].start は行内 0 始まり byte offset、1 始まり桁へ補正
-    const column = (event.data.submatches?.[0]?.start ?? 0) + 1;
-    const preview = (event.data.lines?.text ?? '').replace(/\r?\n$/, '').trim();
-    results.push({
-      kind: 'content',
-      laneId: root.laneId,
-      path: pathText as AbsolutePath,
-      relativePath: toRelative(root, pathText),
-      line: lineNumber,
-      column,
-      preview,
-    });
+    results.push(result);
   }
   return { results, truncated };
+};
+
+/**
+ * ripgrep --files の一行からの file ヒット抽出
+ * @param line - 出力の一行
+ * @param roots - 帰属判定用レーンルート列
+ * @returns file ヒット、空行または帰属不能で undefined
+ */
+export const parseFileLine = (
+  line: string,
+  roots: readonly LaneRoot[],
+): LaneSearchResult | undefined => {
+  if (line.length === 0) return undefined;
+  const root = attributeLane(roots, line);
+  if (!root) return undefined;
+  return {
+    kind: 'file',
+    laneId: root.laneId,
+    path: line as AbsolutePath,
+    relativePath: toRelative(root, line),
+  };
 };
 
 /**
@@ -123,15 +222,8 @@ export const parseFileList = (
 ): readonly LaneSearchResult[] => {
   const results: LaneSearchResult[] = [];
   for (const line of stdout.split('\n')) {
-    if (line.length === 0) continue;
-    const root = attributeLane(roots, line);
-    if (!root) continue;
-    results.push({
-      kind: 'file',
-      laneId: root.laneId,
-      path: line as AbsolutePath,
-      relativePath: toRelative(root, line),
-    });
+    const result = parseFileLine(line, roots);
+    if (result) results.push(result);
   }
   return results;
 };
