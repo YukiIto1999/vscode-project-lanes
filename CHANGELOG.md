@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.14] - 2026-07-30
+
+### Added
+
+- Added `Project Lanes: Locate Folder` to re-associate a missing or inaccessible lane with a readable directory. Relocation is transactional, preserves the lane identity, and never modifies the directory on disk. (0b1248c)
+
+### Changed
+
+- Lane catalogs now use stable opaque IDs, so renaming changes only the display name without losing terminal or editor state. Lanes may share a display name and are distinguished by folder path. Existing workspace-state catalogs are migrated in place. (dea4d7d)
+
+### Fixed
+
+- Editor tab snapshots are now persisted by lane ID and restored after a VS Code restart when the user next switches to that lane. (197640e)
+- Active links are namespaced by the full workspace identity, preventing collisions between `.code-workspace` files in the same directory. The previous `.lanes-root/active` path is used only as validated, read-only migration input. (b5ef405)
+- Lane Terminal now leases the workspace default-profile setting and restores the previous value when Project Lanes stops, unless another actor changed it. The v0.1.13 upgrade path also offers explicit handling for matching legacy terminal settings. (2560751)
+- Lane terminal sessions now retain the same shell process across lane switches, refresh titles after a rename, and create a new session after the previous shell exits. (651a5c0)
+- Cross-lane ripgrep searches now stream output, stop exactly after the content-result limit is exceeded, cancel child processes during runtime disposal, preserve preview whitespace, and convert UTF-8 byte offsets to VS Code UTF-16 columns. (ac7ef6a)
+- Workspace reconciliation no longer re-displays a stale lane and disposes the terminal selected by a later lane operation. Active-lane changes and terminal presentation are now revalidated on the shared operation queue. (953efcd)
+
 ## [0.1.13] - 2026-07-30
 
 ### Added
