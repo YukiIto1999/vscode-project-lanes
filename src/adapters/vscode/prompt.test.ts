@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AbsolutePath, UriString } from '../../foundation/model';
+import type { AbsolutePath, LaneId, UriString } from '../../foundation/model';
+import type { Lane } from '../../lane/model';
 
 const vscode = vi.hoisted(() => ({
   executeCommand: vi.fn(),
   file: vi.fn((path: string) => ({ path, toString: () => `file://${path}` })),
   showOpenDialog: vi.fn(),
+  showQuickPick: vi.fn(),
+  showWarningMessage: vi.fn(),
 }));
 
 vi.mock('vscode', () => ({
@@ -18,12 +21,67 @@ vi.mock('vscode', () => ({
   window: {
     showInputBox: vi.fn(),
     showOpenDialog: vscode.showOpenDialog,
-    showQuickPick: vi.fn(),
-    showWarningMessage: vi.fn(),
+    showQuickPick: vscode.showQuickPick,
+    showWarningMessage: vscode.showWarningMessage,
   },
 }));
 
 import { createPromptAdapter } from './prompt';
+
+const lane = (id: string, label: string, rootPath: string): Lane => ({
+  id: id as LaneId,
+  label,
+  rootPath: rootPath as AbsolutePath,
+  rootUri: `file://${rootPath}` as UriString,
+});
+
+describe('createPromptAdapter pickLane', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('同名 label の候補だけ rootPath で曖昧さを解消する', async () => {
+    const lanes = [
+      lane('opaque-web', 'same', '/projects/web'),
+      lane('opaque-api', 'same', '/projects/api'),
+      lane('opaque-docs', 'docs', '/projects/docs'),
+    ];
+    vscode.showQuickPick.mockResolvedValue(undefined);
+
+    await createPromptAdapter().pickLane(lanes);
+
+    expect(vscode.showQuickPick.mock.calls[0]?.[0]).toEqual([
+      { label: 'same', description: '/projects/web', laneId: 'opaque-web' },
+      { label: 'same', description: '/projects/api', laneId: 'opaque-api' },
+      { label: 'docs', laneId: 'opaque-docs' },
+    ]);
+  });
+});
+
+describe('createPromptAdapter confirmRemoval', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('同名レーンを識別できるよう確認詳細に rootPath を含める', async () => {
+    vscode.showWarningMessage.mockResolvedValue('OK');
+
+    await expect(
+      createPromptAdapter().confirmRemoval(
+        lane('4a79c5d0-2bb0-4d96-8870-98ce67fe9066', 'same', '/projects/web'),
+      ),
+    ).resolves.toBe(true);
+
+    expect(vscode.showWarningMessage).toHaveBeenCalledWith(
+      'Remove lane "same"?',
+      {
+        modal: true,
+        detail: expect.stringContaining('/projects/web'),
+      },
+      'OK',
+    );
+  });
+});
 
 describe('createPromptAdapter pickReplacementFolder', () => {
   beforeEach(() => {

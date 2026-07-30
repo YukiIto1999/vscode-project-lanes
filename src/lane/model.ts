@@ -4,15 +4,24 @@ import type { AbsolutePath, LaneId, UriString } from '../foundation/model';
 export type LaneRootAvailability = 'available' | 'missing' | 'inaccessible';
 
 /**
- * ラベルから LaneId への変換
- * @param label - 表示ラベル
+ * 永続化・外部入力文字列から LaneId への変換
+ * @param value - 不透明識別子の文字列表現
  * @returns 同一文字列の LaneId
  */
-export const toLaneId = (label: string): LaneId => label as LaneId;
+export const toLaneId = (value: string): LaneId => value as LaneId;
+
+/**
+ * 永続化可能な不透明 LaneId かを判定
+ * @param value - 判定対象
+ * @returns UUID または v1 migration 由来 SHA-256 なら true
+ */
+export const isCanonicalLaneId = (value: string): boolean =>
+  /^[0-9a-f]{64}$/.test(value) ||
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 
 /** ワークスペース内の単一プロジェクト */
 export interface Lane {
-  /** レーン識別子、`label` と同一の文字列 */
+  /** 表示名や所在変更では変わらない不透明識別子 */
   readonly id: LaneId;
   /** 表示ラベル */
   readonly label: string;

@@ -69,24 +69,34 @@ const projectTreeItems = (
   availabilityByLaneId: ReadonlyMap<LaneId, LaneRootAvailability>,
   activeLaneId: LaneId | undefined,
   showIndicator: boolean,
-): readonly LaneTreeItemViewModel[] =>
-  lanes.map((lane) => {
+): readonly LaneTreeItemViewModel[] => {
+  const labelCounts = new Map<string, number>();
+  for (const lane of lanes) labelCounts.set(lane.label, (labelCounts.get(lane.label) ?? 0) + 1);
+  return lanes.map((lane) => {
     const availability = availabilityByLaneId.get(lane.id) ?? 'inaccessible';
+    const stateDescription =
+      availability === 'available'
+        ? showIndicator
+          ? treeDescriptionFor(activityOf(activityMap, lane.id))
+          : ''
+        : unavailableDescriptionFor(availability);
+    const description =
+      labelCounts.get(lane.label) === 1
+        ? stateDescription
+        : stateDescription.length === 0
+          ? lane.rootPath
+          : `${lane.rootPath} · ${stateDescription}`;
     return {
       laneId: lane.id,
       label: lane.label,
-      description:
-        availability === 'available'
-          ? showIndicator
-            ? treeDescriptionFor(activityOf(activityMap, lane.id))
-            : ''
-          : unavailableDescriptionFor(availability),
+      description,
       availability,
       action: availability === 'available' ? 'switch' : 'locate',
       isActive: lane.id === activeLaneId,
       resourceUri: `lane:///${lane.id}` as UriString,
     };
   });
+};
 
 /**
  * Activity Bar バッジの算出

@@ -1,10 +1,17 @@
 import * as nodePath from 'node:path';
 import type { AbsolutePath, UriString, WorkspaceKey } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
-import type { WorkspaceBootstrapResult, WorkspaceFileInfo, WorkspaceFolder } from './model';
+import { isCanonicalLaneId } from '../lane/model';
+import type {
+  CatalogEntry,
+  WorkspaceBootstrapResult,
+  WorkspaceFileInfo,
+  WorkspaceFolder,
+} from './model';
 import type {
   CatalogStorePort,
   DirectoryPort,
+  LaneIdFactoryPort,
   WorkspaceHostPort,
   WorkspaceLinkPort,
 } from './ports';
@@ -27,7 +34,7 @@ export const isLinkFolder = (folder: WorkspaceFolder, linkPath: AbsolutePath): b
  * @returns 旧アンカーなら true
  */
 export const isLegacyAnchor = (folder: WorkspaceFolder, legacyAnchorUri: UriString): boolean =>
-  folder.uri === legacyAnchorUri;
+  uriToAbsolutePath(folder.uri) === uriToAbsolutePath(legacyAnchorUri);
 
 /**
  * レーン候補の純粋抽出
@@ -39,17 +46,44 @@ export const isLegacyAnchor = (folder: WorkspaceFolder, legacyAnchorUri: UriStri
  */
 export const collectLaneCandidates = (
   rawFolders: readonly WorkspaceFolder[],
-  stored: readonly WorkspaceFolder[] | undefined,
+  stored: readonly CatalogEntry[] | undefined,
   linkPath: AbsolutePath,
   legacyAnchorUri: UriString,
-): readonly WorkspaceFolder[] => {
+  laneIdFactory: LaneIdFactoryPort,
+): readonly CatalogEntry[] => {
+  const storedRoots = new Set<AbsolutePath>();
+  for (const entry of stored ?? []) {
+    const rootPath = uriToAbsolutePath(entry.uri);
+    if (storedRoots.has(rootPath)) {
+      throw new Error('Project Lanes catalog contains a duplicate lane root.');
+    }
+    storedRoots.add(rootPath);
+  }
+  for (const folder of rawFolders) uriToAbsolutePath(folder.uri);
+
   const real = rawFolders.filter(
     (folder) => !isLinkFolder(folder, linkPath) && !isLegacyAnchor(folder, legacyAnchorUri),
   );
-  if (!stored || stored.length === 0) return real;
-  const canonicalStored = stored.filter((folder) => !isLegacyAnchor(folder, legacyAnchorUri));
-  const known = new Set(canonicalStored.map((s) => s.uri));
-  const additions = real.filter((f) => !known.has(f.uri));
+  const canonicalStored = (stored ?? []).filter(
+    (folder) => !isLegacyAnchor(folder, legacyAnchorUri),
+  );
+  const known = new Set(canonicalStored.map((entry) => uriToAbsolutePath(entry.uri)));
+  const usedIds = new Set(canonicalStored.map((entry) => entry.id));
+  const additions: CatalogEntry[] = [];
+  for (const folder of real) {
+    const rootPath = uriToAbsolutePath(folder.uri);
+    if (known.has(rootPath)) continue;
+    const id = laneIdFactory.next();
+    if (!isCanonicalLaneId(id)) {
+      throw new Error('LaneId factory returned an invalid LaneId.');
+    }
+    if (usedIds.has(id)) {
+      throw new Error('LaneId factory returned a duplicate LaneId.');
+    }
+    known.add(rootPath);
+    usedIds.add(id);
+    additions.push({ ...folder, id });
+  }
   return [...canonicalStored, ...additions];
 };
 
@@ -80,6 +114,7 @@ export const collapseFoldersToLink = (
  * @param directory - ディレクトリ操作ポート
  * @param legacyAnchorUri - 旧アンカーの絶対 URI
  * @param link - symlink の所在
+ * @param laneIdFactory - 新規レーン識別子採番
  * @returns ブートストラップ結果
  */
 export const bootstrapWorkspace = async (
@@ -89,11 +124,12 @@ export const bootstrapWorkspace = async (
   directory: DirectoryPort,
   legacyAnchorUri: UriString,
   link: Pick<WorkspaceLinkPort, 'linkPath'>,
+  laneIdFactory: LaneIdFactoryPort,
 ): Promise<WorkspaceBootstrapResult> => {
   const linkPath = link.linkPath;
   const rawFolders = host.readFolders();
   const stored = catalogStore.load();
-  const lanes = collectLaneCandidates(rawFolders, stored, linkPath, legacyAnchorUri);
+  const lanes = collectLaneCandidates(rawFolders, stored, linkPath, legacyAnchorUri, laneIdFactory);
 
   if (stored === undefined && lanes.length === 0) {
     return { kind: 'disabled', reason: 'missing-lane-source' };

@@ -107,7 +107,6 @@ const createHarness = ({
       snapshots.set(laneId, snapshot);
     },
     get: (laneId) => snapshots.get(laneId),
-    rekey: () => {},
     clear: () => {},
   };
   const link: WorkspaceLinkPort = {

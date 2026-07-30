@@ -1,6 +1,21 @@
 import type { AbsolutePath, LaneId, UriString, WorkspaceKey } from '../foundation/model';
 import type { EditorSnapshot, Lane } from './model';
 
+/** 永続化されたレーン選択 */
+export type StoredLaneSelection =
+  | {
+      /** 現行形式 */
+      readonly kind: 'v2';
+      /** 不透明レーン識別子 */
+      readonly laneId: LaneId;
+    }
+  | {
+      /** v0.1.13 以前の label 文字列 */
+      readonly kind: 'legacy';
+      /** 当時の表示ラベル */
+      readonly label: string;
+    };
+
 /** レーン別エディタ状態の保存ストア */
 export interface LaneSessionStore {
   /**
@@ -15,12 +30,6 @@ export interface LaneSessionStore {
    * @returns 保存済みスナップショット、または未保存で undefined
    */
   readonly get: (laneId: LaneId) => EditorSnapshot | undefined;
-  /**
-   * エディタ状態のキー張替え
-   * @param oldLaneId - 旧レーン識別子
-   * @param newLaneId - 新レーン識別子
-   */
-  readonly rekey: (oldLaneId: LaneId, newLaneId: LaneId) => void;
   /**
    * エディタ状態の破棄
    * @param laneId - 対象レーン識別子
@@ -86,7 +95,7 @@ export interface LaneSelectionStorePort {
    * @param key - ワークスペース永続キー
    * @returns 永続化済みレーン識別子、または未保存で undefined
    */
-  readonly load: (key: WorkspaceKey) => LaneId | undefined;
+  readonly load: (key: WorkspaceKey) => StoredLaneSelection | undefined;
   /**
    * 選択レーンの保存
    * @param key - ワークスペース永続キー
