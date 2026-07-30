@@ -59,6 +59,19 @@ export const createPromptAdapter = (): LanePromptPort => ({
     return (picked ?? []).map((uri) => uri.toString() as UriString);
   },
 
+  pickReplacementFolder: async (defaultDirectory) => {
+    const [picked] =
+      (await vscode.window.showOpenDialog({
+        title: 'Locate Lane Folder',
+        openLabel: 'Locate Folder',
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        defaultUri: vscode.Uri.file(defaultDirectory),
+      })) ?? [];
+    return picked?.toString() as UriString | undefined;
+  },
+
   warnAddFolderFailed: () => {
     vscode.window.showWarningMessage(
       'Failed to add the folder to the workspace. Please try again.',

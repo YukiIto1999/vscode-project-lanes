@@ -13,6 +13,8 @@ export interface ActiveLaneReconciliationInput {
   readonly currentLinkTarget: AbsolutePath | undefined;
   /** 永続化済み選択レーン識別子 */
   readonly cachedLaneId: LaneId | undefined;
+  /** 呼出操作が維持を要求するレーン識別子 */
+  readonly preferredLaneId?: LaneId;
   /** 評価時点のレーン別 root 利用可否 */
   readonly availabilityByLaneId: ReadonlyMap<LaneId, LaneRootAvailability>;
 }
@@ -47,7 +49,14 @@ export type ActiveLaneReconciliationPlan =
 export const planActiveLaneReconciliation = (
   input: ActiveLaneReconciliationInput,
 ): ActiveLaneReconciliationPlan => {
-  const { catalog, linkPath, currentLinkTarget, cachedLaneId, availabilityByLaneId } = input;
+  const {
+    catalog,
+    linkPath,
+    currentLinkTarget,
+    cachedLaneId,
+    preferredLaneId,
+    availabilityByLaneId,
+  } = input;
   if (catalog.lanes.length === 0) return { kind: 'empty' };
   const isAvailable = (lane: Lane): boolean => availabilityByLaneId.get(lane.id) === 'available';
   const firstAvailable = catalog.lanes.find(isAvailable);
@@ -58,12 +67,15 @@ export const planActiveLaneReconciliation = (
     : undefined;
   const cachedCandidate = cachedLaneId ? catalog.byId.get(cachedLaneId) : undefined;
   const cachedLane = cachedCandidate && isAvailable(cachedCandidate) ? cachedCandidate : undefined;
+  const preferredCandidate = preferredLaneId ? catalog.byId.get(preferredLaneId) : undefined;
+  const preferredLane =
+    preferredCandidate && isAvailable(preferredCandidate) ? preferredCandidate : undefined;
   const lane =
     linkedLane && isAvailable(linkedLane)
       ? linkedLane
       : linkedLane
         ? firstAvailable
-        : (cachedLane ?? firstAvailable);
+        : (preferredLane ?? cachedLane ?? firstAvailable);
 
   return {
     kind: 'activate',

@@ -242,6 +242,30 @@ describe('planActiveLaneReconciliation', () => {
     });
   });
 
+  it('link が catalog 外なら available な preferred lane を stale cache より優先する', () => {
+    const catalog = makeCatalog([makeLane('web', '/moved/web'), makeLane('api')]);
+    const result = planActiveLaneReconciliation(
+      makeInput({
+        catalog,
+        currentLinkTarget: '/projects/web' as AbsolutePath,
+        preferredLaneId: 'web' as LaneId,
+        cachedLaneId: 'api' as LaneId,
+        availabilityByLaneId: makeAvailability(catalog),
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'activate',
+      lane: makeLane('web', '/moved/web'),
+      linkSwap: {
+        linkPath,
+        from: '/projects/web',
+        to: '/moved/web',
+      },
+      selectionUpdate: { laneId: 'web' },
+    });
+  });
+
   it('利用可能な lane が一件もなければ inactive plan を返す', () => {
     const catalog = makeCatalog([makeLane('web'), makeLane('api')]);
     const result = planActiveLaneReconciliation(
