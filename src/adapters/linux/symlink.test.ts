@@ -127,6 +127,54 @@ describe('SymlinkOps', () => {
     expect(fs.statSync(directory).isDirectory()).toBe(true);
   });
 
+  it('read は symlink 化された親 anchor を辿らない', () => {
+    const externalDirectory = abs('external');
+    const target = abs('target');
+    fs.mkdirSync(externalDirectory);
+    fs.mkdirSync(target);
+    fs.symlinkSync(target, nodePath.join(externalDirectory, 'active'));
+    const anchor = abs('.lanes-root');
+    fs.symlinkSync(externalDirectory, anchor);
+
+    expect(() => ops.read(nodePath.join(anchor, 'active') as AbsolutePath)).toThrowError(
+      `Workspace link parent is not a real directory: ${anchor}`,
+    );
+  });
+
+  it('replace は symlink 化された親 anchor の外部 link を置き換えない', () => {
+    const externalDirectory = abs('external');
+    const originalTarget = abs('original-target');
+    const replacementTarget = abs('replacement-target');
+    fs.mkdirSync(externalDirectory);
+    fs.mkdirSync(originalTarget);
+    fs.mkdirSync(replacementTarget);
+    const externalLink = nodePath.join(externalDirectory, 'active');
+    fs.symlinkSync(originalTarget, externalLink);
+    const anchor = abs('.lanes-root');
+    fs.symlinkSync(externalDirectory, anchor);
+
+    expect(() =>
+      ops.replace(nodePath.join(anchor, 'active') as AbsolutePath, replacementTarget),
+    ).toThrowError(`Workspace link parent is not a real directory: ${anchor}`);
+    expect(fs.readlinkSync(externalLink)).toBe(originalTarget);
+  });
+
+  it('clear は symlink 化された親 anchor の外部 link を削除しない', () => {
+    const externalDirectory = abs('external');
+    const target = abs('target');
+    fs.mkdirSync(externalDirectory);
+    fs.mkdirSync(target);
+    const externalLink = nodePath.join(externalDirectory, 'active');
+    fs.symlinkSync(target, externalLink);
+    const anchor = abs('.lanes-root');
+    fs.symlinkSync(externalDirectory, anchor);
+
+    expect(() => ops.clear(nodePath.join(anchor, 'active') as AbsolutePath)).toThrowError(
+      `Workspace link parent is not a real directory: ${anchor}`,
+    );
+    expect(fs.readlinkSync(externalLink)).toBe(target);
+  });
+
   it('WorkspaceLinkPort は束縛した linkPath を read と clear に使う', () => {
     const target = abs('target');
     fs.mkdirSync(target);

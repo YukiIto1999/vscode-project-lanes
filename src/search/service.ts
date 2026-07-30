@@ -1,5 +1,6 @@
 import type { LaneId } from '../foundation/model';
 import type { LaneCatalog, LaneFocusPlan } from '../lane/model';
+import type { LaneRootAvailabilityPort } from '../workspace/ports';
 import type { LaneRoot, LaneSearchResult } from './model';
 import type { FileOpenPort, LaneSearchPort, SearchUiPort } from './ports';
 import { parseLaneQuery } from './query';
@@ -16,6 +17,8 @@ export interface LaneSearchServiceDeps {
   readonly fileOpen: FileOpenPort;
   /** レーンフォーカス関数 */
   readonly focus: (laneId: LaneId) => Promise<LaneFocusPlan>;
+  /** レーンルート利用可否の検査ポート */
+  readonly rootAvailability: LaneRootAvailabilityPort;
 }
 
 /** 横断検索サービスの操作 */
@@ -32,10 +35,16 @@ export interface LaneSearchService {
  * @returns サービスインスタンス
  */
 export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearchService => {
-  const { getCatalog, search, ui, fileOpen, focus } = deps;
+  const { getCatalog, search, ui, fileOpen, focus, rootAvailability } = deps;
 
-  const rootsOf = (): readonly LaneRoot[] =>
-    getCatalog().lanes.map((lane) => ({ laneId: lane.id, rootPath: lane.rootPath }));
+  const availableRootsOf = (): readonly LaneRoot[] => {
+    const roots: LaneRoot[] = [];
+    for (const lane of getCatalog().lanes) {
+      if (rootAvailability.inspect(lane.rootPath) !== 'available') continue;
+      roots.push({ laneId: lane.id, rootPath: lane.rootPath });
+    }
+    return roots;
+  };
 
   const navigate = async (result: LaneSearchResult): Promise<void> => {
     const plan = await focus(result.laneId);
@@ -53,7 +62,7 @@ export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearch
     findInLanes: async () => {
       const query = parseLaneQuery(await ui.promptQuery());
       if (!query) return;
-      const outcome = await search.searchContent(query, rootsOf());
+      const outcome = await search.searchContent(query, availableRootsOf());
       if (outcome.kind === 'unavailable') {
         ui.warnUnavailable();
         return;
@@ -68,7 +77,7 @@ export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearch
     },
 
     goToFileInLanes: async () => {
-      const outcome = await search.listFiles(rootsOf());
+      const outcome = await search.listFiles(availableRootsOf());
       if (outcome.kind === 'unavailable') {
         ui.warnUnavailable();
         return;

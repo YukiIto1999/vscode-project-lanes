@@ -91,6 +91,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "projectLanes.locateFolder",
+        "title": "Locate Folder",
+        "category": "Project Lanes"
+      },
+      {
         "command": "projectLanes.renameLane",
         "title": "Rename Lane",
         "category": "Project Lanes"
@@ -131,14 +136,19 @@
       ],
       "view/item/context": [
         {
-          "command": "projectLanes.renameLane",
-          "when": "view == projectLanes && viewItem == projectLane",
+          "command": "projectLanes.locateFolder",
+          "when": "view == projectLanes && viewItem == projectLaneUnavailable",
           "group": "1_modify@1"
         },
         {
-          "command": "projectLanes.removeLane",
-          "when": "view == projectLanes && viewItem == projectLane",
+          "command": "projectLanes.renameLane",
+          "when": "view == projectLanes && (viewItem == projectLaneAvailable || viewItem == projectLaneUnavailable)",
           "group": "1_modify@2"
+        },
+        {
+          "command": "projectLanes.removeLane",
+          "when": "view == projectLanes && (viewItem == projectLaneAvailable || viewItem == projectLaneUnavailable)",
+          "group": "1_modify@3"
         }
       ]
     },

@@ -12,6 +12,7 @@ import type {
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
+import type { LaneRootAvailability } from './model';
 import { ActiveLaneReconciliationError, createLaneService } from './service';
 
 const workspaceKey = 'workspace:test' as WorkspaceKey;
@@ -46,6 +47,7 @@ const createHarness = ({
   closeLane = async () => {},
   revealLane = async () => {},
   pickLane = async () => undefined,
+  pickReplacementFolder = async () => undefined,
   promptRename = async () => 'frontend',
   confirmRemoval = async () => true,
   operationQueue: operationQueueOverride,
@@ -60,12 +62,17 @@ const createHarness = ({
   saveSelection = async () => {},
   rekeyTerminal = () => {},
   rekeyEditor = () => {},
+  inspectRoot = () => 'available',
+  hasDirtyEditors = () => false,
+  captureSnapshot = () => ({ tabs: [] }),
+  restoreSnapshot = async () => {},
 }: {
   readonly initial?: readonly WorkspaceFolder[];
   readonly saveCatalog?: CatalogStorePort['save'];
   readonly closeLane?: LaneTerminalPort['closeLane'];
   readonly revealLane?: LaneTerminalPort['revealLane'];
   readonly pickLane?: LanePromptPort['pickLane'];
+  readonly pickReplacementFolder?: LanePromptPort['pickReplacementFolder'];
   readonly promptRename?: LanePromptPort['promptRename'];
   readonly confirmRemoval?: LanePromptPort['confirmRemoval'];
   readonly operationQueue?: OperationQueue;
@@ -80,10 +87,18 @@ const createHarness = ({
   readonly saveSelection?: LaneSelectionStorePort['save'];
   readonly rekeyTerminal?: (oldId: LaneId, newId: LaneId) => void;
   readonly rekeyEditor?: LaneSessionStore['rekey'];
+  readonly inspectRoot?: (path: AbsolutePath) => LaneRootAvailability;
+  readonly hasDirtyEditors?: EditorPort['hasDirtyEditors'];
+  readonly captureSnapshot?: EditorPort['captureSnapshot'];
+  readonly restoreSnapshot?: EditorPort['restoreSnapshot'];
 } = {}) => {
+  let persistedFolders = initial;
   const store: CatalogStorePort = {
-    load: () => initial,
-    save: saveCatalog,
+    load: () => persistedFolders,
+    save: async (folders) => {
+      await saveCatalog(folders);
+      persistedFolders = folders;
+    },
   };
   const registry = createCatalogRegistry(initial, store);
   let currentSelection = selectionLaneId;
@@ -103,8 +118,9 @@ const createHarness = ({
     effectEvents.push('close');
     await closeLane(laneId);
   });
+  const terminalReveal = vi.fn<LaneTerminalPort['revealLane']>(revealLane);
   const terminal: LaneTerminalPort = {
-    revealLane,
+    revealLane: terminalReveal,
     closeLane: terminalClose,
   };
   const terminalRekey = vi.fn<(oldId: LaneId, newId: LaneId) => void>(rekeyTerminal);
@@ -119,15 +135,19 @@ const createHarness = ({
     clear: editorClear,
   };
   const editorClose = vi.fn<EditorPort['closeAll']>(async () => {});
+  const editorHasDirty = vi.fn<EditorPort['hasDirtyEditors']>(hasDirtyEditors);
+  const editorCapture = vi.fn<EditorPort['captureSnapshot']>(captureSnapshot);
+  const editorRestore = vi.fn<EditorPort['restoreSnapshot']>(restoreSnapshot);
   const editor: EditorPort = {
-    hasDirtyEditors: () => false,
-    captureSnapshot: () => ({ tabs: [] }),
+    hasDirtyEditors: editorHasDirty,
+    captureSnapshot: editorCapture,
     closeAll: editorClose,
-    restoreSnapshot: async () => {},
+    restoreSnapshot: editorRestore,
   };
   const viewRebind = vi.fn<LaneViewRebindPort['rebindActiveFolder']>(rebindActiveFolder);
   const prompt: LanePromptPort = {
     pickLane,
+    pickReplacementFolder,
     warnDirtyEditors,
     promptRename,
     confirmRemoval,
@@ -152,41 +172,53 @@ const createHarness = ({
     clearLink();
     currentLinkTarget = undefined;
   });
-  const service = createLaneService({
-    getCatalog: () => registry.snapshot(),
-    workspaceKey,
-    editor,
-    link: {
-      linkPath,
-      readTarget: linkRead,
-      swap: linkSwap,
-      clear: linkClear,
-    },
-    terminal,
-    viewRebind: { rebindActiveFolder: viewRebind },
-    selectionStore,
-    prompt,
-    registry,
-    terminalRekey: { rekeyLane: terminalRekey },
-    editorStore,
-    operationQueue,
-  });
+  const rootAvailability = {
+    inspect: vi.fn((path: AbsolutePath) => inspectRoot(path)),
+  };
+  const createService = (serviceRegistry = registry) =>
+    createLaneService({
+      getCatalog: () => serviceRegistry.snapshot(),
+      workspaceKey,
+      editor,
+      link: {
+        linkPath,
+        readTarget: linkRead,
+        swap: linkSwap,
+        clear: linkClear,
+      },
+      terminal,
+      viewRebind: { rebindActiveFolder: viewRebind },
+      selectionStore,
+      prompt,
+      registry: serviceRegistry,
+      terminalRekey: { rekeyLane: terminalRekey },
+      editorStore,
+      operationQueue,
+      rootAvailability,
+    });
+  const service = createService();
 
   return {
     service,
+    recreateService: () => createService(createCatalogRegistry(store.load(), store)),
     registry,
     selectionLoad,
     selectionSave,
     linkRead,
     linkSwap,
     linkClear,
+    rootAvailability,
+    terminalReveal,
     terminalClose,
     terminalRekey,
     editorRekey,
     editorClear,
     effectEvents,
     viewRebind,
+    editorHasDirty,
+    editorCapture,
     editorClose,
+    editorRestore,
     operationEnqueueCount: () => operationEnqueueCount,
     currentLinkTarget: () => currentLinkTarget,
     setLinkTarget: (target: AbsolutePath | undefined) => {
@@ -256,6 +288,141 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('web');
     expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
     expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'web');
+  });
+
+  it('active root が missing なら catalog 先頭の available lane へ退避する', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/api' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'web');
+    expect(h.editorClose).toHaveBeenCalledOnce();
+    expect(h.rootAvailability.inspect.mock.calls.map(([path]) => path)).toEqual([
+      '/repo/web',
+      '/repo/api',
+      '/repo/web',
+    ]);
+  });
+
+  it('active root が missing でも dirty editor があれば linked lane と cache を維持する', async () => {
+    const warnDirtyEditors = vi.fn();
+    const h = createHarness({
+      linkTarget: '/repo/api' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+      hasDirtyEditors: () => true,
+      warnDirtyEditors,
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+    expect(h.currentLinkTarget()).toBe('/repo/api');
+    expect(h.selectionSave).not.toHaveBeenCalled();
+    expect(h.editorClose).not.toHaveBeenCalled();
+    expect(h.viewRebind).not.toHaveBeenCalled();
+    expect(h.terminalClose).not.toHaveBeenCalled();
+    expect(h.terminalReveal).not.toHaveBeenCalled();
+    expect(warnDirtyEditors).toHaveBeenCalledOnce();
+  });
+
+  it('missing active lane からの退避失敗は link、view、tabs を linked lane へ戻す', async () => {
+    const sourceSnapshot = {
+      tabs: [{ uri: 'file:///repo/api/source.ts' as UriString, viewColumn: 1 }],
+    };
+    const h = createHarness({
+      linkTarget: '/repo/api' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+      captureSnapshot: () => sourceSnapshot,
+      rebindActiveFolder: async (lane) => lane.id === ('api' as LaneId),
+    });
+
+    await expect(h.service.reconcileActiveLane()).rejects.toBeInstanceOf(
+      ActiveLaneReconciliationError,
+    );
+
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+    expect(h.currentLinkTarget()).toBe('/repo/api');
+    expect(h.editorRestore).toHaveBeenCalledWith(sourceSnapshot);
+    expect(h.viewRebind).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'api' }));
+    expect(h.selectionSave).not.toHaveBeenCalled();
+  });
+
+  it('利用可能な lane が無ければ link、active、selection cache を消す', async () => {
+    const h = createHarness({
+      inspectRoot: () => 'inaccessible',
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'inactive',
+      cache: 'saved',
+    });
+
+    expect(h.linkClear).toHaveBeenCalledOnce();
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, undefined);
+    expect(h.viewRebind).not.toHaveBeenCalled();
+  });
+
+  it('inactive の cache 保存失敗は link と active を消した pending result にする', async () => {
+    const failure = new Error('selection clear failed');
+    let saveCount = 0;
+    const h = createHarness({
+      inspectRoot: () => 'missing',
+      saveSelection: async () => {
+        saveCount += 1;
+        if (saveCount === 1) throw failure;
+      },
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'inactive',
+      cache: 'pending',
+      error: failure,
+    });
+    expect(h.currentLinkTarget()).toBeUndefined();
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'inactive',
+      cache: 'saved',
+    });
+    expect(h.selectionSave).toHaveBeenCalledTimes(2);
+  });
+
+  it('inactive の link clear 失敗は active と cache を維持して伝播する', async () => {
+    let availability: LaneRootAvailability = 'available';
+    const clearFailure = new Error('clear failed');
+    const h = createHarness({
+      inspectRoot: () => availability,
+      clearLink: () => {
+        throw clearFailure;
+      },
+    });
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    availability = 'missing';
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'link-clear-failed',
+      cause: clearFailure,
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.selectionSave).not.toHaveBeenCalled();
   });
 
   it('queue 待機後の最新 catalog、link target、selection cache を読む', async () => {
@@ -462,7 +629,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.selectionSave).toHaveBeenCalledTimes(2);
   });
 
-  it('catalog が空なら active を未確定にする以外の副作用を起こさない', async () => {
+  it('catalog が空でも pending を確定して link、active、selection cache を消す', async () => {
     let saveCount = 0;
     const h = createHarness({
       saveSelection: async () => {
@@ -480,14 +647,17 @@ describe('createLaneService active lane reconciliation', () => {
     h.linkClear.mockClear();
     h.viewRebind.mockClear();
 
-    await expect(h.service.reconcileActiveLane()).resolves.toEqual({ kind: 'empty' });
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'empty',
+      cache: 'saved',
+    });
 
     expect(h.service.snapshot().activeLaneId).toBeUndefined();
-    expect(h.selectionLoad).not.toHaveBeenCalled();
-    expect(h.selectionSave).not.toHaveBeenCalled();
-    expect(h.linkRead).not.toHaveBeenCalled();
+    expect(h.selectionLoad).toHaveBeenCalledOnce();
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, undefined);
+    expect(h.linkRead).toHaveBeenCalledOnce();
     expect(h.linkSwap).not.toHaveBeenCalled();
-    expect(h.linkClear).not.toHaveBeenCalled();
+    expect(h.linkClear).toHaveBeenCalledOnce();
     expect(h.viewRebind).not.toHaveBeenCalled();
   });
 
@@ -647,6 +817,90 @@ describe('createLaneService interaction boundary', () => {
     expect(paused.enqueueCount()).toBe(1);
   });
 
+  it('relocate folder picker を queue 外で完了してから mutation を enqueue する', async () => {
+    const paused = createPausedQueue();
+    const pickReplacementFolder = vi.fn<LanePromptPort['pickReplacementFolder']>(
+      async () => 'file:///moved/api' as UriString,
+    );
+    const h = createHarness({
+      operationQueue: paused.queue,
+      pickReplacementFolder,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    void h.service.relocateLane('api' as LaneId);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(pickReplacementFolder).toHaveBeenCalledWith('/repo');
+    expect(paused.enqueueCount()).toBe(1);
+  });
+
+  it('relocate folder picker を取り消したら mutation を enqueue しない', async () => {
+    const h = createHarness({
+      pickReplacementFolder: async () => undefined,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.relocateLane('api' as LaneId)).resolves.toBeUndefined();
+
+    expect(h.operationEnqueueCount()).toBe(0);
+  });
+
+  it('relocate の明示 target が存在しなければ no-target を返して picker を開かない', async () => {
+    const pickReplacementFolder = vi.fn<LanePromptPort['pickReplacementFolder']>();
+    const h = createHarness({ pickReplacementFolder });
+
+    await expect(h.service.relocateLane('missing' as LaneId)).resolves.toEqual({
+      kind: 'noop',
+      reason: 'no-target',
+    });
+
+    expect(pickReplacementFolder).not.toHaveBeenCalled();
+    expect(h.operationEnqueueCount()).toBe(0);
+  });
+
+  it('relocate の明示 target が available なら picker を開かない', async () => {
+    const pickReplacementFolder = vi.fn<LanePromptPort['pickReplacementFolder']>();
+    const h = createHarness({ pickReplacementFolder });
+
+    await expect(h.service.relocateLane('api' as LaneId)).resolves.toEqual({
+      kind: 'noop',
+      reason: 'no-target',
+    });
+
+    expect(pickReplacementFolder).not.toHaveBeenCalled();
+    expect(h.operationEnqueueCount()).toBe(0);
+  });
+
+  it('relocate の対話選択には unavailable lane だけを渡す', async () => {
+    const pickLane = vi.fn<LanePromptPort['pickLane']>(async () => 'api' as LaneId);
+    const h = createHarness({
+      pickLane,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.relocateLane()).resolves.toBeUndefined();
+
+    expect(pickLane).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'api', rootPath: '/repo/api' }),
+    ]);
+  });
+
+  it('relocate の対話選択は unavailable lane が無ければ picker を開かない', async () => {
+    const pickLane = vi.fn<LanePromptPort['pickLane']>();
+    const pickReplacementFolder = vi.fn<LanePromptPort['pickReplacementFolder']>();
+    const h = createHarness({ pickLane, pickReplacementFolder });
+
+    await expect(h.service.relocateLane()).resolves.toEqual({
+      kind: 'noop',
+      reason: 'no-target',
+    });
+
+    expect(pickLane).not.toHaveBeenCalled();
+    expect(pickReplacementFolder).not.toHaveBeenCalled();
+  });
+
   it('queue 待機中に focus target が消えた場合は tabs を閉じない', async () => {
     const gate = deferred();
     const operationQueue = createOperationQueue();
@@ -662,6 +916,133 @@ describe('createLaneService interaction boundary', () => {
     expect(h.editorClose).not.toHaveBeenCalled();
   });
 
+  it('queue 待機中に focus target root が missing になった場合は tabs を閉じない', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    let availability: LaneRootAvailability = 'available';
+    const h = createHarness({
+      operationQueue,
+      inspectRoot: () => availability,
+    });
+
+    const focusing = h.service.focus('api' as LaneId);
+    availability = 'missing';
+    gate.resolve();
+    await holding;
+
+    await expect(focusing).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'root-unavailable',
+    });
+    expect(h.editorClose).not.toHaveBeenCalled();
+  });
+
+  it('queue 待機中に relocation 先が missing になった場合は catalog を変更しない', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    let replacementAvailability: LaneRootAvailability = 'available';
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue,
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/api' as UriString,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : replacementAvailability),
+    });
+
+    const relocating = h.service.relocateLane('api' as LaneId);
+    await Promise.resolve();
+    replacementAvailability = 'missing';
+    gate.resolve();
+    await holding;
+
+    await expect(relocating).resolves.toEqual({
+      kind: 'rejected',
+      reason: 'replacement-unavailable',
+    });
+    expect(saveCatalog).not.toHaveBeenCalled();
+    expect(h.registry.snapshot().byId.get('api' as LaneId)?.rootPath).toBe('/repo/api');
+  });
+
+  it('queue 待機中に relocation target が available へ戻った場合は catalog を変更しない', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    let targetAvailability: LaneRootAvailability = 'missing';
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue,
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/api' as UriString,
+      inspectRoot: (path) => (path === '/repo/api' ? targetAvailability : 'available'),
+    });
+
+    const relocating = h.service.relocateLane('api' as LaneId);
+    await Promise.resolve();
+    targetAvailability = 'available';
+    gate.resolve();
+    await holding;
+
+    await expect(relocating).resolves.toEqual({
+      kind: 'noop',
+      reason: 'no-target',
+    });
+    expect(saveCatalog).not.toHaveBeenCalled();
+    expect(h.registry.snapshot().byId.get('api' as LaneId)?.rootPath).toBe('/repo/api');
+  });
+
+  it('queue 待機中に relocation target が消えた場合は保存を再実行しない', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue,
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/api' as UriString,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    const relocating = h.service.relocateLane('api' as LaneId);
+    await h.registry.remove('api');
+    saveCatalog.mockClear();
+    gate.resolve();
+    await holding;
+
+    await expect(relocating).resolves.toEqual({ kind: 'noop', reason: 'no-target' });
+    expect(saveCatalog).not.toHaveBeenCalled();
+  });
+
+  it('queue 待機中に追加された lane と relocation 先が重複すれば拒否する', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue,
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/api' as UriString,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    const relocating = h.service.relocateLane('api' as LaneId);
+    await h.registry.replace([
+      toFolder('web'),
+      toFolder('api'),
+      { name: 'worker', uri: 'file:///moved/api' as UriString },
+    ]);
+    saveCatalog.mockClear();
+    gate.resolve();
+    await holding;
+
+    await expect(relocating).resolves.toEqual({
+      kind: 'rejected',
+      reason: 'duplicate-root',
+    });
+    expect(saveCatalog).not.toHaveBeenCalled();
+  });
+
   it('reconciliation-required を dirty editor として警告しない', async () => {
     const warnDirtyEditors = vi.fn();
     const h = createHarness({
@@ -674,6 +1055,220 @@ describe('createLaneService interaction boundary', () => {
       reason: 'reconciliation-required',
     });
     expect(warnDirtyEditors).not.toHaveBeenCalled();
+  });
+});
+
+describe('createLaneService relocation', () => {
+  it('active lane の URI だけを保存し同じ queue 内で link と view を再整合する', async () => {
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.relocateLane('web' as LaneId)).resolves.toMatchObject({
+      kind: 'relocate',
+      target: { id: 'web', label: 'web', rootPath: '/repo/web' },
+      replacementUri: 'file:///moved/web',
+      replacementPath: '/moved/web',
+    });
+
+    expect(saveCatalog).toHaveBeenCalledWith([
+      { name: 'web', uri: 'file:///moved/web' },
+      { name: 'api', uri: 'file:///repo/api' },
+    ]);
+    expect(h.registry.snapshot().byId.get('web' as LaneId)).toMatchObject({
+      id: 'web',
+      label: 'web',
+      rootPath: '/moved/web',
+    });
+    expect(h.linkSwap).toHaveBeenCalledWith('/moved/web');
+    expect(h.viewRebind).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'web', rootPath: '/moved/web' }),
+    );
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+  });
+
+  it('active link 再整合失敗は catalog を保存せず link と tabs を戻す', async () => {
+    const failure = new Error('swap failed');
+    const sourceSnapshot = {
+      tabs: [{ uri: 'file:///repo/web/source.ts' as UriString, viewColumn: 1 }],
+    };
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? 'missing' : 'available'),
+      captureSnapshot: () => sourceSnapshot,
+      swapLink: (target) => {
+        if (target === ('/moved/web' as AbsolutePath)) throw failure;
+      },
+    });
+
+    await expect(h.service.relocateLane('web' as LaneId)).rejects.toBe(failure);
+
+    expect(saveCatalog).not.toHaveBeenCalled();
+    expect(h.registry.snapshot().byId.get('web' as LaneId)?.rootPath).toBe('/repo/web');
+    expect(h.currentLinkTarget()).toBe('/repo/web');
+    expect(h.editorRestore).toHaveBeenCalledWith(sourceSnapshot);
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+  });
+
+  it('active view 再整合失敗も catalog を保存せず旧 workspace へ戻す', async () => {
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? 'missing' : 'available'),
+      rebindActiveFolder: async (lane) => lane.rootPath === '/repo/web',
+    });
+
+    await expect(h.service.relocateLane('web' as LaneId)).rejects.toThrow(
+      'workspace-folder-mutation-rejected',
+    );
+
+    expect(saveCatalog).not.toHaveBeenCalled();
+    expect(h.registry.snapshot().byId.get('web' as LaneId)?.rootPath).toBe('/repo/web');
+    expect(h.currentLinkTarget()).toBe('/repo/web');
+    expect(h.viewRebind).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'web', rootPath: '/repo/web' }),
+    );
+  });
+
+  it('active relocation は dirty editor があれば catalog 保存前に中止する', async () => {
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const warnDirtyEditors = vi.fn();
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      saveCatalog,
+      warnDirtyEditors,
+      hasDirtyEditors: () => true,
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.relocateLane('web' as LaneId)).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'dirty-editors',
+    });
+
+    expect(saveCatalog).not.toHaveBeenCalled();
+    expect(h.editorClose).not.toHaveBeenCalled();
+    expect(h.currentLinkTarget()).toBe('/repo/web');
+    expect(warnDirtyEditors).toHaveBeenCalledOnce();
+  });
+
+  it('active relocation の catalog 保存失敗は link、view、tabs を旧状態へ戻す', async () => {
+    const failure = new Error('catalog save failed');
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {
+      throw failure;
+    });
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.relocateLane('web' as LaneId)).rejects.toBe(failure);
+
+    expect(saveCatalog).toHaveBeenCalledOnce();
+    expect(h.registry.snapshot().byId.get('web' as LaneId)?.rootPath).toBe('/repo/web');
+    expect(h.currentLinkTarget()).toBe('/repo/web');
+    expect(h.editorRestore).toHaveBeenCalledOnce();
+    expect(h.viewRebind).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'web', rootPath: '/repo/web' }),
+    );
+  });
+
+  it('active relocation の catalog publish 後 listener failure は target を確定する', async () => {
+    const failure = new Error('catalog listener failed');
+    const saveCatalog = vi.fn<CatalogStorePort['save']>(async () => {});
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      saveCatalog,
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? 'missing' : 'available'),
+    });
+    h.registry.onChange(() => {
+      throw failure;
+    });
+
+    await expect(h.service.relocateLane('web' as LaneId)).resolves.toMatchObject({
+      kind: 'relocate',
+      target: { id: 'web' },
+      replacementPath: '/moved/web',
+    });
+
+    expect(saveCatalog).toHaveBeenCalledOnce();
+    expect(h.registry.snapshot().byId.get('web' as LaneId)?.rootPath).toBe('/moved/web');
+    expect(h.currentLinkTarget()).toBe('/moved/web');
+    expect(h.editorRestore).not.toHaveBeenCalled();
+
+    const restarted = h.recreateService();
+    expect(restarted.snapshot().catalog.byId.get('web' as LaneId)?.rootPath).toBe('/moved/web');
+    await expect(restarted.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+    expect(restarted.snapshot().activeLaneId).toBe('web');
+    expect(h.currentLinkTarget()).toBe('/moved/web');
+  });
+
+  it('non-active lane の relocation 後も active lane と link を維持する', async () => {
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      pickReplacementFolder: async () => 'file:///moved/api' as UriString,
+      inspectRoot: (path) => (path === '/repo/api' ? 'missing' : 'available'),
+    });
+
+    await expect(h.service.relocateLane('api' as LaneId)).resolves.toMatchObject({
+      kind: 'relocate',
+      target: { id: 'api' },
+      replacementPath: '/moved/api',
+    });
+
+    expect(h.registry.snapshot().byId.get('api' as LaneId)?.rootPath).toBe('/moved/api');
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(h.currentLinkTarget()).toBe('/repo/web');
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+  });
+
+  it('active relocation は stale selection cache より対象 lane を維持して cache も直す', async () => {
+    const firstSaveFailure = new Error('selection failed');
+    let saveCount = 0;
+    let webAvailability: LaneRootAvailability = 'available';
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      selectionLaneId: 'api' as LaneId,
+      saveSelection: async () => {
+        saveCount += 1;
+        if (saveCount === 1) throw firstSaveFailure;
+      },
+      pickReplacementFolder: async () => 'file:///moved/web' as UriString,
+      inspectRoot: (path) => (path === '/repo/web' ? webAvailability : 'available'),
+    });
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'pending',
+      error: firstSaveFailure,
+    });
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    webAvailability = 'missing';
+
+    await expect(h.service.relocateLane('web' as LaneId)).resolves.toMatchObject({
+      kind: 'relocate',
+      target: { id: 'web' },
+    });
+
+    expect(h.currentLinkTarget()).toBe('/moved/web');
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.selectionSave).toHaveBeenLastCalledWith(workspaceKey, 'web');
+    expect(h.selectionSave).toHaveBeenCalledTimes(2);
   });
 });
 

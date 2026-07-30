@@ -15,6 +15,7 @@ import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import {
   createDirectoryAdapter,
+  createLaneRootAvailabilityAdapter,
   createWorkspaceFileAdapter,
   createWorkspaceHostAdapter,
   createWorkspaceSettingsAdapter,
@@ -32,7 +33,7 @@ import { baseName, parentDirectory, uriToAbsolutePath } from '../foundation/path
 import { projectLaneActivities } from '../lane-activity/reducer';
 import type { MonotonicClockPort } from '../lane-activity/ports';
 import { createLaneActivityService } from '../lane-activity/service';
-import { toLaneId } from '../lane/model';
+import { toLaneId, type Lane } from '../lane/model';
 import { createLaneService } from '../lane/service';
 import { createLaneSessionStore } from '../lane/session-store';
 import { createLaneSearchService } from '../search/service';
@@ -58,6 +59,7 @@ import {
   type InitializationOutcome,
   type InitializationStatus,
 } from './initialization-coordinator';
+import { laneRelocationWarningMessage } from './lane-relocation-warning';
 import { createManagedCommandProxy } from './managed-command-proxy';
 import type { ConfigPort } from './model';
 import {
@@ -87,6 +89,7 @@ type ManagedCommandId =
   | 'projectLanes.closeTerminals'
   | 'projectLanes.addFolder'
   | 'projectLanes.reloadLanes'
+  | 'projectLanes.locateFolder'
   | 'projectLanes.renameLane'
   | 'projectLanes.removeLane'
   | 'projectLanes.findInLanes'
@@ -237,7 +240,12 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
     const editor = createEditorAdapter();
     const selectionStore = createSelectionStoreAdapter(extensionContext.workspaceState);
-    const prompt = createPromptAdapter();
+    const prompt = createPromptAdapter({
+      extensionMode: extensionContext.extensionMode,
+    });
+    const rootAvailability = createLaneRootAvailabilityAdapter();
+    const isLaneAvailable = (lane: Lane): boolean =>
+      rootAvailability.inspect(lane.rootPath) === 'available';
     const extensionPath = extensionContext.extensionPath as AbsolutePath;
     const clock: MonotonicClockPort = { now: () => Date.now() as Instant };
     const laneActivity = createLaneActivityService({ clock });
@@ -268,7 +276,9 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       editor,
       link,
       terminal: {
-        revealLane: async (lane) => terminalService.revealLane(lane),
+        revealLane: async (lane) => {
+          if (isLaneAvailable(lane)) await terminalService.revealLane(lane);
+        },
         closeLane: async (laneId) => terminalService.closeLane(laneId),
       },
       viewRebind: createLaneViewRebindAdapter(workspaceHost, toUri(link.linkPath)),
@@ -277,10 +287,11 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       registry,
       terminalRekey: { rekeyLane: (oldId, newId) => terminalService.rekeyLane(oldId, newId) },
       editorStore: createLaneSessionStore(),
+      rootAvailability,
       operationQueue,
     });
     const initialReconciliation = await laneService.reconcileActiveLane();
-    if (initialReconciliation.kind === 'active' && initialReconciliation.cache === 'pending') {
+    if (initialReconciliation.cache === 'pending') {
       await reportAsyncFailure(initialReconciliation.error);
     }
 
@@ -290,6 +301,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       ui: createSearchUiAdapter(),
       fileOpen: editor,
       focus: (laneId) => laneService.focus(laneId),
+      rootAvailability,
     });
 
     const treeView = createTreeViewAdapter();
@@ -306,7 +318,15 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         catalog.lanes.map((lane) => lane.id),
         clock.now(),
       );
-      const snapshot = projectUi(laneService.snapshot(), activities, cfg.showActivityIndicator);
+      const availabilityByLaneId = new Map(
+        catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
+      );
+      const snapshot = projectUi(
+        laneService.snapshot(),
+        activities,
+        cfg.showActivityIndicator,
+        availabilityByLaneId,
+      );
       treeView.render(snapshot);
       statusBar.render(snapshot.statusBar);
     };
@@ -330,6 +350,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       reconcileActiveLane: () => laneService.reconcileActiveLane(),
       getActiveLaneId: () => laneService.snapshot().activeLaneId,
       getLane: (laneId) => registry.snapshot().byId.get(laneId),
+      isLaneAvailable,
       revealLane: async (lane) => terminalService.revealLane(lane),
       render,
       reportPendingCache: reportAsyncFailure,
@@ -348,7 +369,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     const initialLane = laneService.snapshot().activeLaneId;
     if (initialLane) {
       const lane = registry.snapshot().byId.get(initialLane);
-      if (lane) terminalService.revealLane(lane);
+      if (lane && isLaneAvailable(lane)) terminalService.revealLane(lane);
     }
 
     track(
@@ -363,7 +384,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
           const activeLaneId = laneService.snapshot().activeLaneId;
           if (!activeLaneId) return undefined;
           const lane = registry.snapshot().byId.get(activeLaneId);
-          if (!lane) return undefined;
+          if (!lane || !isLaneAvailable(lane)) return undefined;
           const { sessionId, handle } = terminalService.requestSession(lane);
           return presentation.presentAsProfile(handle, lane.label, (terminalId) => {
             terminalService.bindTerminal(sessionId, terminalId);
@@ -402,6 +423,13 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       },
       'projectLanes.renameLane': ([argument]) =>
         runAsyncBoundary(() => laneService.renameLane(extractLaneId(argument)), reportAsyncFailure),
+      'projectLanes.locateFolder': ([argument]) =>
+        runAsyncBoundary(async () => {
+          const result = await laneService.relocateLane(extractLaneId(argument));
+          render();
+          const message = laneRelocationWarningMessage(result);
+          if (message) await vscode.window.showWarningMessage(message);
+        }, reportAsyncFailure),
       'projectLanes.removeLane': ([argument]) =>
         runAsyncBoundary(() => laneService.removeLane(extractLaneId(argument)), reportAsyncFailure),
       'projectLanes.reloadLanes': () =>
@@ -571,6 +599,10 @@ export const bootstrapRuntime = async (
     'projectLanes.reloadLanes',
     (...args: unknown[]) => invokeManagedCommand('projectLanes.reloadLanes', args),
   );
+  const locateFolderCommand = vscode.commands.registerCommand(
+    'projectLanes.locateFolder',
+    (...args: unknown[]) => invokeManagedCommand('projectLanes.locateFolder', args),
+  );
   const renameLaneCommand = vscode.commands.registerCommand(
     'projectLanes.renameLane',
     (...args: unknown[]) => invokeManagedCommand('projectLanes.renameLane', args),
@@ -598,6 +630,7 @@ export const bootstrapRuntime = async (
     closeTerminalsCommand,
     addFolderCommand,
     reloadLanesCommand,
+    locateFolderCommand,
     renameLaneCommand,
     removeLaneCommand,
     toggleActivityIndicatorCommand,

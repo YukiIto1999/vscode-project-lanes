@@ -28,6 +28,7 @@
   - 検出は Lane Terminal に注入する OSC 633 シェル統合 (bash / zsh) と PTY 出力のリアルタイム観測に基づく汎用ヒューリスティックで、エージェント種別には依存しない
 - レーン管理
   - Lanes パネルのタイトルバーアイコンからフォルダを追加し、アクティブレーンを再整合
+  - missing または inaccessible のレーンを、読み取り可能なフォルダへ再関連付け。available のレーンは変更対象外
   - レーン項目の右クリックでリネームと削除。リネームはターミナルセッションを温存したまま `label` (= `lane.id`) を変更、削除はアクティブレーンを拒否しディスク上のフォルダには触れない
 
 ## コマンド
@@ -38,6 +39,7 @@
 | `Project Lanes: Switch Lane`             | レーンに切替                                                                         |
 | `Project Lanes: Add Folder to Workspace` | アクティブレーンの親を初期表示するフォルダ選択でレーンを追加                         |
 | `Project Lanes: Reload Lanes`            | 追加されたワークスペースフォルダを取り込み、アクティブリンクと選択キャッシュを再整合 |
+| `Project Lanes: Locate Folder`           | missing または inaccessible のレーンを、読み取り可能なフォルダへ再関連付け           |
 | `Project Lanes: Rename Lane`             | 選択レーンの `label`（`lane.id` を兼ねる）を変更                                     |
 | `Project Lanes: Remove Lane`             | 選択レーンをカタログから除外（ディスク上のフォルダは保持）                           |
 | `Project Lanes: Close Terminals`         | アクティブレーンの全ターミナルセッションを終了                                       |

@@ -16,6 +16,8 @@ export interface RuntimeReconcilerDeps {
   readonly getActiveLaneId: () => LaneId | undefined;
   /** lane ID から lane の取得 */
   readonly getLane: (laneId: LaneId) => Lane | undefined;
+  /** lane root が terminal を起動できる状態か判定 */
+  readonly isLaneAvailable: (lane: Lane) => boolean;
   /** active lane terminal の表示 */
   readonly revealLane: (lane: Lane) => Promise<void>;
   /** UI の再描画 */
@@ -54,6 +56,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
     reconcileActiveLane,
     getActiveLaneId,
     getLane,
+    isLaneAvailable,
     revealLane,
     render,
     reportPendingCache,
@@ -72,7 +75,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
 
         try {
           const activeResult = await reconcileActiveLane();
-          if (activeResult.kind === 'active' && activeResult.cache === 'pending') {
+          if (activeResult.cache === 'pending') {
             await reportPendingCache(activeResult.error);
           }
         } catch (error) {
@@ -83,7 +86,7 @@ export const createRuntimeReconciler = (deps: RuntimeReconcilerDeps): RuntimeRec
         const nextActiveId = getActiveLaneId();
         if (nextActiveId && nextActiveId !== previousActiveId) {
           const activeLane = getLane(nextActiveId);
-          if (activeLane) await revealLane(activeLane);
+          if (activeLane && isLaneAvailable(activeLane)) await revealLane(activeLane);
         }
         render();
       }

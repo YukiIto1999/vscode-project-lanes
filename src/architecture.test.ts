@@ -127,6 +127,11 @@ describe('package.json の commands と bootstrap.ts の registerCommand の整�
     }
   });
 
+  it('Locate Folder command を宣言し一度だけ登録する', () => {
+    expect(declaredCommands.has('projectLanes.locateFolder')).toBe(true);
+    expect(registeredCommandIds.filter((id) => id === 'projectLanes.locateFolder')).toHaveLength(1);
+  });
+
   it('公開 command は初期化方針の適用前に登録される', () => {
     const src = readSource(bootstrapPath);
     const activationIndex = src.indexOf('coordinator.activate(');
@@ -210,6 +215,46 @@ describe('managed runtime の共通 operation queue', () => {
     expect(startup).toMatch(/await reportAsyncFailure\(/);
     expect(runtimeReconciler).toMatch(/reportPendingCache: reportAsyncFailure/);
     expect(runtimeReconciler).toMatch(/reportWorkspaceMutationRejected:/);
+  });
+
+  it('terminal の全入口は同じ lane root availability guard を使う', () => {
+    const guard = managedRuntime.match(
+      /const isLaneAvailable = \(lane: Lane\): boolean =>[\s\S]*?;/,
+    );
+    expect(guard).not.toBeNull();
+    expect(guard?.[0]).toMatch(/rootAvailability\.inspect\(lane\.rootPath\) === 'available'/);
+
+    const laneService = managedRuntime.slice(
+      managedRuntime.indexOf('const laneService = createLaneService'),
+      managedRuntime.indexOf('const initialReconciliation'),
+    );
+    expect(laneService).toMatch(
+      /revealLane: async \(lane\) => \{[\s\S]*?if \(isLaneAvailable\(lane\)\) await terminalService\.revealLane\(lane\)/,
+    );
+
+    const runtimeReconciler = managedRuntime.slice(
+      managedRuntime.indexOf('const runtimeReconciler = createRuntimeReconciler'),
+      managedRuntime.indexOf('track(laneActivity.onChange'),
+    );
+    expect(runtimeReconciler).toMatch(/isLaneAvailable,/);
+
+    const startup = managedRuntime.slice(
+      managedRuntime.indexOf('const initialLane'),
+      managedRuntime.indexOf('vscode.workspace.onDidChangeWorkspaceFolders'),
+    );
+    expect(startup).toMatch(/if \(lane && isLaneAvailable\(lane\)\)/);
+
+    const profile = managedRuntime.slice(
+      managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
+      managedRuntime.indexOf('vscode.window.onDidCloseTerminal'),
+    );
+    expect(profile).toMatch(/if \(!lane \|\| !isLaneAvailable\(lane\)\) return undefined;/);
+  });
+
+  it('prompt adapter へ runtime の ExtensionMode を渡す', () => {
+    expect(managedRuntime).toMatch(
+      /createPromptAdapter\(\{\s*extensionMode: extensionContext\.extensionMode,\s*\}\)/,
+    );
   });
 
   it('公開 switch の transition failure を共通失敗境界へ渡す', () => {
@@ -327,28 +372,47 @@ describe('LaneId への変換は toLaneId 経由に限定', () => {
   });
 });
 
-describe('TreeView contextValue と package.json の menus.when の整合', () => {
+describe('TreeView availability context と package.json の menus.when の整合', () => {
   const repoRoot = nodePath.resolve(SRC_ROOT, '..');
   const treeViewPath = nodePath.join(SRC_ROOT, 'adapters/vscode/tree-view.ts');
   const packageJsonPath = nodePath.join(repoRoot, 'package.json');
 
-  it('tree-view.ts に contextValue = "projectLane" が出現する', () => {
+  it('tree-view.ts は available と unavailable の context を分ける', () => {
     const treeView = readSource(treeViewPath);
-    expect(treeView).toMatch(/contextValue\s*=\s*['"]projectLane['"]/);
+    expect(treeView).toContain('projectLaneAvailable');
+    expect(treeView).toContain('projectLaneUnavailable');
   });
 
-  it('package.json の view/item/context は viewItem == projectLane で when を立てる', () => {
+  it('Locate Folder は unavailable item にだけ表示する', () => {
     const pkg = JSON.parse(readSource(packageJsonPath)) as {
       contributes?: {
-        menus?: { 'view/item/context'?: ReadonlyArray<{ when?: string }> };
+        menus?: {
+          'view/item/context'?: ReadonlyArray<{ command?: string; when?: string }>;
+        };
       };
     };
     const items = pkg.contributes?.menus?.['view/item/context'] ?? [];
-    expect(items.length).toBeGreaterThan(0);
-    for (const item of items) {
-      if (typeof item.when === 'string' && item.when.includes('viewItem')) {
-        expect(item.when).toContain('viewItem == projectLane');
-      }
-    }
+    const locate = items.find((item) => item.command === 'projectLanes.locateFolder');
+
+    expect(locate?.when).toBe('view == projectLanes && viewItem == projectLaneUnavailable');
   });
+
+  it.each(['projectLanes.renameLane', 'projectLanes.removeLane'])(
+    '%s は available と unavailable の両方に表示する',
+    (command) => {
+      const pkg = JSON.parse(readSource(packageJsonPath)) as {
+        contributes?: {
+          menus?: {
+            'view/item/context'?: ReadonlyArray<{ command?: string; when?: string }>;
+          };
+        };
+      };
+      const item = (pkg.contributes?.menus?.['view/item/context'] ?? []).find(
+        (entry) => entry.command === command,
+      );
+
+      expect(item?.when).toContain('viewItem == projectLaneAvailable');
+      expect(item?.when).toContain('viewItem == projectLaneUnavailable');
+    },
+  );
 });
