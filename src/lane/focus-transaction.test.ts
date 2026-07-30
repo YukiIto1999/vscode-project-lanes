@@ -113,6 +113,9 @@ const createHarness = ({
       if (target === targetLane.rootPath && failing.has('swap')) throw errors.swap;
       currentLinkTarget = target;
     },
+    clear: () => {
+      currentLinkTarget = undefined;
+    },
   };
   const viewRebind: LaneViewRebindPort = {
     rebindActiveFolder: async (activeLane) => {
