@@ -73,6 +73,22 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'missing-lane-recovery',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'missing-lane-recovery'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'missing-lane-recovery',
+      'missing-lane-recovery.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'missing-lane-recovery.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'prepare-missing-active' }),
+      Object.freeze({ phase: 'evacuate-and-remove-link' }),
+      Object.freeze({ phase: 'restore-from-cache-and-switch' }),
+    ]),
+  }),
+  Object.freeze({
     name: 'legacy-anchor-classification',
     fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
     workspaceFixture: path.join(
