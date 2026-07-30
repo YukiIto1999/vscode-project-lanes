@@ -177,21 +177,40 @@ describe('managed runtime の共通 operation queue', () => {
     );
   });
 
-  it('Reload を runtime 共通 queue へ載せる', () => {
+  it('Reload は lane service 自身が管理する queue 境界を一度だけ通す', () => {
     const reload = managedRuntime.slice(
       managedRuntime.indexOf("'projectLanes.reloadLanes'"),
       managedRuntime.indexOf("'projectLanes.switchLane'"),
     );
 
-    expect(reload).toMatch(/operationQueue\.enqueue\(async \(\) => \{/);
-    expect(reload).toMatch(
-      /operationQueue\.enqueue\(async \(\) => \{\s*await laneService\.finalizePendingOperations\(\);/,
-    );
+    expect(reload).toMatch(/await laneService\.reconcileActiveLane\(\)/);
+    expect(reload).not.toMatch(/operationQueue\.enqueue/);
+    expect(reload).not.toMatch(/laneService\.finalizePendingOperations/);
+    expect(reload).not.toMatch(/collectLaneCandidates/);
+    expect(reload).not.toMatch(/catalogStore\.load/);
+    expect(reload).not.toMatch(/registry\.replace/);
   });
 
-  it('selection 初期化の完了を待って runtime を公開する', () => {
+  it('active lane 再整合の完了を待って runtime を公開する', () => {
     expect(managedRuntime).toMatch(/const createManagedRuntime = async/);
-    expect(managedRuntime).toMatch(/await laneService\.initialize\(\);/);
+    expect(managedRuntime).toMatch(/await laneService\.reconcileActiveLane\(\);/);
+    expect(managedRuntime).not.toMatch(/laneService\.initialize\(\)/);
+  });
+
+  it('post-commit cache failure を通知しても startup と Reload の描画を継続する', () => {
+    const startup = managedRuntime.slice(
+      managedRuntime.indexOf('const laneService = createLaneService'),
+      managedRuntime.indexOf('const laneSearchService'),
+    );
+    const reload = managedRuntime.slice(
+      managedRuntime.indexOf("'projectLanes.reloadLanes'"),
+      managedRuntime.indexOf("'projectLanes.switchLane'"),
+    );
+
+    expect(startup).toMatch(/cache === 'pending'/);
+    expect(startup).toMatch(/await reportAsyncFailure\(/);
+    expect(reload).toMatch(/cache === 'pending'/);
+    expect(reload).toMatch(/finally\s*\{[\s\S]*?render\(\);[\s\S]*?\}/);
   });
 
   it('公開 switch の transition failure を共通失敗境界へ渡す', () => {

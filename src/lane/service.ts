@@ -2,7 +2,7 @@ import type { LaneId, WorkspaceKey } from '../foundation/model';
 import type { OperationQueue } from '../foundation/operation-queue';
 import type { WorkspaceLinkPort } from '../workspace/ports';
 import type { WorkspaceCatalogRegistry } from '../workspace/registry';
-import { selectByLinkTarget } from '../workspace/scanner';
+import { planActiveLaneReconciliation } from '../workspace/active-lane-reconciliation';
 import { createLaneFocusTransaction } from './focus-transaction';
 import type { Lane, LaneCatalog, LaneFocusPlan, LaneServiceSnapshot } from './model';
 import type {
@@ -44,10 +44,31 @@ export interface LaneServiceDeps {
   readonly operationQueue: OperationQueue;
 }
 
+/** アクティブレーン再整合の結果 */
+export type ActiveLaneReconciliationResult =
+  | {
+      /** 空 catalog */
+      readonly kind: 'empty';
+    }
+  | {
+      /** レーンを確定し cache も整合済み */
+      readonly kind: 'active';
+      readonly cache: 'saved';
+    }
+  | {
+      /** レーンは確定したが cache 保存は次回再試行が必要 */
+      readonly kind: 'active';
+      readonly cache: 'pending';
+      readonly error: unknown;
+    };
+
 /** レーンサービスの操作インターフェース */
 export interface LaneService {
-  /** 起動時初期化 */
-  readonly initialize: () => Promise<void>;
+  /**
+   * symlink、selection cache、catalog を runtime 共通 queue 上で再整合
+   * @returns レーン確定と cache 保存の状態
+   */
+  readonly reconcileActiveLane: () => Promise<ActiveLaneReconciliationResult>;
   /** 共通 queue 内で commit 後の未完了処理を再試行 */
   readonly finalizePendingOperations: () => Promise<void>;
   /**
@@ -110,7 +131,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     editorStore,
     operationQueue,
   } = deps;
-  let activeLaneId: LaneId | undefined = selectionStore.load(workspaceKey);
+  let activeLaneId: LaneId | undefined;
   let pendingRename: PendingRenameFinalization | undefined;
 
   const focusTransaction = createLaneFocusTransaction({
@@ -126,19 +147,6 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
       activeLaneId = laneId;
     },
   });
-
-  const initialize = async (): Promise<void> => {
-    const catalog = getCatalog();
-    if (activeLaneId && !catalog.byId.has(activeLaneId)) {
-      activeLaneId = undefined;
-      await selectionStore.save(workspaceKey, undefined);
-    }
-    if (!activeLaneId && catalog.lanes.length > 0) {
-      const chosen = selectByLinkTarget(catalog.lanes, link.readTarget(), (l) => l.rootPath);
-      activeLaneId = chosen!.id;
-      await selectionStore.save(workspaceKey, activeLaneId);
-    }
-  };
 
   const finalizePendingRename = async (): Promise<void> => {
     let current = pendingRename;
@@ -179,8 +187,68 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     await finalizePendingRename();
   };
 
+  const reconcileActiveLane = (): Promise<ActiveLaneReconciliationResult> =>
+    operationQueue.enqueue(async () => {
+      if (getCatalog().lanes.length === 0) {
+        activeLaneId = undefined;
+        return { kind: 'empty' };
+      }
+
+      await finalizePendingOperations();
+
+      const catalog = getCatalog();
+      if (catalog.lanes.length === 0) {
+        activeLaneId = undefined;
+        return { kind: 'empty' };
+      }
+
+      const currentLinkTarget = link.readTarget();
+      const plan = planActiveLaneReconciliation({
+        catalog,
+        linkPath: link.linkPath,
+        currentLinkTarget,
+        cachedLaneId: selectionStore.load(workspaceKey),
+      });
+      if (plan.kind === 'empty') {
+        activeLaneId = undefined;
+        return { kind: 'empty' };
+      }
+
+      let swapped = false;
+      try {
+        if (plan.linkSwap) {
+          link.swap(plan.linkSwap.to);
+          swapped = true;
+        }
+        const rebound = await viewRebind.rebindActiveFolder(plan.lane);
+        if (!rebound) throw new Error('workspace-folder-mutation-rejected');
+      } catch (error) {
+        if (!swapped) throw error;
+        try {
+          if (currentLinkTarget !== undefined) link.swap(currentLinkTarget);
+          else link.clear();
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            'Active lane reconciliation and link rollback failed.',
+          );
+        }
+        throw error;
+      }
+
+      activeLaneId = plan.lane.id;
+      if (plan.selectionUpdate) {
+        try {
+          await selectionStore.save(workspaceKey, plan.selectionUpdate.laneId);
+        } catch (error) {
+          return { kind: 'active', cache: 'pending', error };
+        }
+      }
+      return { kind: 'active', cache: 'saved' };
+    });
+
   return {
-    initialize,
+    reconcileActiveLane,
     finalizePendingOperations,
 
     focus: async (laneId) => {

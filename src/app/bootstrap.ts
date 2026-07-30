@@ -48,11 +48,7 @@ import type {
 import type { CatalogStorePort, WorkspaceHostPort, WorkspaceLinkPort } from '../workspace/ports';
 import { reconcileUserChange } from '../workspace/reconciler';
 import { createCatalogRegistry } from '../workspace/registry';
-import {
-  bootstrapWorkspace,
-  collapseFoldersToLink,
-  collectLaneCandidates,
-} from '../workspace/scanner';
+import { bootstrapWorkspace, collapseFoldersToLink } from '../workspace/scanner';
 import { runAsyncBoundary } from './async-boundary';
 import { createAsyncFailureReporter } from './async-failure-reporter';
 import {
@@ -251,6 +247,10 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     });
     track({ dispose: () => terminalService.dispose() });
 
+    const reportAsyncFailure = createAsyncFailureReporter({
+      log: (message, error) => console.error(message, error),
+      notify: () => vscode.window.showErrorMessage(OPERATION_FAILURE_MESSAGE),
+    });
     const laneService = createLaneService({
       getCatalog: () => registry.snapshot(),
       workspaceKey: workspaceContext.key,
@@ -268,7 +268,10 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       editorStore: createLaneSessionStore(),
       operationQueue,
     });
-    await laneService.initialize();
+    const initialReconciliation = await laneService.reconcileActiveLane();
+    if (initialReconciliation.kind === 'active' && initialReconciliation.cache === 'pending') {
+      await reportAsyncFailure(initialReconciliation.error);
+    }
 
     const laneSearchService = createLaneSearchService({
       getCatalog: () => registry.snapshot(),
@@ -300,10 +303,6 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     track(laneActivity.onChange(render));
     track(registry.onChange(render));
     track(config.onDidChange(() => render()));
-    const reportAsyncFailure = createAsyncFailureReporter({
-      log: (message, error) => console.error(message, error),
-      notify: () => vscode.window.showErrorMessage(OPERATION_FAILURE_MESSAGE),
-    });
 
     render();
     const initialLane = laneService.snapshot().activeLaneId;
@@ -386,27 +385,22 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       'projectLanes.removeLane': ([argument]) =>
         runAsyncBoundary(() => laneService.removeLane(extractLaneId(argument)), reportAsyncFailure),
       'projectLanes.reloadLanes': () =>
-        runAsyncBoundary(
-          () =>
-            operationQueue.enqueue(async () => {
-              await laneService.finalizePendingOperations();
-              const newLanes = collectLaneCandidates(
-                workspaceHost.readFolders(),
-                catalogStore.load(),
-                link.linkPath,
-              );
-              const previousActiveId = laneService.snapshot().activeLaneId;
-              await registry.replace(newLanes);
-              await laneService.initialize();
-              const nextActiveId = laneService.snapshot().activeLaneId;
-              if (nextActiveId && nextActiveId !== previousActiveId) {
-                const lane = registry.snapshot().byId.get(nextActiveId);
-                if (lane) terminalService.revealLane(lane);
-              }
-              render();
-            }),
-          reportAsyncFailure,
-        ),
+        runAsyncBoundary(async () => {
+          const previousActiveId = laneService.snapshot().activeLaneId;
+          try {
+            const reconciliation = await laneService.reconcileActiveLane();
+            if (reconciliation.kind === 'active' && reconciliation.cache === 'pending') {
+              await reportAsyncFailure(reconciliation.error);
+            }
+          } finally {
+            const nextActiveId = laneService.snapshot().activeLaneId;
+            if (nextActiveId && nextActiveId !== previousActiveId) {
+              const lane = registry.snapshot().byId.get(nextActiveId);
+              if (lane) terminalService.revealLane(lane);
+            }
+            render();
+          }
+        }, reportAsyncFailure),
       'projectLanes.switchLane': ([laneId]) =>
         runAsyncBoundary(async () => {
           const result = await laneService.focus(
