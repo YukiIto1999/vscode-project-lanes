@@ -1,10 +1,11 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
-import type { AbsolutePath } from '../../foundation/model';
+import type { AbsolutePath, UriString } from '../../foundation/model';
 import { uriToAbsolutePath } from '../../foundation/path';
 import type { LaneViewRebindPort } from '../../lane/ports';
 import type { WorkspaceHostPort } from '../../workspace/ports';
+import { createWorkspaceViewRebind } from '../../workspace/view-rebind';
 
 /** Git 拡張 API のうち本拡張が依存する最小契約 */
 interface GitApiShape {
@@ -48,44 +49,39 @@ const isGitWorktree = (rootPath: AbsolutePath): boolean =>
 /**
  * VS Code ビュー再走査アダプターの生成
  * @param workspaceHost - workspaceFolders 操作ポート
+ * @param activeLinkUri - active link URI
  * @returns ビュー再走査ポート
  */
 export const createLaneViewRebindAdapter = (
   workspaceHost: WorkspaceHostPort,
-): LaneViewRebindPort => ({
-  rebindActiveFolder: async (activeLane) => {
-    const folders = workspaceHost.readFolders();
-    const head = folders[0];
-    if (!head) return;
+  activeLinkUri: UriString,
+): LaneViewRebindPort =>
+  createWorkspaceViewRebind({
+    workspaceHost,
+    activeLinkUri,
+    rebindGitRepository: async (activeLane) => {
+      const api = await acquireGitApi();
+      if (!api) return;
 
-    if (head.name !== activeLane.label) {
-      await workspaceHost.applyMutation({
-        expectedFolders: folders,
-        start: 0,
-        deleteCount: 1,
-        folders: [{ uri: head.uri, name: activeLane.label }],
-      });
-    }
+      // git.close による closedRepositories への永続登録回避
+      if (!isGitWorktree(activeLane.rootPath)) return;
 
-    const api = await acquireGitApi();
-    if (!api) return;
-
-    // git.close による closedRepositories への永続登録回避
-    if (!isGitWorktree(activeLane.rootPath)) return;
-
-    const folderUri = vscode.Uri.parse(head.uri);
-    if (api.getRepository(folderUri)) {
-      try {
-        await vscode.commands.executeCommand('git.close', folderUri);
-      } catch {
-        /* close 失敗時の握潰、後続 openRepository に委任 */
+      const folderUri = vscode.Uri.parse(activeLinkUri);
+      if (api.getRepository(folderUri)) {
+        try {
+          await vscode.commands.executeCommand('git.close', folderUri);
+        } catch {
+          /* close 失敗時の握潰、後続 openRepository に委任 */
+        }
       }
-    }
 
-    try {
-      await vscode.commands.executeCommand('git.openRepository', uriToAbsolutePath(head.uri));
-    } catch {
-      /* Git 拡張不調時の握潰 */
-    }
-  },
-});
+      try {
+        await vscode.commands.executeCommand(
+          'git.openRepository',
+          uriToAbsolutePath(activeLinkUri),
+        );
+      } catch {
+        /* Git 拡張不調時の握潰 */
+      }
+    },
+  });

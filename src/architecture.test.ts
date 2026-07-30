@@ -151,6 +151,75 @@ describe('package.json の commands と bootstrap.ts の registerCommand の整�
   });
 });
 
+describe('managed runtime の共通 operation queue', () => {
+  const bootstrapPath = nodePath.join(SRC_ROOT, 'app/bootstrap.ts');
+  const bootstrap = readSource(bootstrapPath);
+  const managedRuntime = bootstrap.slice(
+    bootstrap.indexOf('const createManagedRuntime'),
+    bootstrap.indexOf('export const bootstrapRuntime'),
+  );
+
+  it('runtime ごとに queue を一つ生成して lane service へ渡す', () => {
+    expect(managedRuntime.match(/\bcreateOperationQueue\(\)/g) ?? []).toHaveLength(1);
+    expect(managedRuntime).toMatch(/const operationQueue = createOperationQueue\(\);/);
+    expect(managedRuntime).toMatch(/createLaneService\(\{[\s\S]*?\boperationQueue,\s*\}\);/);
+  });
+
+  it('workspace folder reconciliation を runtime 共通 queue へ載せる', () => {
+    const listener = managedRuntime.slice(
+      managedRuntime.indexOf('vscode.workspace.onDidChangeWorkspaceFolders'),
+      managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
+    );
+
+    expect(listener).toMatch(/operationQueue\.enqueue\(async \(\) => \{/);
+    expect(listener).toMatch(
+      /operationQueue\.enqueue\(async \(\) => \{\s*await laneService\.finalizePendingOperations\(\);/,
+    );
+  });
+
+  it('Reload を runtime 共通 queue へ載せる', () => {
+    const reload = managedRuntime.slice(
+      managedRuntime.indexOf("'projectLanes.reloadLanes'"),
+      managedRuntime.indexOf("'projectLanes.switchLane'"),
+    );
+
+    expect(reload).toMatch(/operationQueue\.enqueue\(async \(\) => \{/);
+    expect(reload).toMatch(
+      /operationQueue\.enqueue\(async \(\) => \{\s*await laneService\.finalizePendingOperations\(\);/,
+    );
+  });
+
+  it('selection 初期化の完了を待って runtime を公開する', () => {
+    expect(managedRuntime).toMatch(/const createManagedRuntime = async/);
+    expect(managedRuntime).toMatch(/await laneService\.initialize\(\);/);
+  });
+
+  it('公開 switch の transition failure を共通失敗境界へ渡す', () => {
+    const switchCommand = managedRuntime.slice(
+      managedRuntime.indexOf("'projectLanes.switchLane'"),
+      managedRuntime.indexOf("'projectLanes.closeTerminals'"),
+    );
+
+    expect(switchCommand).toMatch(/runAsyncBoundary\(/);
+    expect(switchCommand).toMatch(/if \(result\.kind === 'failed'\) throw result\.error;/);
+    expect(switchCommand).toMatch(/reportAsyncFailure/);
+  });
+
+  it('横断検索の transition failure を共通失敗境界へ渡す', () => {
+    const searchCommands = managedRuntime.slice(
+      managedRuntime.indexOf("'projectLanes.findInLanes'"),
+      managedRuntime.indexOf('return { commands'),
+    );
+
+    expect(searchCommands).toMatch(
+      /'projectLanes\.findInLanes': \(\) =>\s*runAsyncBoundary\(\(\) => laneSearchService\.findInLanes\(\), reportAsyncFailure\)/,
+    );
+    expect(searchCommands).toMatch(
+      /'projectLanes\.goToFileInLanes': \(\) =>\s*runAsyncBoundary\(\(\) => laneSearchService\.goToFileInLanes\(\), reportAsyncFailure\)/,
+    );
+  });
+});
+
 describe('未管理 workspace の公開初期化契約', () => {
   const repoRoot = nodePath.resolve(SRC_ROOT, '..');
   const packageJsonPath = nodePath.join(repoRoot, 'package.json');
