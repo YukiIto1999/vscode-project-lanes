@@ -2,11 +2,24 @@ import * as vscode from 'vscode';
 import type { UriString } from '../../foundation/model';
 import type { LanePromptPort } from '../../lane/ports';
 
+const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
+const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
+const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
+
+interface PromptAdapterOptions {
+  readonly extensionMode?: vscode.ExtensionMode;
+  readonly environment?: Readonly<Record<string, string | undefined>>;
+}
+
 /**
  * VS Code QuickPick / InputBox / WarningMessage 経由の対話アダプターの生成
+ * @param options - runtime mode と process environment
  * @returns ユーザー対話ポート
  */
-export const createPromptAdapter = (): LanePromptPort => ({
+export const createPromptAdapter = ({
+  extensionMode = vscode.ExtensionMode.Production,
+  environment = process.env,
+}: PromptAdapterOptions = {}): LanePromptPort => ({
   pickLane: async (lanes) => {
     const picked = await vscode.window.showQuickPick(
       lanes.map((l) => ({ label: l.label, laneId: l.id })),
@@ -57,6 +70,28 @@ export const createPromptAdapter = (): LanePromptPort => ({
       defaultUri: vscode.Uri.file(defaultDirectory),
     });
     return (picked ?? []).map((uri) => uri.toString() as UriString);
+  },
+
+  pickReplacementFolder: async (defaultDirectory) => {
+    const dialogOptions: vscode.OpenDialogOptions = {
+      title: 'Locate Lane Folder',
+      openLabel: 'Locate Folder',
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      defaultUri: vscode.Uri.file(defaultDirectory),
+    };
+    const useE2eDriver =
+      extensionMode === vscode.ExtensionMode.Development &&
+      Boolean(environment[E2E_PAYLOAD_KEY]) &&
+      Boolean(environment[E2E_RUN_KEY]);
+    const picked = useE2eDriver
+      ? await vscode.commands.executeCommand<vscode.Uri | undefined>(
+          E2E_PICK_REPLACEMENT_FOLDER_COMMAND,
+          dialogOptions,
+        )
+      : (await vscode.window.showOpenDialog(dialogOptions))?.[0];
+    return picked?.toString() as UriString | undefined;
   },
 
   warnAddFolderFailed: () => {

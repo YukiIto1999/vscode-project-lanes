@@ -4,10 +4,12 @@ import { uriToAbsolutePath } from '../../foundation/path';
 import type { FolderMutation, WorkspaceFolder } from '../../workspace/model';
 import type {
   DirectoryPort,
+  LaneRootAvailabilityPort,
   WorkspaceFilePort,
   WorkspaceHostPort,
   WorkspaceSettingsPort,
 } from '../../workspace/ports';
+import { createLaneRootAvailabilityInspector } from '../../workspace/root-availability';
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 import { createQueuedWorkspaceHost } from './workspace-host';
@@ -94,12 +96,24 @@ export const createDirectoryAdapter = (): DirectoryPort => ({
   ensureDirectory: (path) => {
     try {
       fs.mkdirSync(path, { recursive: true });
-      return true;
+      const stats = fs.lstatSync(path);
+      return stats.isDirectory() && !stats.isSymbolicLink();
     } catch {
       return false;
     }
   },
 });
+
+/**
+ * Node filesystem 経由のレーンルート利用可否アダプターの生成
+ * @returns 同期検査ポート
+ */
+export const createLaneRootAvailabilityAdapter = (): LaneRootAvailabilityPort =>
+  createLaneRootAvailabilityInspector({
+    stat: (path) => fs.statSync(path),
+    access: (path, mode) => fs.accessSync(path, mode),
+    readExecuteAccessMode: fs.constants.R_OK | fs.constants.X_OK,
+  });
 
 /**
  * VS Code ワークスペース設定アダプターの生成

@@ -34,6 +34,26 @@ const hasErrorCode = (error: unknown, code: string): boolean =>
   error instanceof Error && 'code' in error && error.code === code;
 
 /**
+ * active link の親 anchor が実ディレクトリか検査
+ * @param linkPath - 対象 symlink 絶対パス
+ * @returns 親 anchor が存在すれば true、未作成なら false
+ */
+const inspectLinkParent = (linkPath: AbsolutePath): boolean => {
+  const parentPath = nodePath.dirname(linkPath);
+  let stats: fs.Stats;
+  try {
+    stats = fs.lstatSync(parentPath);
+  } catch (error) {
+    if (hasErrorCode(error, 'ENOENT')) return false;
+    throw error;
+  }
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`Workspace link parent is not a real directory: ${parentPath}`);
+  }
+  return true;
+};
+
+/**
  * 同ディレクトリ内のユニークなステージング絶対パス生成
  * @param linkPath - 対象 symlink 絶対パス
  * @returns 原子的入替で経由するステージング絶対パス
@@ -50,6 +70,7 @@ const stagingPathFor = (linkPath: AbsolutePath): AbsolutePath => {
  */
 export const createSymlinkOps = (): SymlinkOps => ({
   read: (linkPath) => {
+    if (!inspectLinkParent(linkPath)) return undefined;
     try {
       return fs.readlinkSync(linkPath) as AbsolutePath;
     } catch (error) {
@@ -59,6 +80,9 @@ export const createSymlinkOps = (): SymlinkOps => ({
   },
 
   replace: (linkPath, targetPath) => {
+    if (!inspectLinkParent(linkPath)) {
+      throw new Error(`Workspace link parent does not exist: ${nodePath.dirname(linkPath)}`);
+    }
     const stagingPath = stagingPathFor(linkPath);
     fs.symlinkSync(targetPath, stagingPath);
     try {
@@ -74,6 +98,7 @@ export const createSymlinkOps = (): SymlinkOps => ({
   },
 
   clear: (linkPath) => {
+    if (!inspectLinkParent(linkPath)) return;
     let stats: fs.Stats;
     try {
       stats = fs.lstatSync(linkPath);

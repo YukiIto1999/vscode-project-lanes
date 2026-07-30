@@ -1,5 +1,8 @@
 import type { AbsolutePath, LaneId, UriString } from '../foundation/model';
 
+/** レーンルートの現在の利用可否 */
+export type LaneRootAvailability = 'available' | 'missing' | 'inaccessible';
+
 /**
  * ラベルから LaneId への変換
  * @param label - 表示ラベル
@@ -61,7 +64,7 @@ export type LaneFocusPlan =
       /** 実行阻害 */
       readonly kind: 'blocked';
       /** 阻害理由 */
-      readonly reason: 'dirty-editors' | 'reconciliation-required';
+      readonly reason: 'dirty-editors' | 'reconciliation-required' | 'root-unavailable';
     }
   | {
       /** 切替失敗 */

@@ -13,7 +13,7 @@ const makeLane = (id: string): Lane => ({
 describe('planLaneFocus', () => {
   it('同一レーンへの切替は noop', () => {
     const lane = makeLane('web');
-    expect(planLaneFocus(lane, lane, false)).toEqual({
+    expect(planLaneFocus(lane, lane, 'available', true)).toEqual({
       kind: 'noop',
       reason: 'same-lane',
     });
@@ -21,7 +21,7 @@ describe('planLaneFocus', () => {
 
   it('ターゲットが未定義なら noop', () => {
     const lane = makeLane('web');
-    expect(planLaneFocus(lane, undefined, false)).toEqual({
+    expect(planLaneFocus(lane, undefined, 'missing', false)).toEqual({
       kind: 'noop',
       reason: 'no-target',
     });
@@ -30,7 +30,7 @@ describe('planLaneFocus', () => {
   it('未保存エディタがあれば blocked', () => {
     const from = makeLane('web');
     const to = makeLane('api');
-    expect(planLaneFocus(from, to, true)).toEqual({
+    expect(planLaneFocus(from, to, 'available', true)).toEqual({
       kind: 'blocked',
       reason: 'dirty-editors',
     });
@@ -39,7 +39,7 @@ describe('planLaneFocus', () => {
   it('異なるレーンへの切替は focus', () => {
     const from = makeLane('web');
     const to = makeLane('api');
-    expect(planLaneFocus(from, to, false)).toEqual({
+    expect(planLaneFocus(from, to, 'available', false)).toEqual({
       kind: 'focus',
       from,
       to,
@@ -48,10 +48,32 @@ describe('planLaneFocus', () => {
 
   it('from が undefined でも focus 可能', () => {
     const to = makeLane('api');
-    expect(planLaneFocus(undefined, to, false)).toEqual({
+    expect(planLaneFocus(undefined, to, 'available', false)).toEqual({
       kind: 'focus',
       from: undefined,
       to,
+    });
+  });
+
+  it.each(['missing', 'inaccessible'] as const)(
+    '切替先 root が %s なら dirty editor より先に blocked',
+    (availability) => {
+      const from = makeLane('web');
+      const to = makeLane('api');
+
+      expect(planLaneFocus(from, to, availability, true)).toEqual({
+        kind: 'blocked',
+        reason: 'root-unavailable',
+      });
+    },
+  );
+
+  it('同一レーンでも root が missing なら blocked', () => {
+    const target = makeLane('web');
+
+    expect(planLaneFocus(target, target, 'missing', false)).toEqual({
+      kind: 'blocked',
+      reason: 'root-unavailable',
     });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AbsolutePath, LaneId, UriString, WorkspaceKey } from '../foundation/model';
-import type { WorkspaceLinkPort } from '../workspace/ports';
+import type { LaneRootAvailabilityPort, WorkspaceLinkPort } from '../workspace/ports';
 import { createLaneFocusTransaction } from './focus-transaction';
 import type { EditorSnapshot, Lane, LaneCatalog } from './model';
 import type {
@@ -21,6 +21,11 @@ const lane = (id: string): Lane => ({
 
 const sourceLane = lane('web');
 const targetLane = lane('api');
+const relocatedSourceLane: Lane = {
+  ...sourceLane,
+  rootUri: 'file:///moved/web' as UriString,
+  rootPath: '/moved/web' as AbsolutePath,
+};
 const catalog: LaneCatalog = {
   lanes: [sourceLane, targetLane],
   byId: new Map([
@@ -52,11 +57,13 @@ const createHarness = ({
   dirty = false,
   activeLaneId = sourceLane.id,
   failures = [],
+  rootAvailability = 'available',
 }: {
   readonly linkTarget?: AbsolutePath;
   readonly dirty?: boolean;
   readonly activeLaneId?: LaneId;
   readonly failures?: readonly FailureStep[];
+  readonly rootAvailability?: ReturnType<LaneRootAvailabilityPort['inspect']>;
 } = {}) => {
   const events: string[] = [];
   const failing = new Set(failures);
@@ -93,11 +100,13 @@ const createHarness = ({
       if (!source && failing.has('target-restore')) throw errors.targetRestore;
     },
   };
+  const snapshots = new Map<LaneId, EditorSnapshot>([[targetLane.id, targetSnapshot]]);
   const editorStore: LaneSessionStore = {
-    save: () => {
+    save: (laneId, snapshot) => {
       events.push('source:save');
+      snapshots.set(laneId, snapshot);
     },
-    get: (laneId) => (laneId === targetLane.id ? targetSnapshot : undefined),
+    get: (laneId) => snapshots.get(laneId),
     rekey: () => {},
     clear: () => {},
   };
@@ -110,7 +119,7 @@ const createHarness = ({
     swap: (target) => {
       events.push(target === sourceLane.rootPath ? 'link:web' : 'link:api');
       if (target === sourceLane.rootPath && failing.has('source-swap')) throw errors.sourceSwap;
-      if (target === targetLane.rootPath && failing.has('swap')) throw errors.swap;
+      if (target !== sourceLane.rootPath && failing.has('swap')) throw errors.swap;
       currentLinkTarget = target;
     },
     clear: () => {
@@ -119,7 +128,7 @@ const createHarness = ({
   };
   const viewRebind: LaneViewRebindPort = {
     rebindActiveFolder: async (activeLane) => {
-      const source = activeLane.id === sourceLane.id;
+      const source = activeLane.rootPath === sourceLane.rootPath;
       events.push(source ? 'view:web' : 'view:api');
       if (source && failing.has('source-rebind')) throw errors.sourceRebind;
       if (!source && failing.has('target-rebind-throw')) throw errors.targetRebind;
@@ -140,6 +149,12 @@ const createHarness = ({
     },
     closeLane: async () => {},
   };
+  const availability: LaneRootAvailabilityPort = {
+    inspect: () => {
+      events.push('validate:root');
+      return rootAvailability;
+    },
+  };
   const transaction = createLaneFocusTransaction({
     getCatalog: () => {
       events.push('validate:catalog');
@@ -152,6 +167,7 @@ const createHarness = ({
     viewRebind,
     selectionStore,
     terminal,
+    rootAvailability: availability,
     commitActiveLane: (laneId) => {
       events.push(`commit:${laneId}`);
       currentActiveLaneId = laneId;
@@ -180,6 +196,7 @@ describe('createLaneFocusTransaction', () => {
     expect(h.events).toEqual([
       'validate:catalog',
       'validate:link',
+      'validate:root',
       'validate:dirty',
       'source:capture',
       'source:save',
@@ -212,8 +229,163 @@ describe('createLaneFocusTransaction', () => {
       kind: 'blocked',
       reason: 'dirty-editors',
     });
-    expect(h.events).toEqual(['validate:catalog', 'validate:link', 'validate:dirty']);
+    expect(h.events).toEqual([
+      'validate:catalog',
+      'validate:link',
+      'validate:root',
+      'validate:dirty',
+    ]);
   });
+
+  it('active root relocation は dirty editor があれば catalog commit 前に blocked を返す', async () => {
+    const h = createHarness({ dirty: true });
+
+    await expect(
+      h.transaction.relocateActive(sourceLane, relocatedSourceLane, async () => {
+        h.events.push('catalog:commit');
+      }),
+    ).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'dirty-editors',
+    });
+    expect(h.events).toEqual(['validate:link', 'validate:root', 'validate:dirty']);
+  });
+
+  it('active root relocation は link と view の確定後に catalog を commit する', async () => {
+    const h = createHarness();
+
+    await expect(
+      h.transaction.relocateActive(sourceLane, relocatedSourceLane, async () => {
+        h.events.push('catalog:commit');
+      }),
+    ).resolves.toEqual({
+      kind: 'focus',
+      from: sourceLane,
+      to: relocatedSourceLane,
+    });
+    expect(h.events).toEqual([
+      'validate:link',
+      'validate:root',
+      'validate:dirty',
+      'source:capture',
+      'source:save',
+      'source:close',
+      'link:api',
+      'view:api',
+      'catalog:commit',
+      'commit:web',
+      'selection:web',
+      'terminal:web',
+      'tabs:web',
+    ]);
+    expect(h.currentActiveLaneId()).toBe(sourceLane.id);
+    expect(h.currentLinkTarget()).toBe(relocatedSourceLane.rootPath);
+  });
+
+  it('active root relocation の catalog commit failure は source tabs を復元する', async () => {
+    const h = createHarness();
+    const failure = new Error('catalog commit failed');
+
+    const result = await h.transaction.relocateActive(sourceLane, relocatedSourceLane, async () => {
+      h.events.push('catalog:commit');
+      throw failure;
+    });
+
+    expect(result).toEqual({
+      kind: 'failed',
+      reason: 'transition-failed',
+      error: failure,
+    });
+    expect(h.events.slice(-6)).toEqual([
+      'link:api',
+      'view:api',
+      'catalog:commit',
+      'link:web',
+      'view:web',
+      'tabs:web',
+    ]);
+    expect(h.currentLinkTarget()).toBe(sourceLane.rootPath);
+  });
+
+  it('active root relocation の catalog publish 後 listener failure は target を確定する', async () => {
+    const h = createHarness();
+    const failure = new Error('catalog listener failed');
+    let catalogPublished = false;
+
+    const result = await h.transaction.relocateActive(
+      sourceLane,
+      relocatedSourceLane,
+      async () => {
+        catalogPublished = true;
+        throw failure;
+      },
+      () => catalogPublished,
+    );
+
+    expect(result).toEqual({
+      kind: 'focus',
+      from: sourceLane,
+      to: relocatedSourceLane,
+    });
+    expect(h.currentLinkTarget()).toBe(relocatedSourceLane.rootPath);
+    expect(h.events).not.toContain('link:web');
+  });
+
+  it('active root relocation の tabs close failure は catalog を変更しない', async () => {
+    const h = createHarness({ failures: ['close'] });
+
+    await h.transaction.relocateActive(sourceLane, relocatedSourceLane, async () => {
+      h.events.push('catalog:commit');
+    });
+
+    expect(h.events).not.toContain('catalog:commit');
+  });
+
+  it('active root relocation の link failure は source を復元して catalog を変更しない', async () => {
+    const h = createHarness({ failures: ['swap'] });
+
+    const result = await h.transaction.relocateActive(sourceLane, relocatedSourceLane, async () => {
+      h.events.push('catalog:commit');
+    });
+
+    expect(result.kind).toBe('failed');
+    expect(h.events).not.toContain('catalog:commit');
+    expect(h.events.slice(-3)).toEqual(['link:web', 'view:web', 'tabs:web']);
+    expect(h.currentLinkTarget()).toBe(sourceLane.rootPath);
+  });
+
+  it('available な同一レーンなら dirty 判定を実行せず noop を返す', async () => {
+    const h = createHarness({ dirty: true });
+
+    await expect(h.transaction.focus(sourceLane.id)).resolves.toEqual({
+      kind: 'noop',
+      reason: 'same-lane',
+    });
+    expect(h.events).toEqual(['validate:catalog', 'validate:link', 'validate:root']);
+  });
+
+  it('同一レーンでも root が missing なら dirty 判定より先に blocked を返す', async () => {
+    const h = createHarness({ dirty: true, rootAvailability: 'missing' });
+
+    await expect(h.transaction.focus(sourceLane.id)).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'root-unavailable',
+    });
+    expect(h.events).toEqual(['validate:catalog', 'validate:link', 'validate:root']);
+  });
+
+  it.each(['missing', 'inaccessible'] as const)(
+    'target root が %s なら dirty 判定と tabs close より前に blocked を返す',
+    async (rootAvailability) => {
+      const h = createHarness({ dirty: true, rootAvailability });
+
+      await expect(h.transaction.focus(targetLane.id)).resolves.toEqual({
+        kind: 'blocked',
+        reason: 'root-unavailable',
+      });
+      expect(h.events).toEqual(['validate:catalog', 'validate:link', 'validate:root']);
+    },
+  );
 
   it.each([
     ['link swap throw', 'swap'],

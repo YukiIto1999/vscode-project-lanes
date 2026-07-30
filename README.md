@@ -28,6 +28,7 @@ Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Ini
   - Detection is a generic heuristic over OSC 633 shell integration (bash / zsh) and real-time PTY output observation; not specific to any agent
 - Lane management
   - Add folders as lanes and reconcile the active lane from title-bar icons on the Lanes panel
+  - Re-associate a missing or inaccessible lane with a readable folder; available lanes cannot be relocated
   - Rename or remove a lane via right-click on the lane item. Rename preserves the lane's terminal sessions; remove rejects the active lane and never touches the folder on disk
 
 ## Commands
@@ -38,6 +39,7 @@ Project Lanes leaves a new workspace unchanged until you run `Project Lanes: Ini
 | `Project Lanes: Switch Lane`             | Switch to a lane                                                                  |
 | `Project Lanes: Add Folder to Workspace` | Add a folder as a new lane via a folder picker rooted at the active lane's parent |
 | `Project Lanes: Reload Lanes`            | Absorb added workspace folders and reconcile the active link and selection cache  |
+| `Project Lanes: Locate Folder`           | Re-associate a missing or inaccessible lane with a readable folder                |
 | `Project Lanes: Rename Lane`             | Rename the selected lane's label (the lane's id changes to match)                 |
 | `Project Lanes: Remove Lane`             | Remove the selected lane from the catalog (the folder on disk is left untouched)  |
 | `Project Lanes: Close Terminals`         | Kill all terminal sessions for the active lane                                    |

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { UriString } from '../foundation/model';
+import type { LaneId, UriString } from '../foundation/model';
 import type { LaneCatalog } from '../lane/model';
 import type { WorkspaceFolder } from './model';
 import type { CatalogStorePort } from './ports';
@@ -141,6 +141,110 @@ describe('createCatalogRegistry', () => {
     const registry = createCatalogRegistry(initial, store);
     await expect(registry.rename('missing', 'other')).resolves.toBe(false);
     expect(store.saved()).toBeUndefined();
+  });
+
+  it('relocate: name、LaneId、順序を維持して uri だけを書き換える', async () => {
+    const initial = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+    const seen: LaneCatalog[] = [];
+    registry.onChange((catalog) => seen.push(catalog));
+    const replacementUri = toUri('/moved/web');
+
+    await expect(registry.relocate('web' as LaneId, replacementUri)).resolves.toBe(true);
+
+    const expected = [{ name: 'web', uri: replacementUri }, mkFolder('api', '/home/user/api')];
+    expect(registry.folders()).toEqual(expected);
+    expect(registry.snapshot().lanes.map((lane) => lane.id)).toEqual(['web', 'api']);
+    expect(registry.snapshot().lanes.map((lane) => lane.rootUri)).toEqual([
+      replacementUri,
+      toUri('/home/user/api'),
+    ]);
+    expect(store.saved()).toEqual(expected);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('relocate: 同じ uri は noop', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+
+    await expect(registry.relocate('web' as LaneId, initial[0]!.uri)).resolves.toBe(false);
+
+    expect(store.saved()).toBeUndefined();
+  });
+
+  it('relocate: 未知の LaneId は noop', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const store = makeStore();
+    const registry = createCatalogRegistry(initial, store);
+
+    await expect(registry.relocate('missing' as LaneId, toUri('/moved/web'))).resolves.toBe(false);
+
+    expect(store.saved()).toBeUndefined();
+  });
+
+  it('relocate: 保存完了前は置換後 snapshot を公開しない', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const pending = deferred();
+    const registry = createCatalogRegistry(
+      initial,
+      makeStore(undefined, () => pending.promise),
+    );
+    const seen: LaneCatalog[] = [];
+    registry.onChange((catalog) => seen.push(catalog));
+
+    const relocating = registry.relocate('web' as LaneId, toUri('/moved/web'));
+    await Promise.resolve();
+
+    expect(registry.folders()).toEqual(initial);
+    expect(registry.snapshot().lanes[0]!.rootPath).toBe('/home/user/web');
+    expect(seen).toHaveLength(0);
+
+    pending.resolve();
+    await expect(relocating).resolves.toBe(true);
+    expect(registry.snapshot().lanes[0]!.rootPath).toBe('/moved/web');
+    expect(seen).toHaveLength(1);
+  });
+
+  it('relocate: 保存失敗時は置換後 snapshot を公開しない', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const failure = new Error('save failed');
+    const registry = createCatalogRegistry(
+      initial,
+      makeStore(undefined, () => Promise.reject(failure)),
+    );
+    const seen: LaneCatalog[] = [];
+    registry.onChange((catalog) => seen.push(catalog));
+
+    await expect(registry.relocate('web' as LaneId, toUri('/moved/web'))).rejects.toBe(failure);
+
+    expect(registry.folders()).toEqual(initial);
+    expect(registry.snapshot().lanes[0]!.rootPath).toBe('/home/user/web');
+    expect(seen).toHaveLength(0);
+  });
+
+  it('concurrent relocate を直列保存し、後続は最新 uri を置換する', async () => {
+    const initial = [mkFolder('web', '/home/user/web')];
+    const firstSave = deferred();
+    const savedUris: UriString[] = [];
+    const store = makeStore(undefined, async (folders) => {
+      savedUris.push(folders[0]!.uri);
+      if (savedUris.length === 1) await firstSave.promise;
+    });
+    const registry = createCatalogRegistry(initial, store);
+
+    const first = registry.relocate('web' as LaneId, toUri('/moved/web-1'));
+    const second = registry.relocate('web' as LaneId, toUri('/moved/web-2'));
+    await Promise.resolve();
+
+    expect(savedUris).toEqual([toUri('/moved/web-1')]);
+
+    firstSave.resolve();
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(savedUris).toEqual([toUri('/moved/web-1'), toUri('/moved/web-2')]);
+    expect(registry.snapshot().lanes[0]!.rootPath).toBe('/moved/web-2');
   });
 
   it('remove: 既存レーンを除外して通知 + 保存', async () => {
