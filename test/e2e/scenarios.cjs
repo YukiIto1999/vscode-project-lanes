@@ -56,6 +56,22 @@ const scenarios = Object.freeze([
       Object.freeze({ phase: 'restart' }),
     ]),
   }),
+  Object.freeze({
+    name: 'active-lane-reconciliation',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'active-lane-reconciliation'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'active-lane-reconciliation',
+      'active-lane-reconciliation.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'active-lane-reconciliation.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'prepare-stale-cache' }),
+      Object.freeze({ phase: 'reload-and-remove-link' }),
+      Object.freeze({ phase: 'restore-missing-link' }),
+    ]),
+  }),
 ]);
 
 const resolveScenarios = (requestedNames, availableScenarios = scenarios) => {

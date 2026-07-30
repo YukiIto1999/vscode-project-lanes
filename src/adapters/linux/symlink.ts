@@ -8,7 +8,7 @@ export interface SymlinkOps {
   /**
    * symlink の参照先取得
    * @param linkPath - 対象 symlink 絶対パス
-   * @returns 参照先絶対パス、または読込不可で undefined
+   * @returns 参照先絶対パス、または未作成なら undefined
    */
   readonly read: (linkPath: AbsolutePath) => AbsolutePath | undefined;
   /**
@@ -17,7 +17,21 @@ export interface SymlinkOps {
    * @param targetPath - 新しい参照先絶対パス
    */
   readonly replace: (linkPath: AbsolutePath, targetPath: AbsolutePath) => void;
+  /**
+   * symlink の削除。未作成は成功、非 symlink または削除失敗では例外
+   * @param linkPath - 対象 symlink 絶対パス
+   */
+  readonly clear: (linkPath: AbsolutePath) => void;
 }
+
+/**
+ * unknown な例外が指定したファイルシステムエラーコードを持つか判定
+ * @param error - 判定対象
+ * @param code - Node.js ファイルシステムエラーコード
+ * @returns 指定コードを持つ Error なら true
+ */
+const hasErrorCode = (error: unknown, code: string): boolean =>
+  error instanceof Error && 'code' in error && error.code === code;
 
 /**
  * 同ディレクトリ内のユニークなステージング絶対パス生成
@@ -38,8 +52,9 @@ export const createSymlinkOps = (): SymlinkOps => ({
   read: (linkPath) => {
     try {
       return fs.readlinkSync(linkPath) as AbsolutePath;
-    } catch {
-      return undefined;
+    } catch (error) {
+      if (hasErrorCode(error, 'ENOENT')) return undefined;
+      throw error;
     }
   },
 
@@ -57,6 +72,26 @@ export const createSymlinkOps = (): SymlinkOps => ({
       throw renameError;
     }
   },
+
+  clear: (linkPath) => {
+    let stats: fs.Stats;
+    try {
+      stats = fs.lstatSync(linkPath);
+    } catch (error) {
+      if (hasErrorCode(error, 'ENOENT')) return;
+      throw error;
+    }
+    if (!stats.isSymbolicLink()) {
+      throw new Error(`Workspace link path is not a symbolic link: ${linkPath}`);
+    }
+
+    try {
+      fs.unlinkSync(linkPath);
+    } catch (error) {
+      if (hasErrorCode(error, 'ENOENT')) return;
+      throw error;
+    }
+  },
 });
 
 /**
@@ -70,5 +105,6 @@ export const createWorkspaceLinkAdapter = (linkPath: AbsolutePath): WorkspaceLin
     linkPath,
     readTarget: () => ops.read(linkPath),
     swap: (target) => ops.replace(linkPath, target),
+    clear: () => ops.clear(linkPath),
   };
 };

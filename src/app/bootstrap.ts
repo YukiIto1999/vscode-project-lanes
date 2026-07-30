@@ -46,13 +46,9 @@ import type {
   WorkspaceFileInfo,
 } from '../workspace/model';
 import type { CatalogStorePort, WorkspaceHostPort, WorkspaceLinkPort } from '../workspace/ports';
-import { reconcileUserChange } from '../workspace/reconciler';
+import { createWorkspaceFolderReconciler } from '../workspace/reconciler';
 import { createCatalogRegistry } from '../workspace/registry';
-import {
-  bootstrapWorkspace,
-  collapseFoldersToLink,
-  collectLaneCandidates,
-} from '../workspace/scanner';
+import { bootstrapWorkspace } from '../workspace/scanner';
 import { runAsyncBoundary } from './async-boundary';
 import { createAsyncFailureReporter } from './async-failure-reporter';
 import {
@@ -64,6 +60,11 @@ import {
 } from './initialization-coordinator';
 import { createManagedCommandProxy } from './managed-command-proxy';
 import type { ConfigPort } from './model';
+import {
+  createRuntimeReconciler,
+  isWorkspaceMutationReconciliationError,
+} from './runtime-reconciliation';
+import { createWorkspaceMutationFailureReporter } from './workspace-mutation-failure-reporter';
 import { workspaceWarningMessage } from './workspace-warning';
 
 const INITIALIZE_ACTION = 'Initialize Workspace';
@@ -75,6 +76,11 @@ const MISSING_LANE_GUIDANCE =
   'Project Lanes: Add at least one folder to the workspace before initializing it.';
 const OPERATION_FAILURE_MESSAGE =
   'Project Lanes operation failed. See the Developer Tools console for details.';
+
+const reportWorkspaceMutationFailure = createWorkspaceMutationFailureReporter({
+  log: (message, error) => console.error(message, error),
+  notify: (message) => vscode.window.showWarningMessage(message),
+});
 
 type ManagedCommandId =
   | 'projectLanes.switchLane'
@@ -251,6 +257,10 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     });
     track({ dispose: () => terminalService.dispose() });
 
+    const reportAsyncFailure = createAsyncFailureReporter({
+      log: (message, error) => console.error(message, error),
+      notify: () => vscode.window.showErrorMessage(OPERATION_FAILURE_MESSAGE),
+    });
     const laneService = createLaneService({
       getCatalog: () => registry.snapshot(),
       workspaceKey: workspaceContext.key,
@@ -268,7 +278,10 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       editorStore: createLaneSessionStore(),
       operationQueue,
     });
-    await laneService.initialize();
+    const initialReconciliation = await laneService.reconcileActiveLane();
+    if (initialReconciliation.kind === 'active' && initialReconciliation.cache === 'pending') {
+      await reportAsyncFailure(initialReconciliation.error);
+    }
 
     const laneSearchService = createLaneSearchService({
       getCatalog: () => registry.snapshot(),
@@ -297,13 +310,37 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       statusBar.render(snapshot.statusBar);
     };
 
+    const workspaceFolderReconciler = createWorkspaceFolderReconciler({
+      operationQueue,
+      workspaceHost,
+      getCurrentLanes: () => registry.folders(),
+      getActiveLabel: () => {
+        const activeId = laneService.snapshot().activeLaneId;
+        return (activeId && registry.snapshot().byId.get(activeId)?.label) || 'Project Lanes';
+      },
+      absorb: (additions) => registry.absorb(additions).then(() => undefined),
+      finalizePendingOperations: () => laneService.finalizePendingOperations(),
+      linkPath: link.linkPath,
+      linkUri: toUri(link.linkPath),
+    });
+    const runtimeReconciler = createRuntimeReconciler({
+      reconcileWorkspaceFolders: () => workspaceFolderReconciler.reconcileWorkspaceFolders(),
+      reconcileActiveLane: () => laneService.reconcileActiveLane(),
+      getActiveLaneId: () => laneService.snapshot().activeLaneId,
+      getLane: (laneId) => registry.snapshot().byId.get(laneId),
+      revealLane: async (lane) => terminalService.revealLane(lane),
+      render,
+      reportPendingCache: reportAsyncFailure,
+      reportWorkspaceMutationRejected: (error) =>
+        reportWorkspaceMutationFailure(
+          'Project Lanes workspace folder reconciliation failed.',
+          error ?? new Error('workspace-folder-mutation-rejected'),
+        ),
+    });
+
     track(laneActivity.onChange(render));
     track(registry.onChange(render));
     track(config.onDidChange(() => render()));
-    const reportAsyncFailure = createAsyncFailureReporter({
-      log: (message, error) => console.error(message, error),
-      notify: () => vscode.window.showErrorMessage(OPERATION_FAILURE_MESSAGE),
-    });
 
     render();
     const initialLane = laneService.snapshot().activeLaneId;
@@ -314,27 +351,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
 
     track(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
-        void runAsyncBoundary(
-          () =>
-            operationQueue.enqueue(async () => {
-              await laneService.finalizePendingOperations();
-              const activeId = laneService.snapshot().activeLaneId;
-              const activeLane = activeId ? registry.snapshot().byId.get(activeId) : undefined;
-              const rawFolders = workspaceHost.readFolders();
-              const action = reconcileUserChange({
-                rawFolders,
-                currentLanes: registry.folders(),
-                linkPath: link.linkPath,
-                activeLabel: activeLane?.label ?? 'Project Lanes',
-                linkUri: toUri(link.linkPath),
-              });
-              if (action.kind === 'noop') return;
-
-              await registry.absorb(action.additions);
-              await collapseFoldersToLink(workspaceHost, rawFolders, action.collapsedFolder);
-            }),
-          reportAsyncFailure,
-        );
+        void runAsyncBoundary(() => runtimeReconciler.reconcile(), reportAsyncFailure);
       }),
     );
 
@@ -386,27 +403,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       'projectLanes.removeLane': ([argument]) =>
         runAsyncBoundary(() => laneService.removeLane(extractLaneId(argument)), reportAsyncFailure),
       'projectLanes.reloadLanes': () =>
-        runAsyncBoundary(
-          () =>
-            operationQueue.enqueue(async () => {
-              await laneService.finalizePendingOperations();
-              const newLanes = collectLaneCandidates(
-                workspaceHost.readFolders(),
-                catalogStore.load(),
-                link.linkPath,
-              );
-              const previousActiveId = laneService.snapshot().activeLaneId;
-              await registry.replace(newLanes);
-              await laneService.initialize();
-              const nextActiveId = laneService.snapshot().activeLaneId;
-              if (nextActiveId && nextActiveId !== previousActiveId) {
-                const lane = registry.snapshot().byId.get(nextActiveId);
-                if (lane) terminalService.revealLane(lane);
-              }
-              render();
-            }),
-          reportAsyncFailure,
-        ),
+        runAsyncBoundary(() => runtimeReconciler.reconcile(), reportAsyncFailure),
       'projectLanes.switchLane': ([laneId]) =>
         runAsyncBoundary(async () => {
           const result = await laneService.focus(
@@ -481,7 +478,6 @@ export const bootstrapRuntime = async (
         catalogStore,
         directory,
         resources.link,
-        toUri,
       );
       if (result.kind === 'disabled') return result;
 
@@ -516,6 +512,10 @@ export const bootstrapRuntime = async (
       await vscode.commands.executeCommand('setContext', 'projectLanes.workspaceStatus', status);
     },
     reportFailure: async (error) => {
+      if (isWorkspaceMutationReconciliationError(error)) {
+        await reportWorkspaceMutationFailure('Project Lanes initialization failed.', error);
+        return;
+      }
       console.error('Project Lanes initialization failed.', error);
       await vscode.window.showErrorMessage(OPERATION_FAILURE_MESSAGE);
     },

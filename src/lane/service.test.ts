@@ -12,7 +12,7 @@ import type {
   LaneTerminalPort,
   LaneViewRebindPort,
 } from './ports';
-import { createLaneService } from './service';
+import { ActiveLaneReconciliationError, createLaneService } from './service';
 
 const workspaceKey = 'workspace:test' as WorkspaceKey;
 const linkPath = '/repo/.lanes-root/active' as AbsolutePath;
@@ -41,6 +41,7 @@ const createPausedQueue = () => {
 };
 
 const createHarness = ({
+  initial = [toFolder('web'), toFolder('api')],
   saveCatalog = async () => {},
   closeLane = async () => {},
   revealLane = async () => {},
@@ -50,11 +51,17 @@ const createHarness = ({
   operationQueue: operationQueueOverride,
   rebindActiveFolder = async () => true,
   linkTarget = '/repo/web' as AbsolutePath,
+  readLinkTarget,
+  swapLink = () => {},
+  clearLink = () => {},
   warnDirtyEditors = () => {},
+  loadSelection,
+  selectionLaneId = 'web' as LaneId,
   saveSelection = async () => {},
   rekeyTerminal = () => {},
   rekeyEditor = () => {},
 }: {
+  readonly initial?: readonly WorkspaceFolder[];
   readonly saveCatalog?: CatalogStorePort['save'];
   readonly closeLane?: LaneTerminalPort['closeLane'];
   readonly revealLane?: LaneTerminalPort['revealLane'];
@@ -63,21 +70,32 @@ const createHarness = ({
   readonly confirmRemoval?: LanePromptPort['confirmRemoval'];
   readonly operationQueue?: OperationQueue;
   readonly rebindActiveFolder?: LaneViewRebindPort['rebindActiveFolder'];
-  readonly linkTarget?: AbsolutePath;
+  readonly linkTarget?: AbsolutePath | null;
+  readonly readLinkTarget?: () => AbsolutePath | undefined;
+  readonly swapLink?: (target: AbsolutePath) => void;
+  readonly clearLink?: () => void;
   readonly warnDirtyEditors?: LanePromptPort['warnDirtyEditors'];
+  readonly loadSelection?: LaneSelectionStorePort['load'];
+  readonly selectionLaneId?: LaneId | undefined;
   readonly saveSelection?: LaneSelectionStorePort['save'];
   readonly rekeyTerminal?: (oldId: LaneId, newId: LaneId) => void;
   readonly rekeyEditor?: LaneSessionStore['rekey'];
 } = {}) => {
-  const initial = [toFolder('web'), toFolder('api')];
   const store: CatalogStorePort = {
     load: () => initial,
     save: saveCatalog,
   };
   const registry = createCatalogRegistry(initial, store);
-  const selectionSave = vi.fn<LaneSelectionStorePort['save']>(saveSelection);
+  let currentSelection = selectionLaneId;
+  const selectionLoad = vi.fn<LaneSelectionStorePort['load']>(
+    loadSelection ?? (() => currentSelection),
+  );
+  const selectionSave = vi.fn<LaneSelectionStorePort['save']>(async (key, laneId) => {
+    await saveSelection(key, laneId);
+    currentSelection = laneId;
+  });
   const selectionStore: LaneSelectionStorePort = {
-    load: () => 'web' as LaneId,
+    load: selectionLoad,
     save: selectionSave,
   };
   const effectEvents: string[] = [];
@@ -124,17 +142,25 @@ const createHarness = ({
       return operation();
     },
   };
-  let currentLinkTarget = linkTarget;
+  let currentLinkTarget: AbsolutePath | undefined = linkTarget ?? undefined;
+  const linkRead = vi.fn(() => (readLinkTarget ? readLinkTarget() : currentLinkTarget));
+  const linkSwap = vi.fn((target: AbsolutePath) => {
+    swapLink(target);
+    currentLinkTarget = target;
+  });
+  const linkClear = vi.fn(() => {
+    clearLink();
+    currentLinkTarget = undefined;
+  });
   const service = createLaneService({
     getCatalog: () => registry.snapshot(),
     workspaceKey,
     editor,
     link: {
       linkPath,
-      readTarget: () => currentLinkTarget,
-      swap: (target) => {
-        currentLinkTarget = target;
-      },
+      readTarget: linkRead,
+      swap: linkSwap,
+      clear: linkClear,
     },
     terminal,
     viewRebind: { rebindActiveFolder: viewRebind },
@@ -149,7 +175,11 @@ const createHarness = ({
   return {
     service,
     registry,
+    selectionLoad,
     selectionSave,
+    linkRead,
+    linkSwap,
+    linkClear,
     terminalClose,
     terminalRekey,
     editorRekey,
@@ -158,8 +188,398 @@ const createHarness = ({
     viewRebind,
     editorClose,
     operationEnqueueCount: () => operationEnqueueCount,
+    currentLinkTarget: () => currentLinkTarget,
+    setLinkTarget: (target: AbsolutePath | undefined) => {
+      currentLinkTarget = target;
+    },
+    setSelection: (laneId: LaneId | undefined) => {
+      currentSelection = laneId;
+    },
   };
 };
+
+describe('createLaneService active lane reconciliation', () => {
+  it('構築時は selection cache を読まず active lane を未確定にする', () => {
+    const h = createHarness();
+
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+    expect(h.selectionLoad).not.toHaveBeenCalled();
+  });
+
+  it('valid link target を stale selection cache より優先する', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/api' as AbsolutePath,
+      selectionLaneId: 'web' as LaneId,
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(h.viewRebind).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'api', rootPath: '/repo/api' }),
+    );
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'api');
+  });
+
+  it('invalid link target なら valid selection cache を選ぶ', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+    expect(h.linkSwap).toHaveBeenCalledOnce();
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
+    expect(h.selectionSave).not.toHaveBeenCalled();
+  });
+
+  it('link target と selection cache が無効なら catalog 先頭を選ぶ', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'unknown' as LaneId,
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.service.snapshot().activeLaneId).toBe('web');
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/web');
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'web');
+  });
+
+  it('queue 待機後の最新 catalog、link target、selection cache を読む', async () => {
+    const gate = deferred();
+    const operationQueue = createOperationQueue();
+    const holding = operationQueue.enqueue(() => gate.promise);
+    const h = createHarness({ operationQueue });
+
+    const reconciling = h.service.reconcileActiveLane();
+    await h.registry.replace([toFolder('api'), toFolder('worker')]);
+    h.setLinkTarget('/repo/worker' as AbsolutePath);
+    h.setSelection('api' as LaneId);
+
+    expect(h.selectionLoad).not.toHaveBeenCalled();
+    expect(h.linkRead).not.toHaveBeenCalled();
+
+    gate.resolve();
+    await holding;
+    await reconciling;
+
+    expect(h.service.snapshot().activeLaneId).toBe('worker');
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'worker');
+  });
+
+  it('link swap が不要でも active folder view を再構成する', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/web' as AbsolutePath,
+      selectionLaneId: 'web' as LaneId,
+    });
+
+    await h.service.reconcileActiveLane();
+
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(h.viewRebind).toHaveBeenCalledOnce();
+    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web' }));
+  });
+
+  it('view mutation が false なら link を旧 target へ戻して reject する', async () => {
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      rebindActiveFolder: async () => false,
+    });
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+    });
+
+    expect(h.linkSwap.mock.calls).toEqual([['/repo/api'], ['/repo/unknown']]);
+    expect(h.currentLinkTarget()).toBe('/repo/unknown');
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+    expect(h.selectionSave).not.toHaveBeenCalled();
+  });
+
+  it('view mutation の reject を伝播し link を旧 target へ戻す', async () => {
+    const failure = new Error('view failed');
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      rebindActiveFolder: async () => {
+        throw failure;
+      },
+    });
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+      cause: failure,
+    });
+
+    expect(h.linkSwap.mock.calls).toEqual([['/repo/api'], ['/repo/unknown']]);
+    expect(h.currentLinkTarget()).toBe('/repo/unknown');
+  });
+
+  it('旧 link が未作成なら view failure 時に作成した link を clear する', async () => {
+    const h = createHarness({
+      linkTarget: null,
+      selectionLaneId: 'api' as LaneId,
+      rebindActiveFolder: async () => false,
+    });
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'workspace-folder-mutation-rejected',
+    });
+
+    expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
+    expect(h.linkClear).toHaveBeenCalledOnce();
+    expect(h.currentLinkTarget()).toBeUndefined();
+  });
+
+  it('旧 target への rollback swap 失敗は元 error と AggregateError にする', async () => {
+    const rollbackError = new Error('rollback swap failed');
+    let swapCount = 0;
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      rebindActiveFolder: async () => false,
+      swapLink: () => {
+        swapCount += 1;
+        if (swapCount === 2) throw rollbackError;
+      },
+    });
+
+    const failure = await h.service.reconcileActiveLane().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ActiveLaneReconciliationError);
+    expect(failure).toMatchObject({ reason: 'rollback-failed' });
+    expect((failure as ActiveLaneReconciliationError).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as ActiveLaneReconciliationError).cause as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: 'workspace-folder-mutation-rejected' }),
+      rollbackError,
+    ]);
+  });
+
+  it('未作成 link の rollback clear 失敗は元 error と AggregateError にする', async () => {
+    const rollbackError = new Error('rollback clear failed');
+    const h = createHarness({
+      linkTarget: null,
+      selectionLaneId: 'api' as LaneId,
+      rebindActiveFolder: async () => false,
+      clearLink: () => {
+        throw rollbackError;
+      },
+    });
+
+    const failure = await h.service.reconcileActiveLane().catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ActiveLaneReconciliationError);
+    expect(failure).toMatchObject({ reason: 'rollback-failed' });
+    expect((failure as ActiveLaneReconciliationError).cause).toBeInstanceOf(AggregateError);
+    expect(((failure as ActiveLaneReconciliationError).cause as AggregateError).errors).toEqual([
+      expect.objectContaining({ message: 'workspace-folder-mutation-rejected' }),
+      rollbackError,
+    ]);
+  });
+
+  it('最初の link swap 失敗は view と rollback を実行せず伝播する', async () => {
+    const failure = new Error('swap failed');
+    const h = createHarness({
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      swapLink: () => {
+        throw failure;
+      },
+    });
+
+    await expect(h.service.reconcileActiveLane()).rejects.toMatchObject({
+      reason: 'link-swap-failed',
+      cause: failure,
+    });
+
+    expect(h.linkSwap).toHaveBeenCalledOnce();
+    expect(h.linkClear).not.toHaveBeenCalled();
+    expect(h.viewRebind).not.toHaveBeenCalled();
+  });
+
+  it('selection save 中は target を active lane として公開する', async () => {
+    let observedActive: LaneId | undefined;
+    let service: ReturnType<typeof createHarness>['service'];
+    const h = createHarness({
+      linkTarget: '/repo/api' as AbsolutePath,
+      selectionLaneId: 'web' as LaneId,
+      saveSelection: async () => {
+        observedActive = service.snapshot().activeLaneId;
+      },
+    });
+    service = h.service;
+
+    await h.service.reconcileActiveLane();
+
+    expect(observedActive).toBe('api');
+  });
+
+  it('post-commit save failure は target を維持した pending result とし次回 cache のみ直す', async () => {
+    const saveFailure = new Error('selection failed');
+    let saveCount = 0;
+    const h = createHarness({
+      initial: [toFolder('api'), toFolder('web')],
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'unknown' as LaneId,
+      saveSelection: async () => {
+        saveCount += 1;
+        if (saveCount === 1) throw saveFailure;
+      },
+    });
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'pending',
+      error: saveFailure,
+    });
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+    expect(h.currentLinkTarget()).toBe('/repo/api');
+
+    h.linkSwap.mockClear();
+    h.viewRebind.mockClear();
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({
+      kind: 'active',
+      cache: 'saved',
+    });
+
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(h.viewRebind).toHaveBeenCalledOnce();
+    expect(h.selectionSave).toHaveBeenCalledTimes(2);
+  });
+
+  it('catalog が空なら active を未確定にする以外の副作用を起こさない', async () => {
+    let saveCount = 0;
+    const h = createHarness({
+      saveSelection: async () => {
+        saveCount += 1;
+        if (saveCount === 1) throw new Error('pending focus save');
+      },
+    });
+    const focusResult = await h.service.focus('api' as LaneId);
+    expect(focusResult.kind).toBe('failed');
+    await h.registry.replace([]);
+    h.selectionLoad.mockClear();
+    h.selectionSave.mockClear();
+    h.linkRead.mockClear();
+    h.linkSwap.mockClear();
+    h.linkClear.mockClear();
+    h.viewRebind.mockClear();
+
+    await expect(h.service.reconcileActiveLane()).resolves.toEqual({ kind: 'empty' });
+
+    expect(h.service.snapshot().activeLaneId).toBeUndefined();
+    expect(h.selectionLoad).not.toHaveBeenCalled();
+    expect(h.selectionSave).not.toHaveBeenCalled();
+    expect(h.linkRead).not.toHaveBeenCalled();
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(h.linkClear).not.toHaveBeenCalled();
+    expect(h.viewRebind).not.toHaveBeenCalled();
+  });
+
+  it('pending focus finalization を確定してから最新 cache で再整合する', async () => {
+    const events: string[] = [];
+    let saveCount = 0;
+    let linkedTarget = '/repo/web' as AbsolutePath;
+    const h = createHarness({
+      loadSelection: () => {
+        events.push('load');
+        return saveCount >= 2 ? ('api' as LaneId) : ('web' as LaneId);
+      },
+      saveSelection: async () => {
+        saveCount += 1;
+        events.push(`save:${saveCount}`);
+        if (saveCount === 1) throw new Error('pending focus save');
+      },
+      readLinkTarget: () => {
+        events.push('link');
+        return linkedTarget;
+      },
+      swapLink: (target) => {
+        linkedTarget = target;
+      },
+      rebindActiveFolder: async () => {
+        events.push('view');
+        return true;
+      },
+    });
+    const focusResult = await h.service.focus('api' as LaneId);
+    expect(focusResult.kind).toBe('failed');
+    events.splice(0);
+
+    await h.service.reconcileActiveLane();
+
+    expect(events).toEqual(['save:2', 'link', 'load', 'view']);
+    expect(h.selectionSave).toHaveBeenCalledTimes(2);
+  });
+
+  it('pending rename finalization を確定してから最新 cache で再整合する', async () => {
+    const events: string[] = [];
+    let saveCount = 0;
+    const h = createHarness({
+      loadSelection: () => {
+        events.push('load');
+        return saveCount >= 2 ? ('frontend' as LaneId) : ('web' as LaneId);
+      },
+      saveSelection: async () => {
+        saveCount += 1;
+        events.push(`save:${saveCount}`);
+        if (saveCount === 1) throw new Error('pending rename save');
+      },
+      readLinkTarget: () => {
+        events.push('link');
+        return '/repo/web' as AbsolutePath;
+      },
+      rebindActiveFolder: async (lane) => {
+        events.push(`view:${lane.id}`);
+        return true;
+      },
+    });
+    await h.service.reconcileActiveLane();
+    events.splice(0);
+    await expect(h.service.renameLane('web' as LaneId)).rejects.toThrow('pending rename save');
+    events.splice(0);
+
+    await h.service.reconcileActiveLane();
+
+    expect(events).toEqual(['save:2', 'view:frontend', 'link', 'load', 'view:frontend']);
+    expect(h.selectionSave).toHaveBeenCalledTimes(2);
+  });
+
+  it('失敗した reconciliation の後続 operation を queue が実行する', async () => {
+    let viewCount = 0;
+    const h = createHarness({
+      operationQueue: createOperationQueue(),
+      linkTarget: '/repo/unknown' as AbsolutePath,
+      selectionLaneId: 'api' as LaneId,
+      rebindActiveFolder: async () => {
+        viewCount += 1;
+        return viewCount > 1;
+      },
+    });
+
+    const first = h.service.reconcileActiveLane();
+    const second = h.service.reconcileActiveLane();
+
+    await expect(first).rejects.toThrow('workspace-folder-mutation-rejected');
+    await expect(second).resolves.toEqual({ kind: 'active', cache: 'saved' });
+    expect(h.service.snapshot().activeLaneId).toBe('api');
+  });
+});
 
 describe('createLaneService operation queue', () => {
   it('focus を共通 queue へ投入する', async () => {
@@ -380,6 +800,9 @@ describe('createLaneService catalog mutation ordering', () => {
         throw failure;
       },
     });
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    h.viewRebind.mockClear();
 
     await expect(h.service.renameLane('web' as LaneId)).rejects.toBe(failure);
 
@@ -392,6 +815,9 @@ describe('createLaneService catalog mutation ordering', () => {
 
   it('rename listener は rekey と active selection 更新後の状態を観測', async () => {
     const h = createHarness();
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    h.viewRebind.mockClear();
     let observed:
       | {
           readonly terminalRekeyed: boolean;
@@ -428,6 +854,9 @@ describe('createLaneService catalog mutation ordering', () => {
         if (saveCount === 1) throw failure;
       },
     });
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    h.viewRebind.mockClear();
 
     await expect(h.service.renameLane('web' as LaneId)).rejects.toBe(failure);
 
@@ -447,9 +876,12 @@ describe('createLaneService catalog mutation ordering', () => {
     const h = createHarness({
       rebindActiveFolder: async () => {
         rebindCount += 1;
-        return rebindCount > 1;
+        return rebindCount !== 2;
       },
     });
+    await h.service.reconcileActiveLane();
+    h.selectionSave.mockClear();
+    h.viewRebind.mockClear();
 
     await expect(h.service.renameLane('web' as LaneId)).rejects.toThrow(
       'workspace-folder-mutation-rejected',

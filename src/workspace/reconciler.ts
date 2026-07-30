@@ -1,5 +1,7 @@
 import type { AbsolutePath } from '../foundation/model';
+import type { OperationQueue } from '../foundation/operation-queue';
 import type { WorkspaceFolder } from './model';
+import type { WorkspaceHostPort } from './ports';
 import { isLegacyAnchor, isLinkFolder } from './scanner';
 
 /** ユーザー操作による workspaceFolders 変化への応答アクション */
@@ -31,6 +33,50 @@ export interface ReconcileInput {
   readonly linkUri: WorkspaceFolder['uri'];
 }
 
+/** workspace folder 再整合の結果 */
+export type WorkspaceFolderReconciliationResult =
+  | {
+      /** 変更不要 */
+      readonly kind: 'noop';
+    }
+  | {
+      /** catalog 取込と単一 folder への縮退が完了 */
+      readonly kind: 'collapsed';
+    }
+  | {
+      /** catalog 取込後に workspace folder の更新が拒否された */
+      readonly kind: 'rejected';
+    };
+
+/** workspace folder 再整合の依存 */
+export interface WorkspaceFolderReconcilerDeps {
+  /** runtime 共通 queue */
+  readonly operationQueue: OperationQueue;
+  /** workspace folder 操作 */
+  readonly workspaceHost: WorkspaceHostPort;
+  /** 現 catalog folder の取得 */
+  readonly getCurrentLanes: () => readonly WorkspaceFolder[];
+  /** 現 active label の取得 */
+  readonly getActiveLabel: () => string;
+  /** catalog への追加取込 */
+  readonly absorb: (additions: readonly WorkspaceFolder[]) => Promise<void>;
+  /** commit 後に残った lane operation の確定 */
+  readonly finalizePendingOperations: () => Promise<void>;
+  /** active link 絶対パス */
+  readonly linkPath: AbsolutePath;
+  /** active link URI */
+  readonly linkUri: WorkspaceFolder['uri'];
+}
+
+/** workspace folder 再整合 */
+export interface WorkspaceFolderReconciler {
+  /**
+   * workspace folder 変更の catalog 取込と縮退
+   * @returns 再整合結果
+   */
+  readonly reconcileWorkspaceFolders: () => Promise<WorkspaceFolderReconciliationResult>;
+}
+
 /**
  * 入力からアクションへの純粋変換
  * @param input - 照合入力
@@ -51,5 +97,50 @@ export const reconcileUserChange = (input: ReconcileInput): ReconciliationAction
     kind: 'absorb',
     additions,
     collapsedFolder: { uri: linkUri, name: activeLabel },
+  };
+};
+
+/**
+ * workspace folder 再整合の生成
+ * @param deps - 再整合の依存
+ * @returns runtime 共通 queue 上の再整合 executor
+ */
+export const createWorkspaceFolderReconciler = (
+  deps: WorkspaceFolderReconcilerDeps,
+): WorkspaceFolderReconciler => {
+  const {
+    operationQueue,
+    workspaceHost,
+    getCurrentLanes,
+    getActiveLabel,
+    absorb,
+    finalizePendingOperations,
+    linkPath,
+    linkUri,
+  } = deps;
+
+  return {
+    reconcileWorkspaceFolders: () =>
+      operationQueue.enqueue(async () => {
+        await finalizePendingOperations();
+        const rawFolders = workspaceHost.readFolders();
+        const action = reconcileUserChange({
+          rawFolders,
+          currentLanes: getCurrentLanes(),
+          linkPath,
+          activeLabel: getActiveLabel(),
+          linkUri,
+        });
+        if (action.kind === 'noop') return { kind: 'noop' };
+
+        await absorb(action.additions);
+        const accepted = await workspaceHost.applyMutation({
+          expectedFolders: rawFolders,
+          start: 0,
+          deleteCount: rawFolders.length,
+          folders: [action.collapsedFolder],
+        });
+        return accepted ? { kind: 'collapsed' } : { kind: 'rejected' };
+      }),
   };
 };
