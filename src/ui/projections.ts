@@ -1,6 +1,6 @@
 import type { LaneId, UriString } from '../foundation/model';
 import type { LaneActivity, LaneActivityRecord } from '../lane-activity/model';
-import type { Lane, LaneServiceSnapshot } from '../lane/model';
+import type { Lane, LaneRootAvailability, LaneServiceSnapshot } from '../lane/model';
 import type {
   ActivityBadgeViewModel,
   LaneDecorationViewModel,
@@ -24,6 +24,11 @@ const treeDescriptionFor = (activity: LaneActivity): string => {
       return '';
   }
 };
+
+/** レーンルート利用不能時の補助文言 */
+const unavailableDescriptionFor = (
+  availability: Exclude<LaneRootAvailability, 'available'>,
+): string => (availability === 'missing' ? 'Folder not found' : 'Folder unavailable');
 
 /** デコレーションのテーマカラーキー */
 const decorationThemeColorFor = (activity: LaneActivity): string | undefined => {
@@ -53,6 +58,7 @@ const decorationTooltipFor = (activity: LaneActivity): string => {
  * ツリー項目のビューモデル算出
  * @param lanes - レーン列
  * @param activityMap - レーン単位の活動状態マップ
+ * @param availabilityByLaneId - レーン単位の root 利用可否
  * @param activeLaneId - 活性レーン識別子
  * @param showIndicator - 活動インジケータ表示有無
  * @returns ツリー項目列
@@ -60,16 +66,27 @@ const decorationTooltipFor = (activity: LaneActivity): string => {
 const projectTreeItems = (
   lanes: readonly Lane[],
   activityMap: ReadonlyMap<LaneId, LaneActivity>,
+  availabilityByLaneId: ReadonlyMap<LaneId, LaneRootAvailability>,
   activeLaneId: LaneId | undefined,
   showIndicator: boolean,
 ): readonly LaneTreeItemViewModel[] =>
-  lanes.map((lane) => ({
-    laneId: lane.id,
-    label: lane.label,
-    description: showIndicator ? treeDescriptionFor(activityOf(activityMap, lane.id)) : '',
-    isActive: lane.id === activeLaneId,
-    resourceUri: `lane:///${lane.id}` as UriString,
-  }));
+  lanes.map((lane) => {
+    const availability = availabilityByLaneId.get(lane.id) ?? 'inaccessible';
+    return {
+      laneId: lane.id,
+      label: lane.label,
+      description:
+        availability === 'available'
+          ? showIndicator
+            ? treeDescriptionFor(activityOf(activityMap, lane.id))
+            : ''
+          : unavailableDescriptionFor(availability),
+      availability,
+      action: availability === 'available' ? 'switch' : 'locate',
+      isActive: lane.id === activeLaneId,
+      resourceUri: `lane:///${lane.id}` as UriString,
+    };
+  });
 
 /**
  * Activity Bar バッジの算出
@@ -159,12 +176,14 @@ const projectStatusBar = (
  * @param lane - レーンサービススナップショット
  * @param activities - レーン活動レコード列
  * @param showActivityIndicator - 活動インジケータ表示有無
+ * @param availabilityByLaneId - レーン単位の root 利用可否
  * @returns UI スナップショット
  */
 export const projectUi = (
   lane: LaneServiceSnapshot,
   activities: readonly LaneActivityRecord[],
   showActivityIndicator: boolean,
+  availabilityByLaneId: ReadonlyMap<LaneId, LaneRootAvailability>,
 ): UiSnapshot => {
   const activityMap = new Map(activities.map((a) => [a.laneId, a.activity]));
   const activeLane = lane.activeLaneId ? lane.catalog.byId.get(lane.activeLaneId) : undefined;
@@ -176,6 +195,7 @@ export const projectUi = (
     treeItems: projectTreeItems(
       lane.catalog.lanes,
       activityMap,
+      availabilityByLaneId,
       lane.activeLaneId,
       showActivityIndicator,
     ),

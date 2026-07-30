@@ -1,4 +1,5 @@
 import type { LaneId, UriString } from '../foundation/model';
+import type { LaneRootAvailability } from '../lane/model';
 
 /** ツリー項目のビューモデル */
 export interface LaneTreeItemViewModel {
@@ -8,6 +9,10 @@ export interface LaneTreeItemViewModel {
   readonly label: string;
   /** 補助説明 */
   readonly description: string;
+  /** レーンルートの現在状態 */
+  readonly availability: LaneRootAvailability;
+  /** 選択時の操作 */
+  readonly action: 'switch' | 'locate';
   /** 活性レーン判定 */
   readonly isActive: boolean;
   /** リソース URI */

@@ -59,6 +59,7 @@ import {
   type InitializationOutcome,
   type InitializationStatus,
 } from './initialization-coordinator';
+import { laneRelocationWarningMessage } from './lane-relocation-warning';
 import { createManagedCommandProxy } from './managed-command-proxy';
 import type { ConfigPort } from './model';
 import {
@@ -88,6 +89,7 @@ type ManagedCommandId =
   | 'projectLanes.closeTerminals'
   | 'projectLanes.addFolder'
   | 'projectLanes.reloadLanes'
+  | 'projectLanes.locateFolder'
   | 'projectLanes.renameLane'
   | 'projectLanes.removeLane'
   | 'projectLanes.findInLanes'
@@ -293,6 +295,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       ui: createSearchUiAdapter(),
       fileOpen: editor,
       focus: (laneId) => laneService.focus(laneId),
+      rootAvailability,
     });
 
     const treeView = createTreeViewAdapter();
@@ -309,7 +312,15 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         catalog.lanes.map((lane) => lane.id),
         clock.now(),
       );
-      const snapshot = projectUi(laneService.snapshot(), activities, cfg.showActivityIndicator);
+      const availabilityByLaneId = new Map(
+        catalog.lanes.map((lane) => [lane.id, rootAvailability.inspect(lane.rootPath)]),
+      );
+      const snapshot = projectUi(
+        laneService.snapshot(),
+        activities,
+        cfg.showActivityIndicator,
+        availabilityByLaneId,
+      );
       treeView.render(snapshot);
       statusBar.render(snapshot.statusBar);
     };
@@ -405,6 +416,13 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       },
       'projectLanes.renameLane': ([argument]) =>
         runAsyncBoundary(() => laneService.renameLane(extractLaneId(argument)), reportAsyncFailure),
+      'projectLanes.locateFolder': ([argument]) =>
+        runAsyncBoundary(async () => {
+          const result = await laneService.relocateLane(extractLaneId(argument));
+          render();
+          const message = laneRelocationWarningMessage(result);
+          if (message) await vscode.window.showWarningMessage(message);
+        }, reportAsyncFailure),
       'projectLanes.removeLane': ([argument]) =>
         runAsyncBoundary(() => laneService.removeLane(extractLaneId(argument)), reportAsyncFailure),
       'projectLanes.reloadLanes': () =>
@@ -574,6 +592,10 @@ export const bootstrapRuntime = async (
     'projectLanes.reloadLanes',
     (...args: unknown[]) => invokeManagedCommand('projectLanes.reloadLanes', args),
   );
+  const locateFolderCommand = vscode.commands.registerCommand(
+    'projectLanes.locateFolder',
+    (...args: unknown[]) => invokeManagedCommand('projectLanes.locateFolder', args),
+  );
   const renameLaneCommand = vscode.commands.registerCommand(
     'projectLanes.renameLane',
     (...args: unknown[]) => invokeManagedCommand('projectLanes.renameLane', args),
@@ -601,6 +623,7 @@ export const bootstrapRuntime = async (
     closeTerminalsCommand,
     addFolderCommand,
     reloadLanesCommand,
+    locateFolderCommand,
     renameLaneCommand,
     removeLaneCommand,
     toggleActivityIndicatorCommand,
