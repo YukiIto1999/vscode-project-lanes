@@ -57,6 +57,22 @@ const laneSwitchTransactionScenario = {
   suitePath: path.join(__dirname, 'suite', 'lane-switch-transaction.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'transaction' }, { phase: 'restart' }],
 };
+const activeLaneReconciliationScenario = {
+  name: 'active-lane-reconciliation',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'active-lane-reconciliation'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'active-lane-reconciliation',
+    'active-lane-reconciliation.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'active-lane-reconciliation.cjs'),
+  launches: [
+    { phase: 'prepare-stale-cache' },
+    { phase: 'reload-and-remove-link' },
+    { phase: 'restore-missing-link' },
+  ],
+};
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
   workspaceFixture: '/fixtures/empty.code-workspace',
@@ -117,6 +133,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceBootstrapScenario,
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
+    activeLaneReconciliationScenario,
   ]);
 });
 
@@ -130,6 +147,193 @@ test('lane switch search fixture exposes a selectable file only in lane-b', () =
 
   assert.deepEqual(laneAEntries, []);
   assert.deepEqual(laneBEntries, ['fixture.txt']);
+});
+
+test('the active-lane reconciliation suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/active-lane-reconciliation.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the prepare phase leaves a stale cache behind a lane-b link', async () => {
+  const { run } = require('./suite/active-lane-reconciliation.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-active-reconciliation/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const messages = [];
+  let activeTarget = laneA;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'prepare-stale-cache' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'active-lane-reconciliation.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-a' }],
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    replaceActiveLink(target) {
+      activeTarget = target;
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.equal(activeTarget, laneB);
+  assert.deepEqual(messages, ['E2E PASS: stale lane-a cache prepared behind lane-b link']);
+});
+
+test('the reload phase reconciles the link, absorbs lane-c, and removes the link for restart', async () => {
+  const { run } = require('./suite/active-lane-reconciliation.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-active-reload/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const laneC = path.join(workspaceDirectory, 'lane-c');
+  const commands = [];
+  const messages = [];
+  const replacedTargets = [];
+  let activeTarget = laneB;
+  let linkPresent = true;
+  const workspace = {
+    workspaceFile: {
+      fsPath: path.join(workspaceDirectory, 'active-lane-reconciliation.code-workspace'),
+    },
+    workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-b' }],
+    updateWorkspaceFolders(start, deleteCount, ...folders) {
+      assert.equal(start, 1);
+      assert.equal(deleteCount, 0);
+      this.workspaceFolders = [...this.workspaceFolders, ...folders];
+      return true;
+    },
+  };
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'reload-and-remove-link' }),
+    },
+    vscodeApi: {
+      Uri: {
+        file: (fsPath) => ({ fsPath }),
+      },
+      workspace,
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.reloadLanes') {
+            workspace.workspaceFolders = [
+              {
+                uri: { fsPath: activeLink },
+                name: path.basename(activeTarget),
+              },
+            ];
+          }
+          if (command === 'projectLanes.switchLane' && laneId === 'lane-c') {
+            activeTarget = laneC;
+            workspace.workspaceFolders = [{ uri: { fsPath: activeLink }, name: 'lane-c' }];
+          }
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(target) {
+        assert.equal(target, activeLink);
+        return linkPresent;
+      },
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    replaceActiveLink(target) {
+      replacedTargets.push(target);
+      activeTarget = target;
+    },
+    removeActiveLink() {
+      linkPresent = false;
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, [
+    ['projectLanes.reloadLanes', undefined],
+    ['projectLanes.reloadLanes', undefined],
+    ['projectLanes.switchLane', 'lane-c'],
+  ]);
+  assert.equal(activeTarget, laneC);
+  assert.equal(linkPresent, false);
+  assert.deepEqual(replacedTargets, [laneA]);
+  assert.deepEqual(messages, [
+    'E2E PASS: Reload reconciled lane-a and absorbed lane-c before link removal',
+  ]);
+});
+
+test('the restore phase verifies the missing link was recreated from the lane-c cache', async () => {
+  const { run } = require('./suite/active-lane-reconciliation.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-active-restore/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneC = path.join(workspaceDirectory, 'lane-c');
+  const messages = [];
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'restore-missing-link' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'active-lane-reconciliation.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'lane-c' }],
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return laneC;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(messages, ['E2E PASS: missing link restored from lane-c selection cache']);
 });
 
 test('the empty-workspace suite verifies activation and reports success', async () => {
