@@ -26,7 +26,7 @@ export type LaneSearchResult =
       readonly line: number;
       /** 一致桁、1 始まり */
       readonly column: number;
-      /** 一致行のテキスト、trim 済み */
+      /** 一致箇所周辺の行テキスト */
       readonly preview: string;
     }
   | {
@@ -53,4 +53,8 @@ export type LaneSearchOutcome =
   | {
       /** バックエンド不在 */
       readonly kind: 'unavailable';
+    }
+  | {
+      /** runtime 破棄による取消 */
+      readonly kind: 'cancelled';
     };
