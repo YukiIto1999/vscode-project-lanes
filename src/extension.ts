@@ -8,9 +8,11 @@ import { workspaceWarningMessage } from './app/workspace-warning';
  */
 export const activate = async (context: vscode.ExtensionContext): Promise<void> => {
   const outcome = await bootstrapRuntime(context);
-  if (outcome.kind === 'ready') return;
+  if (outcome.kind === 'ready' || outcome.kind === 'waiting') return;
+  const { reason } = outcome;
+  if (reason === undefined) return;
 
-  const message = workspaceWarningMessage(outcome.reason);
+  const message = workspaceWarningMessage(reason);
   if (message) vscode.window.showWarningMessage(message);
 };
 

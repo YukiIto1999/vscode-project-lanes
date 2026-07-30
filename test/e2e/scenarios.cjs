@@ -23,6 +23,23 @@ const scenarios = Object.freeze([
       Object.freeze({ phase: 'restart' }),
     ]),
   }),
+  Object.freeze({
+    name: 'workspace-manual-initialization',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'workspace-manual-initialization'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'workspace-manual-initialization',
+      'workspace-manual-initialization.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'workspace-manual-initialization.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'manual-first' }),
+      Object.freeze({ phase: 'manual-restart' }),
+      Object.freeze({ phase: 'initialize' }),
+      Object.freeze({ phase: 'managed-restart' }),
+    ]),
+  }),
 ]);
 
 const resolveScenarios = (requestedNames, availableScenarios = scenarios) => {

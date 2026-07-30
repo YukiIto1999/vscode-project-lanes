@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
+const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -26,6 +27,23 @@ const workspaceBootstrapScenario = {
   ),
   suitePath: path.join(__dirname, 'suite', 'workspace-bootstrap.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'restart' }],
+};
+const workspaceManualInitializationScenario = {
+  name: 'workspace-manual-initialization',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'workspace-manual-initialization'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'workspace-manual-initialization',
+    'workspace-manual-initialization.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'workspace-manual-initialization.cjs'),
+  launches: [
+    { phase: 'manual-first' },
+    { phase: 'manual-restart' },
+    { phase: 'initialize' },
+    { phase: 'managed-restart' },
+  ],
 };
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
@@ -85,6 +103,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
       suitePath: path.join(__dirname, 'suite', 'empty-workspace.cjs'),
     },
     workspaceBootstrapScenario,
+    workspaceManualInitializationScenario,
   ]);
 });
 
@@ -1165,7 +1184,7 @@ test('the workspace-bootstrap suite rejects an unknown phase', async () => {
   );
 });
 
-test('the workspace-bootstrap phase verifies activation, the active folder, and lane-a target', async () => {
+test('the workspace-bootstrap phase accepts host cancellation after reaching lane-a', async () => {
   const { run } = require('./suite/workspace-bootstrap.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-bootstrap/workspace';
   const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
@@ -1192,6 +1211,7 @@ test('the workspace-bootstrap phase verifies activation, the active folder, and 
             },
             async activate() {
               activated = true;
+              throw new Error('Activating extension failed: Canceled.');
             },
           };
         },
@@ -1263,6 +1283,208 @@ test('the workspace-bootstrap restart phase switches using the restored public l
     ['projectLanes.switchLane', 'lane-a'],
   ]);
   assert.deepEqual(messages, ['E2E PASS: workspace catalog restored after restart']);
+});
+
+test('the manual-first phase leaves folders, file, anchor, and terminal settings unchanged', async () => {
+  const { run } = require('./suite/workspace-manual-initialization.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-manual/workspace';
+  const workspaceFile = path.join(
+    workspaceDirectory,
+    'workspace-manual-initialization.code-workspace',
+  );
+  const fixtureContent = fs.readFileSync(
+    workspaceManualInitializationScenario.workspaceFixture,
+    'utf8',
+  );
+  let activated = false;
+  const messages = [];
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'manual-first' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: { fsPath: workspaceFile },
+        workspaceFolders: [
+          { uri: { fsPath: path.join(workspaceDirectory, 'lane-a') } },
+          { uri: { fsPath: path.join(workspaceDirectory, 'lane-b') } },
+        ],
+        getConfiguration() {
+          return {
+            inspect(key) {
+              return {
+                workspaceValue: key === 'defaultProfile.linux' ? 'bash' : true,
+              };
+            },
+          };
+        },
+      },
+      extensions: {
+        getExtension() {
+          return {
+            get isActive() {
+              return activated;
+            },
+            async activate() {
+              activated = true;
+            },
+          };
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(target) {
+        assert.equal(target, path.join(workspaceDirectory, '.lanes-root'));
+        return false;
+      },
+      readFileSync(target, encoding) {
+        assert.equal(target, workspaceFile);
+        assert.equal(encoding, 'utf8');
+        return fixtureContent;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(messages, ['E2E PASS: manual-first left the workspace unchanged']);
+});
+
+test('the initialize phase accepts host cancellation only after reaching the managed state', async () => {
+  const { run } = require('./suite/workspace-manual-initialization.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-manual-command/workspace';
+  const workspaceFile = path.join(
+    workspaceDirectory,
+    'workspace-manual-initialization.code-workspace',
+  );
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const fixtureContent = fs.readFileSync(
+    workspaceManualInitializationScenario.workspaceFixture,
+    'utf8',
+  );
+  const workspace = {
+    workspaceFile: { fsPath: workspaceFile },
+    workspaceFolders: [
+      { uri: { fsPath: laneA } },
+      { uri: { fsPath: path.join(workspaceDirectory, 'lane-b') } },
+    ],
+    terminalProfile: 'bash',
+    persistentSessions: true,
+    getConfiguration() {
+      return {
+        inspect: (key) => ({
+          workspaceValue:
+            key === 'defaultProfile.linux'
+              ? workspace.terminalProfile
+              : workspace.persistentSessions,
+        }),
+      };
+    },
+  };
+  const commands = [];
+  const messages = [];
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'initialize' }),
+    },
+    vscodeApi: {
+      workspace,
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+      commands: {
+        async executeCommand(command) {
+          commands.push(command);
+          workspace.workspaceFolders = [{ uri: { fsPath: activeLink } }];
+          throw new Error('Canceled');
+        },
+      },
+    },
+    fileSystem: {
+      existsSync() {
+        return false;
+      },
+      readFileSync() {
+        return fixtureContent;
+      },
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return laneA;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, ['projectLanes.initializeWorkspace']);
+  assert.deepEqual(messages, ['E2E PASS: initialize command created the managed workspace']);
+});
+
+test('the managed-restart phase verifies terminal settings and restored lane switching', async () => {
+  const { run } = require('./suite/workspace-manual-initialization.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-manual-restart/workspace';
+  const activeLink = path.join(workspaceDirectory, '.lanes-root', 'active');
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const commands = [];
+  const messages = [];
+  let activeTarget = laneA;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'managed-restart' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'workspace-manual-initialization.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink } }],
+        getConfiguration() {
+          return {
+            inspect(key) {
+              return {
+                workspaceValue: key === 'defaultProfile.linux' ? 'Lane Terminal' : false,
+              };
+            },
+          };
+        },
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          activeTarget = laneId === 'lane-a' ? laneA : laneB;
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, [
+    ['projectLanes.switchLane', 'lane-b'],
+    ['projectLanes.switchLane', 'lane-a'],
+  ]);
+  assert.deepEqual(messages, ['E2E PASS: manual initialization catalog restored after restart']);
 });
 
 test('process exit removes active scenario roots without duplicate listeners', async () => {

@@ -96,14 +96,15 @@ describe('package.json の commands と bootstrap.ts の registerCommand の整�
     );
   })();
 
-  const registeredCommands = (() => {
+  const registeredCommandIds = (() => {
     const src = readSource(bootstrapPath);
     const re = /registerCommand\(\s*['"]([^'"]+)['"]/g;
     const ids: string[] = [];
     let match: RegExpExecArray | null;
     while ((match = re.exec(src)) !== null) ids.push(match[1]!);
-    return new Set(ids);
+    return ids;
   })();
+  const registeredCommands = new Set(registeredCommandIds);
 
   it('package.json で宣言された command は bootstrap.ts で登録されている', () => {
     const missing = [...declaredCommands].filter((c) => !registeredCommands.has(c));
@@ -115,6 +116,88 @@ describe('package.json の commands と bootstrap.ts の registerCommand の整�
       .filter((c) => c.startsWith('projectLanes.'))
       .filter((c) => !declaredCommands.has(c));
     expect(orphan).toEqual([]);
+  });
+
+  it('公開 command は一度だけ登録される', () => {
+    for (const command of declaredCommands) {
+      expect(
+        registeredCommandIds.filter((id) => id === command),
+        command,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('公開 command は初期化方針の適用前に登録される', () => {
+    const src = readSource(bootstrapPath);
+    const activationIndex = src.indexOf('coordinator.activate(');
+    expect(activationIndex).toBeGreaterThan(-1);
+
+    for (const command of declaredCommands) {
+      const registrationIndex = src.search(
+        new RegExp(
+          `registerCommand\\(\\s*['"]${command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`,
+        ),
+      );
+      expect(registrationIndex, command).toBeGreaterThan(-1);
+      expect(registrationIndex, command).toBeLessThan(activationIndex);
+    }
+  });
+
+  it('coordinator の状態を projectLanes.workspaceStatus へ公開する', () => {
+    const src = readSource(bootstrapPath);
+    expect(src).toMatch(
+      /executeCommand\(\s*['"]setContext['"]\s*,\s*['"]projectLanes\.workspaceStatus['"]/,
+    );
+  });
+});
+
+describe('未管理 workspace の公開初期化契約', () => {
+  const repoRoot = nodePath.resolve(SRC_ROOT, '..');
+  const packageJsonPath = nodePath.join(repoRoot, 'package.json');
+  const pkg = JSON.parse(readSource(packageJsonPath)) as {
+    contributes?: {
+      commands?: ReadonlyArray<{ command?: string; title?: string }>;
+      configuration?: {
+        properties?: Record<
+          string,
+          {
+            type?: string;
+            enum?: readonly string[];
+            default?: string;
+            scope?: string;
+          }
+        >;
+      };
+      viewsWelcome?: ReadonlyArray<{ contents?: string; when?: string }>;
+    };
+  };
+
+  it('initializationMode は全利用者へ manual 既定の window 設定として公開する', () => {
+    expect(pkg.contributes?.configuration?.properties?.['projectLanes.initializationMode']).toEqual(
+      expect.objectContaining({
+        type: 'string',
+        enum: ['manual', 'automatic'],
+        default: 'manual',
+        scope: 'window',
+      }),
+    );
+  });
+
+  it('Initialize Workspace command を公開する', () => {
+    expect(pkg.contributes?.commands).toContainEqual(
+      expect.objectContaining({
+        command: 'projectLanes.initializeWorkspace',
+        title: 'Initialize Workspace',
+      }),
+    );
+  });
+
+  it('unmanaged の welcome から Initialize Workspace command を実行できる', () => {
+    const welcome = pkg.contributes?.viewsWelcome?.find((entry) =>
+      entry.contents?.includes('(command:projectLanes.initializeWorkspace)'),
+    );
+    expect(welcome?.when).toContain('projectLanes.workspaceStatus');
+    expect(welcome?.when).toContain('unmanaged');
   });
 });
 
