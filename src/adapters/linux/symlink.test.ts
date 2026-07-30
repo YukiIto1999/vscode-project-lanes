@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as nodePath from 'node:path';
 import type { AbsolutePath } from '../../foundation/model';
-import { createSymlinkOps } from './symlink';
+import { createSymlinkOps, createWorkspaceLinkAdapter } from './symlink';
 
 describe('SymlinkOps', () => {
   const ops = createSymlinkOps();
@@ -19,8 +19,28 @@ describe('SymlinkOps', () => {
 
   const abs = (rel: string): AbsolutePath => nodePath.join(tmpDir, rel) as AbsolutePath;
 
+  const captureError = (action: () => void): unknown => {
+    try {
+      action();
+    } catch (error) {
+      return error;
+    }
+    throw new Error('例外が送出されなかった');
+  };
+
   it('存在しない symlink の read は undefined', () => {
     expect(ops.read(abs('noexist'))).toBeUndefined();
+  });
+
+  it('symlink ではないパスの read は readlinkSync のエラーを伝播', () => {
+    const regularFile = abs('file');
+    fs.writeFileSync(regularFile, '');
+
+    expect(captureError(() => ops.read(regularFile))).toMatchObject({
+      code: 'EINVAL',
+      syscall: 'readlink',
+      path: regularFile,
+    });
   });
 
   it('ディレクトリ向け symlink を作成し read で参照先を取得', () => {
@@ -58,5 +78,65 @@ describe('SymlinkOps', () => {
     const link = abs('link');
     ops.replace(link, target);
     expect(ops.read(link)).toBe(target);
+  });
+
+  it('clear は通常 symlink だけを削除', () => {
+    const target = abs('target');
+    fs.mkdirSync(target);
+    const link = abs('link');
+    ops.replace(link, target);
+
+    ops.clear(link);
+
+    expect(ops.read(link)).toBeUndefined();
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
+  it('clear は broken symlink を削除', () => {
+    const target = abs('noexist-target');
+    const link = abs('link');
+    ops.replace(link, target);
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+
+    ops.clear(link);
+
+    expect(() => fs.lstatSync(link)).toThrow();
+  });
+
+  it('clear は symlink が存在しなくても成功', () => {
+    expect(() => ops.clear(abs('noexist'))).not.toThrow();
+  });
+
+  it('clear は通常ファイルを削除せず明示的に拒否', () => {
+    const regularFile = abs('file');
+    fs.writeFileSync(regularFile, 'preserve');
+
+    expect(() => ops.clear(regularFile)).toThrowError(
+      `Workspace link path is not a symbolic link: ${regularFile}`,
+    );
+    expect(fs.readFileSync(regularFile, 'utf8')).toBe('preserve');
+  });
+
+  it('clear はディレクトリを削除せず明示的に拒否', () => {
+    const directory = abs('directory');
+    fs.mkdirSync(directory);
+
+    expect(() => ops.clear(directory)).toThrowError(
+      `Workspace link path is not a symbolic link: ${directory}`,
+    );
+    expect(fs.statSync(directory).isDirectory()).toBe(true);
+  });
+
+  it('WorkspaceLinkPort は束縛した linkPath を read と clear に使う', () => {
+    const target = abs('target');
+    fs.mkdirSync(target);
+    const link = abs('link');
+    const adapter = createWorkspaceLinkAdapter(link);
+    adapter.swap(target);
+
+    expect(adapter.readTarget()).toBe(target);
+    adapter.clear();
+
+    expect(adapter.readTarget()).toBeUndefined();
   });
 });

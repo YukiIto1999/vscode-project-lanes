@@ -166,6 +166,9 @@ describe('bootstrapWorkspace', () => {
         swaps.push(t);
         target = t;
       },
+      clear: () => {
+        target = undefined;
+      },
     };
     return {
       port,

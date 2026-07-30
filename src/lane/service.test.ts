@@ -124,7 +124,7 @@ const createHarness = ({
       return operation();
     },
   };
-  let currentLinkTarget = linkTarget;
+  let currentLinkTarget: AbsolutePath | undefined = linkTarget;
   const service = createLaneService({
     getCatalog: () => registry.snapshot(),
     workspaceKey,
@@ -134,6 +134,9 @@ const createHarness = ({
       readTarget: () => currentLinkTarget,
       swap: (target) => {
         currentLinkTarget = target;
+      },
+      clear: () => {
+        currentLinkTarget = undefined;
       },
     },
     terminal,
