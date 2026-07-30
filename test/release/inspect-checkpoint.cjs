@@ -13,11 +13,16 @@ const inspectReleaseCheckpoint = ({ tagExists, release, vsixName, checksumName }
     download: 'none',
   };
 
-  if (!release) return base;
+  if (release === undefined) return base;
   if (!tagExists) {
     throw new Error('Release exists without a fetched tag');
   }
-  if (typeof release.draft !== 'boolean' || !Array.isArray(release.assets)) {
+  if (
+    release === null ||
+    typeof release !== 'object' ||
+    typeof release.draft !== 'boolean' ||
+    !Array.isArray(release.assets)
+  ) {
     throw new Error('Release checkpoint JSON has an invalid shape');
   }
 

@@ -115,6 +115,15 @@ test('rejects unsafe or inconsistent release checkpoint states', () => {
   assert.throws(
     () =>
       inspect({
+        tagExists: true,
+        release: null,
+      }),
+    /invalid shape/i,
+  );
+
+  assert.throws(
+    () =>
+      inspect({
         release: { draft: true, assets: [] },
       }),
     /without a fetched tag/i,
