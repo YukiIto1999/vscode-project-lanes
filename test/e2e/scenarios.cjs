@@ -40,6 +40,22 @@ const scenarios = Object.freeze([
       Object.freeze({ phase: 'managed-restart' }),
     ]),
   }),
+  Object.freeze({
+    name: 'lane-switch-transaction',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'lane-switch-transaction'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'lane-switch-transaction',
+      'lane-switch-transaction.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'lane-switch-transaction.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'transaction' }),
+      Object.freeze({ phase: 'restart' }),
+    ]),
+  }),
 ]);
 
 const resolveScenarios = (requestedNames, availableScenarios = scenarios) => {
