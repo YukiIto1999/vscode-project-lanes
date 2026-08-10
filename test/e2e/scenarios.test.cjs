@@ -8,14 +8,13 @@ const test = require('node:test');
 
 const packageJson = require('../../package.json');
 const {
-  assertListedExtensionVersion,
   buildDownloadOptions,
   buildExtensionManagementRequest,
   buildInstalledLaunchOptions,
   buildLaunchOptions,
   createProcessCleanupRegistry,
   executeExtensionManagementRequest,
-  installAndVerifyExtension,
+  installExtension,
   launchVSCodeProcess,
   runInstalledVSIXVerification,
   runScenario,
@@ -243,6 +242,7 @@ const createInstalledVerificationHarness = (
           vsixPath: '/tmp/project-lanes-0.1.14-linux-x64.vsix',
           candidateVersion: '0.1.14',
           baselineVersion: '0.1.13',
+          baselineVsixPath: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
         },
         {
           createRunId: () => runId,
@@ -1145,6 +1145,11 @@ test('the installed VSIX suite rejects activation cancellation outside candidate
         PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'candidate-restart' }),
       },
       vscodeApi: {
+        workspace: {
+          workspaceFile: {
+            fsPath: '/tmp/installed/restart/workspace/installed-vsix-upgrade.code-workspace',
+          },
+        },
         extensions: {
           getExtension() {
             return {
@@ -1179,6 +1184,11 @@ test('the installed VSIX suite propagates a similar cancellation during candidat
         PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'candidate-migrate' }),
       },
       vscodeApi: {
+        workspace: {
+          workspaceFile: {
+            fsPath: '/tmp/installed/migrate/workspace/installed-vsix-upgrade.code-workspace',
+          },
+        },
         extensions: {
           getExtension() {
             return {
@@ -1192,6 +1202,58 @@ test('the installed VSIX suite propagates a similar cancellation during candidat
       },
       async respondToLegacySettings() {
         throw activationError;
+      },
+      fileSystem: {
+        existsSync() {
+          return true;
+        },
+      },
+      resolveRealPath(value) {
+        return value;
+      },
+    }),
+    activationError,
+  );
+});
+
+test('the installed VSIX suite rejects measured cancellation for a namespaced baseline', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  const extensionsDir = '/tmp/installed/migrate-current/extensions';
+  const activationError = new Error(
+    "Activating extension 'yukiito1999.project-lanes' failed: Canceled.",
+  );
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
+        PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.15',
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'candidate-migrate' }),
+      },
+      vscodeApi: {
+        workspace: {
+          workspaceFile: {
+            fsPath:
+              '/tmp/installed/migrate-current/workspace/installed-vsix-upgrade.code-workspace',
+          },
+        },
+        extensions: {
+          getExtension() {
+            return {
+              extensionPath: path.join(extensionsDir, 'yukiito1999.project-lanes-0.1.15-linux-x64'),
+              packageJSON: { version: '0.1.15' },
+              isActive: false,
+              async activate() {
+                throw activationError;
+              },
+            };
+          },
+        },
+      },
+      fileSystem: {
+        existsSync() {
+          return false;
+        },
       },
       resolveRealPath(value) {
         return value;
@@ -1236,6 +1298,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   const linkTargets = new Map();
   let version = '0.1.13';
   let activated = false;
+  let persistentSessionsWorkspaceValue;
   const workspace = {
     workspaceFile: { fsPath: workspaceFile },
     workspaceFolders: [
@@ -1246,7 +1309,8 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
       return {
         inspect(key) {
           return {
-            workspaceValue: key === 'defaultProfile.linux' ? 'Lane Terminal' : undefined,
+            workspaceValue:
+              key === 'defaultProfile.linux' ? 'Lane Terminal' : persistentSessionsWorkspaceValue,
           };
         },
       };
@@ -1309,13 +1373,18 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
       verifiedTerminalTargets.push(expectedLaneRoot);
     },
     fileSystem: {
+      existsSync(value) {
+        return linkTargets.has(value);
+      },
       realpathSync(value) {
         const target = linkTargets.get(value);
         if (!target) throw new Error(`active link is missing: ${value}`);
         return target;
       },
     },
-    delay: async () => {},
+    delay: async () => {
+      persistentSessionsWorkspaceValue = undefined;
+    },
   };
   const environmentFor = (phase) => ({
     PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
@@ -1333,6 +1402,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
 
   version = '0.1.14';
   activated = false;
+  persistentSessionsWorkspaceValue = false;
   await run({
     ...dependencies,
     environment: environmentFor('candidate-migrate'),
@@ -1360,6 +1430,127 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   assert.deepEqual(verifiedTerminalTargets, [laneB]);
   assert.equal(linkTargets.get(legacyLink), laneB);
   assert.equal(linkTargets.get(namespacedLink), laneB);
+});
+
+test('the installed VSIX suite upgrades a namespaced baseline without legacy migration', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  const extensionsDir = '/tmp/installed/upgrade-current/extensions';
+  const workspaceDirectory = '/tmp/installed/upgrade-current/workspace';
+  const workspaceFile = path.join(workspaceDirectory, 'installed-vsix-upgrade.code-workspace');
+  const anchor = deriveWorkspaceAnchor({ fsPath: workspaceFile });
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const linkTargets = new Map();
+  const verifiedTerminalTargets = [];
+  let version = '0.1.14';
+  let activated = false;
+  const workspace = {
+    workspaceFile: { fsPath: workspaceFile },
+    workspaceFolders: [
+      { name: 'lane-a', uri: { fsPath: laneA } },
+      { name: 'lane-b', uri: { fsPath: laneB } },
+    ],
+    getConfiguration() {
+      return {
+        inspect(key) {
+          return {
+            workspaceValue: key === 'defaultProfile.linux' ? 'Lane Terminal' : undefined,
+          };
+        },
+      };
+    },
+  };
+  const vscodeApi = {
+    workspace,
+    extensions: {
+      getExtension() {
+        return {
+          extensionPath: path.join(extensionsDir, `yukiito1999.project-lanes-${version}-linux-x64`),
+          packageJSON: { version },
+          get isActive() {
+            return activated;
+          },
+          async activate() {
+            activated = true;
+          },
+        };
+      },
+    },
+    commands: {
+      async executeCommand(command, argument) {
+        if (command === 'projectLanes.initializeWorkspace') {
+          linkTargets.set(anchor.activeLinkPath, laneA);
+        } else if (command === 'projectLanes.switchLane') {
+          linkTargets.set(anchor.activeLinkPath, argument === 'lane-a' ? laneA : laneB);
+        }
+        const activeTarget = linkTargets.get(anchor.activeLinkPath);
+        if (activeTarget) {
+          workspace.workspaceFolders = [
+            { name: path.basename(activeTarget), uri: { fsPath: anchor.activeLinkPath } },
+          ];
+        }
+        if (command === 'projectLanes.switchLane') throw new Error('Canceled');
+      },
+    },
+  };
+  const dependencies = {
+    vscodeApi,
+    async respondToLegacySettings() {
+      throw new Error('must not prompt for a namespaced baseline');
+    },
+    resolveRealPath(value) {
+      return value;
+    },
+    loadNodePty() {
+      return { spawn() {} };
+    },
+    runRipgrep() {
+      return { status: 0, stdout: 'ripgrep 14.1.1\n', stderr: '' };
+    },
+    async verifyTerminal({ expectedLaneRoot }) {
+      verifiedTerminalTargets.push(expectedLaneRoot);
+    },
+    fileSystem: {
+      existsSync(value) {
+        return linkTargets.has(value);
+      },
+      realpathSync(value) {
+        const target = linkTargets.get(value);
+        if (!target) throw new Error(`active link is missing: ${value}`);
+        return target;
+      },
+    },
+    delay: async () => {},
+  };
+  const environmentFor = (phase) => ({
+    PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
+    PROJECT_LANES_E2E_EXPECTED_VERSION: version,
+    PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase }),
+  });
+
+  await run({
+    ...dependencies,
+    environment: environmentFor('baseline-create-v1'),
+  });
+  assert.equal(linkTargets.get(anchor.activeLinkPath), laneB);
+  assert.equal(linkTargets.has(anchor.legacyActiveLinkPath), false);
+
+  version = '0.1.15';
+  activated = false;
+  await run({
+    ...dependencies,
+    environment: environmentFor('candidate-migrate'),
+  });
+
+  activated = false;
+  await run({
+    ...dependencies,
+    environment: environmentFor('candidate-restart'),
+  });
+
+  assert.equal(linkTargets.get(anchor.activeLinkPath), laneB);
+  assert.equal(linkTargets.has(anchor.legacyActiveLinkPath), false);
+  assert.deepEqual(verifiedTerminalTargets, [laneB]);
 });
 
 test('the installed VSIX suite rejects a candidate whose manifest version is unexpected', async () => {
@@ -1597,28 +1788,7 @@ test('extension management CLI isolates the profile before applying the requeste
   });
 });
 
-test('extension listing rejects a version mismatch and any unrelated profile extension', () => {
-  assert.throws(
-    () =>
-      assertListedExtensionVersion(
-        'yukiito1999.project-lanes@0.1.12\n',
-        'yukiito1999.project-lanes',
-        '0.1.13',
-      ),
-    /Expected installed extensions to equal yukiito1999\.project-lanes@0\.1\.13.*0\.1\.12/s,
-  );
-  assert.throws(
-    () =>
-      assertListedExtensionVersion(
-        ['unrelated.publisher@1.0.0', 'yukiito1999.project-lanes@0.1.13', ''].join('\n'),
-        'yukiito1999.project-lanes',
-        '0.1.13',
-      ),
-    /unrelated\.publisher@1\.0\.0/,
-  );
-});
-
-test('extension management executes without a shell and exposes stdout for version checks', () => {
+test('extension management executes without a shell and exposes stdout', () => {
   const calls = [];
   const stdout = executeExtensionManagementRequest(
     {
@@ -1684,11 +1854,11 @@ test('extension management reports the failed CLI operation and stderr', () => {
   );
 });
 
-test('extension install is followed by an exact version listing in the same isolated profile', () => {
+test('extension installation invokes the isolated CLI only once', () => {
   const requests = [];
-  const outputs = ['', 'yukiito1999.project-lanes@0.1.13\n'];
+  const outputs = [''];
 
-  installAndVerifyExtension(
+  installExtension(
     {
       vscodeExecutablePath: '/vscode/code',
       userDataDir: '/tmp/installed/fresh/user-data',
@@ -1719,17 +1889,6 @@ test('extension install is followed by an exact version listing in the same isol
         '--install-extension',
         '/tmp/project-lanes.vsix',
         '--force',
-      ],
-    },
-    {
-      command: '/vscode/bin/code',
-      args: [
-        '--user-data-dir',
-        '/tmp/installed/fresh/user-data',
-        '--extensions-dir',
-        '/tmp/installed/fresh/extensions',
-        '--list-extensions',
-        '--show-versions',
       ],
     },
   ]);
@@ -1777,6 +1936,7 @@ test('installed VSIX verification launches baseline before upgrading the same pr
       vsixPath: '/tmp/project-lanes-0.1.14-linux-x64.vsix',
       candidateVersion: '0.1.14',
       baselineVersion: '0.1.13',
+      baselineVsixPath: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
     },
     {
       createRunId: () => 'installed-run',
@@ -1914,11 +2074,14 @@ test('installed VSIX verification launches baseline before upgrading the same pr
       },
     ],
   );
+  for (const { launch } of [operations[1], operations[3], operations[5], operations[6]]) {
+    assert.equal('PROJECT_LANES_E2E_BASELINE_VERSION' in launch.environment, false);
+  }
   assert.deepEqual(operations[2], {
     install: {
       vscodeExecutablePath: '/vscode/code',
       ...profiles.upgrade,
-      extensionReference: 'yukiito1999.project-lanes@0.1.13',
+      extensionReference: '/tmp/project-lanes-0.1.13-linux-x64.vsix',
       extensionId: 'yukiito1999.project-lanes',
       expectedVersion: '0.1.13',
     },
@@ -2056,7 +2219,11 @@ test('the installed VSIX entrypoint downloads VS Code and verifies the requested
   const calls = [];
 
   await main({
-    argv: ['/tmp/project-lanes-linux-x64-0.1.13.vsix', '0.1.12'],
+    argv: [
+      '/tmp/project-lanes-linux-x64-0.1.13.vsix',
+      '0.1.12',
+      '/tmp/project-lanes-linux-x64-0.1.12.vsix',
+    ],
     packageMetadata: { version: '0.1.13' },
     async downloadVSCode(options) {
       calls.push({ download: options });
@@ -2080,12 +2247,13 @@ test('the installed VSIX entrypoint downloads VS Code and verifies the requested
         vsixPath: '/tmp/project-lanes-linux-x64-0.1.13.vsix',
         candidateVersion: '0.1.13',
         baselineVersion: '0.1.12',
+        baselineVsixPath: '/tmp/project-lanes-linux-x64-0.1.12.vsix',
       },
     },
   ]);
 });
 
-test('the installed VSIX entrypoint requires the artifact path and previous version only', async () => {
+test('the installed VSIX entrypoint requires candidate and baseline artifact paths', async () => {
   const { main } = require('./run-vsix.cjs');
 
   await assert.rejects(
@@ -2093,14 +2261,19 @@ test('the installed VSIX entrypoint requires the artifact path and previous vers
       argv: ['/tmp/project-lanes-linux-x64-0.1.13.vsix'],
       packageMetadata: { version: '0.1.13' },
     }),
-    /Usage: node test\/e2e\/run-vsix\.cjs <vsixPath> <previousVersion>/,
+    /Usage: node test\/e2e\/run-vsix\.cjs <vsixPath> <previousVersion> <previousVsixPath>/,
   );
   await assert.rejects(
     main({
-      argv: ['/tmp/project-lanes-linux-x64-0.1.13.vsix', '0.1.12', 'unexpected'],
+      argv: [
+        '/tmp/project-lanes-linux-x64-0.1.13.vsix',
+        '0.1.12',
+        '/tmp/project-lanes-linux-x64-0.1.12.vsix',
+        'unexpected',
+      ],
       packageMetadata: { version: '0.1.13' },
     }),
-    /Usage: node test\/e2e\/run-vsix\.cjs <vsixPath> <previousVersion>/,
+    /Usage: node test\/e2e\/run-vsix\.cjs <vsixPath> <previousVersion> <previousVsixPath>/,
   );
 });
 

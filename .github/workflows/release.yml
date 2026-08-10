@@ -177,12 +177,47 @@ jobs:
           fi
           npm run checksum:vsix -- verify "$VSIX_PATH" "$CHECKSUM_PATH"
 
+      - name: Download and verify upgrade baselines
+        if: steps.state.outputs.complete != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_VERSION: ${{ steps.metadata.outputs.previous_version }}
+          LEGACY_TERMINAL_SETTINGS_VERSION: 0.1.13
+        run: |
+          BASELINE_ROOT="$RUNNER_TEMP/baselines"
+          download_baseline() {
+            BASELINE_VERSION="$1"
+            BASELINE_DIR="$BASELINE_ROOT/$BASELINE_VERSION"
+            BASELINE_VSIX_NAME="project-lanes-linux-x64-${BASELINE_VERSION}.vsix"
+            BASELINE_VSIX_PATH="$BASELINE_DIR/$BASELINE_VSIX_NAME"
+            BASELINE_CHECKSUM_PATH="${BASELINE_VSIX_PATH}.sha256"
+            mkdir -p "$BASELINE_DIR"
+            gh release download "v${BASELINE_VERSION}" \
+              --pattern "$BASELINE_VSIX_NAME" \
+              --pattern "${BASELINE_VSIX_NAME}.sha256" \
+              --dir "$BASELINE_DIR"
+            npm run checksum:vsix -- verify "$BASELINE_VSIX_PATH" "$BASELINE_CHECKSUM_PATH"
+          }
+
+          download_baseline "$PREVIOUS_VERSION"
+          if [ "$PREVIOUS_VERSION" != "$LEGACY_TERMINAL_SETTINGS_VERSION" ]; then
+            download_baseline "$LEGACY_TERMINAL_SETTINGS_VERSION"
+          fi
+
       - name: Test installed VSIX
         if: steps.state.outputs.complete != 'true'
         env:
           VSIX_PATH: ${{ steps.metadata.outputs.vsix_path }}
           PREVIOUS_VERSION: ${{ steps.metadata.outputs.previous_version }}
-        run: xvfb-run -a npm run test:e2e:vsix -- "$VSIX_PATH" "$PREVIOUS_VERSION"
+          LEGACY_TERMINAL_SETTINGS_VERSION: 0.1.13
+        run: |
+          BASELINE_ROOT="$RUNNER_TEMP/baselines"
+          PREVIOUS_VSIX_PATH="$BASELINE_ROOT/$PREVIOUS_VERSION/project-lanes-linux-x64-${PREVIOUS_VERSION}.vsix"
+          LEGACY_TERMINAL_SETTINGS_VSIX_PATH="$BASELINE_ROOT/$LEGACY_TERMINAL_SETTINGS_VERSION/project-lanes-linux-x64-${LEGACY_TERMINAL_SETTINGS_VERSION}.vsix"
+          xvfb-run -a npm run test:e2e:vsix -- "$VSIX_PATH" "$PREVIOUS_VERSION" "$PREVIOUS_VSIX_PATH"
+          if [ "$PREVIOUS_VERSION" != "$LEGACY_TERMINAL_SETTINGS_VERSION" ]; then
+            xvfb-run -a npm run test:e2e:vsix -- "$VSIX_PATH" "$LEGACY_TERMINAL_SETTINGS_VERSION" "$LEGACY_TERMINAL_SETTINGS_VSIX_PATH"
+          fi
 
       - name: Upload verified artifact
         if: steps.state.outputs.complete != 'true'
