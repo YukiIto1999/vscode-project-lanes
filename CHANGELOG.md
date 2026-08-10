@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.15] - 2026-08-10
+
+### Fixed
+
+- Managed workspaces now keep the standard terminal `+` button connected to Lane Terminal after every v0.1.13 legacy-settings choice, so new terminals start in the active lane's real root instead of the `.lanes-root` workspace anchor. (929ddf8)
+
 ## [0.1.14] - 2026-07-30
 
 ### Added
