@@ -6,6 +6,7 @@ const path = require('node:path');
 const { deriveWorkspaceAnchor } = require('../workspace-anchor.cjs');
 
 const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
+const E2E_RESULT_PATH_KEY = 'PROJECT_LANES_E2E_RESULT_PATH';
 const EXTENSION_ID = 'yukiito1999.project-lanes';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
@@ -63,6 +64,12 @@ const readPhase = (environment) => {
     throw new Error(`Unknown E2E phase: ${String(payload.phase)}`);
   }
   return payload.phase;
+};
+
+const initializationRequestPath = (environment) => {
+  const resultPath = environment[E2E_RESULT_PATH_KEY];
+  assert.ok(resultPath, `Missing E2E result path: ${E2E_RESULT_PATH_KEY}`);
+  return `${resultPath}.initialize-requested`;
 };
 
 const assertTerminalWorkspaceValues = (vscodeApi, expectedProfile, expectedPersistence) => {
@@ -137,16 +144,20 @@ const run = async ({
     );
 
   if (phase === 'initialize') {
-    assertUnmanaged({
-      fileSystem,
-      vscodeApi: resolvedVscodeApi,
-      workspaceFile: workspaceFile.fsPath,
-      workspaceDirectory,
-    });
-    try {
-      await resolvedVscodeApi.commands.executeCommand('projectLanes.initializeWorkspace');
-    } catch (error) {
-      if (!isCancellation(error)) throw error;
+    const requestPath = initializationRequestPath(environment);
+    if (!fileSystem.existsSync(requestPath)) {
+      assertUnmanaged({
+        fileSystem,
+        vscodeApi: resolvedVscodeApi,
+        workspaceFile: workspaceFile.fsPath,
+        workspaceDirectory,
+      });
+      fileSystem.writeFileSync(requestPath, '', { encoding: 'utf8', flag: 'wx' });
+      try {
+        await resolvedVscodeApi.commands.executeCommand('projectLanes.initializeWorkspace');
+      } catch (error) {
+        if (!isCancellation(error)) throw error;
+      }
     }
     await waitForManaged(laneA);
     log('E2E PASS: initialize command created the managed workspace');
