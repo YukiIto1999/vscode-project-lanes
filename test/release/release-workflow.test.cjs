@@ -54,6 +54,34 @@ test('runs source and installed-artifact verification before publishing', () => 
   );
 });
 
+test('verifies installed upgrades from both the previous release and legacy terminal settings', () => {
+  const downloadBaselines = indexOf('Download and verify upgrade baselines');
+  const installedE2e = indexOf('npm run test:e2e:vsix');
+  const baselineVerification = workflow.slice(downloadBaselines, installedE2e);
+  const downloadVsix = baselineVerification.indexOf('gh release download "v${BASELINE_VERSION}"');
+  const verifyChecksum = baselineVerification.indexOf(
+    'npm run checksum:vsix -- verify "$BASELINE_VSIX_PATH" "$BASELINE_CHECKSUM_PATH"',
+  );
+
+  assert.match(workflow, /LEGACY_TERMINAL_SETTINGS_VERSION: 0\.1\.13/);
+  assert.match(workflow, /gh release download "v\$\{BASELINE_VERSION\}"/);
+  assert.match(
+    workflow,
+    /checksum:vsix -- verify "\$BASELINE_VSIX_PATH" "\$BASELINE_CHECKSUM_PATH"/,
+  );
+  assert.match(
+    workflow,
+    /if \[ "\$PREVIOUS_VERSION" != "\$LEGACY_TERMINAL_SETTINGS_VERSION" \]; then/,
+  );
+  assert.match(
+    workflow,
+    /test:e2e:vsix -- "\$VSIX_PATH" "\$PREVIOUS_VERSION" "\$PREVIOUS_VSIX_PATH"[\s\S]*test:e2e:vsix -- "\$VSIX_PATH" "\$LEGACY_TERMINAL_SETTINGS_VERSION" "\$LEGACY_TERMINAL_SETTINGS_VSIX_PATH"/,
+  );
+  assert.ok(downloadVsix >= 0);
+  assert.ok(downloadVsix < verifyChecksum);
+  assert.ok(downloadBaselines < installedE2e);
+});
+
 test('packages a Linux x64 VSIX once and publishes that exact path', () => {
   assert.match(workflow, /SOURCE_DATE_EPOCH/);
   assert.match(workflow, /--target linux-x64/);

@@ -116,7 +116,11 @@ const verifyLaneTerminalFromPlus = async ({
       { delay, now },
     );
 
-    assert.equal(terminal.name, expectedLaneLabel, 'The terminal + action bypassed Lane Terminal');
+    assert.equal(
+      terminal.name,
+      expectedLaneLabel,
+      `The terminal + action bypassed Lane Terminal: opened ${JSON.stringify(terminal.name)}`,
+    );
     terminal.sendText(
       `printf '%s\\n%s\\n' "$PWD" "$LANES_SESSION_ID" > ${shellQuote(probePath)}`,
       true,
@@ -187,6 +191,13 @@ const run = async ({
   log = (message) => console.log(message),
 } = {}) => {
   const phase = readPhase(environment);
+  const workspaceFile = phase === 'fresh' ? undefined : vscodeApi.workspace.workspaceFile;
+  if (phase !== 'fresh') {
+    assert.ok(workspaceFile, `Workspace file not found: ${UPGRADE_WORKSPACE_FIXTURE}`);
+    assert.equal(path.basename(workspaceFile.fsPath), UPGRADE_WORKSPACE_FIXTURE);
+  }
+  const anchor = workspaceFile ? deriveWorkspaceAnchor(workspaceFile) : undefined;
+  const usesLegacyBaseline = anchor ? fileSystem.existsSync(anchor.legacyActiveLinkPath) : false;
   const expectedExtensionsDir = resolveRealPath(
     requiredEnvironmentValue(environment, EXPECTED_EXTENSIONS_DIR_KEY),
   );
@@ -209,7 +220,7 @@ const run = async ({
   const activation = extension.activate();
   let activationCanceled = false;
   try {
-    if (phase === 'candidate-migrate') {
+    if (phase === 'candidate-migrate' && usesLegacyBaseline) {
       await respondToLegacySettings({
         activation,
         commands: vscodeApi.commands,
@@ -220,7 +231,13 @@ const run = async ({
       await activation;
     }
   } catch (error) {
-    if (phase !== 'candidate-migrate' || !isActivationHostCancellation(error)) throw error;
+    if (
+      phase !== 'candidate-migrate' ||
+      !usesLegacyBaseline ||
+      !isActivationHostCancellation(error)
+    ) {
+      throw error;
+    }
     activationCanceled = true;
   }
   if (!activationCanceled) {
@@ -248,13 +265,8 @@ const run = async ({
     return;
   }
 
-  const workspaceFile = vscodeApi.workspace.workspaceFile;
-  assert.ok(workspaceFile, `Workspace file not found: ${UPGRADE_WORKSPACE_FIXTURE}`);
-  assert.equal(path.basename(workspaceFile.fsPath), UPGRADE_WORKSPACE_FIXTURE);
   const workspaceDirectory = path.dirname(workspaceFile.fsPath);
-  const anchor = deriveWorkspaceAnchor(workspaceFile);
-  const activeLink =
-    phase === 'baseline-create-v1' ? anchor.legacyActiveLinkPath : anchor.activeLinkPath;
+  let activeLink = anchor.activeLinkPath;
   const laneA = path.join(workspaceDirectory, 'lane-a');
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const waitForLane = (expectedTarget) =>
@@ -282,22 +294,43 @@ const run = async ({
     } catch (error) {
       if (!isCommandCancellation(error)) throw error;
     }
-    await waitForLane(laneA);
+    await waitFor(
+      () => {
+        const folders = vscodeApi.workspace.workspaceFolders;
+        assert.equal(folders?.length, 1, 'Expected one active workspace folder');
+        const observedActiveLink = path.resolve(folders[0].uri.fsPath);
+        assert.equal(
+          [anchor.legacyActiveLinkPath, anchor.activeLinkPath]
+            .map((candidate) => path.resolve(candidate))
+            .includes(observedActiveLink),
+          true,
+          `Baseline created an unexpected active link: ${observedActiveLink}`,
+        );
+        assert.equal(path.resolve(fileSystem.realpathSync(observedActiveLink)), laneA);
+        activeLink = observedActiveLink;
+      },
+      { delay, now },
+    );
     await switchTo('lane-b', laneB);
     log(`E2E PASS: baseline ${EXTENSION_ID}@${expectedVersion} created v1 state`);
     return;
   }
 
   const terminalConfiguration = vscodeApi.workspace.getConfiguration('terminal.integrated');
-  assert.equal(
-    terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
-    'Lane Terminal',
-    'Candidate did not reacquire the lane-aware default profile',
-  );
-  assert.equal(
-    terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
-    undefined,
-    'Candidate retained the matching legacy persistence override',
+  await waitFor(
+    () => {
+      assert.equal(
+        terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
+        'Lane Terminal',
+        'Candidate did not reacquire the lane-aware default profile',
+      );
+      assert.equal(
+        terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
+        undefined,
+        'Candidate retained the matching legacy persistence override',
+      );
+    },
+    { delay, now },
   );
   await waitForLane(laneB);
   if (phase === 'candidate-restart') {
@@ -311,19 +344,25 @@ const run = async ({
       now,
     });
   }
-  assert.equal(
-    path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
-    laneB,
-    'Candidate changed the legacy active link during migration',
-  );
+  if (usesLegacyBaseline) {
+    assert.equal(
+      path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
+      laneB,
+      'Candidate changed the legacy active link during migration',
+    );
+  }
   await switchTo('lane-a', laneA);
   await switchTo('lane-b', laneB);
-  assert.equal(
-    path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
-    laneB,
-    'Candidate changed the legacy active link after migration',
-  );
-  log(`E2E PASS: ${phase} preserved the legacy link and namespaced workspace state`);
+  if (usesLegacyBaseline) {
+    assert.equal(
+      path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
+      laneB,
+      'Candidate changed the legacy active link after migration',
+    );
+    log(`E2E PASS: ${phase} preserved the legacy link and namespaced workspace state`);
+    return;
+  }
+  log(`E2E PASS: ${phase} preserved the namespaced workspace state`);
 };
 
 module.exports = {

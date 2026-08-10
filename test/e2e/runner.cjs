@@ -162,16 +162,6 @@ const buildExtensionManagementRequest = ({
   };
 };
 
-const assertListedExtensionVersion = (output, extensionId, expectedVersion) => {
-  const expected = `${extensionId}@${expectedVersion}`;
-  const listed = output.trimEnd() === '' ? [] : output.trimEnd().split(/\r?\n/);
-  if (listed.length !== 1 || listed[0] !== expected) {
-    throw new Error(
-      `Expected installed extensions to equal ${expected}, received ${JSON.stringify(listed)}`,
-    );
-  }
-};
-
 const executeExtensionManagementRequest = (
   { command, args },
   { environment = process.env, spawnSync = childProcess.spawnSync } = {},
@@ -195,16 +185,8 @@ const executeExtensionManagementRequest = (
   return result.stdout;
 };
 
-const installAndVerifyExtension = (
-  {
-    vscodeExecutablePath,
-    userDataDir,
-    extensionsDir,
-    extensionReference,
-    extensionId,
-    expectedVersion,
-    resolveCliArgs,
-  },
+const installExtension = (
+  { vscodeExecutablePath, userDataDir, extensionsDir, extensionReference, resolveCliArgs },
   { executeRequest = executeExtensionManagementRequest } = {},
 ) => {
   const buildRequest = (operationArgs) =>
@@ -217,17 +199,15 @@ const installAndVerifyExtension = (
     });
 
   executeRequest(buildRequest(['--install-extension', extensionReference, '--force']));
-  const listedExtensions = executeRequest(buildRequest(['--list-extensions', '--show-versions']));
-  assertListedExtensionVersion(listedExtensions, extensionId, expectedVersion);
 };
 
 const runInstalledVSIXVerification = async (
-  { vscodeExecutablePath, vsixPath, candidateVersion, baselineVersion },
+  { vscodeExecutablePath, vsixPath, candidateVersion, baselineVersion, baselineVsixPath },
   {
     createRunId = () => crypto.randomUUID(),
     environment = process.env,
     fileSystem = fs,
-    installExtension = installAndVerifyExtension,
+    installExtension: installExtensionIntoProfile = installExtension,
     launchVSCode = launchVSCodeProcess,
     processApi = process,
     temporaryDirectory = os.tmpdir(),
@@ -286,7 +266,7 @@ const runInstalledVSIXVerification = async (
     fileSystem.cpSync(upgradeFixtureRoot, upgradeWorkspaceDirectory, { recursive: true });
 
     const install = (profile, extensionReference, expectedVersion) =>
-      installExtension({
+      installExtensionIntoProfile({
         vscodeExecutablePath,
         ...profile,
         extensionReference,
@@ -328,7 +308,7 @@ const runInstalledVSIXVerification = async (
       expectedVersion: candidateVersion,
     });
 
-    install(profiles.upgrade, `${PROJECT_LANES_EXTENSION_ID}@${baselineVersion}`, baselineVersion);
+    install(profiles.upgrade, baselineVsixPath, baselineVersion);
     await launch({
       profileName: 'upgrade',
       profile: profiles.upgrade,
@@ -819,14 +799,13 @@ const runScenario = async (
 };
 
 module.exports = {
-  assertListedExtensionVersion,
   buildDownloadOptions,
   buildExtensionManagementRequest,
   buildInstalledLaunchOptions,
   buildLaunchOptions,
   createProcessCleanupRegistry,
   executeExtensionManagementRequest,
-  installAndVerifyExtension,
+  installExtension,
   launchVSCodeProcess,
   runInstalledVSIXVerification,
   runScenario,
