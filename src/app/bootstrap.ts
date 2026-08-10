@@ -274,7 +274,6 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     );
     const operationQueue = createOperationQueue();
     const laneProfile = readLaneTerminalProfile(extensionContext.extension);
-    await terminalSettings.activate(laneProfile.title);
     const editor = createEditorAdapter();
     const editorStore = createEditorSnapshotStoreAdapter(extensionContext.workspaceState);
     await editorStore.prune(registry.snapshot().lanes.map((lane) => lane.id));
@@ -441,6 +440,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         },
       }),
     );
+    await terminalSettings.activate(laneProfile.title);
 
     track(
       vscode.window.onDidCloseTerminal((terminal) => {

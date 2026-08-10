@@ -358,6 +358,9 @@ describe('ターミナル設定の可逆所有境界', () => {
       bootstrap.indexOf('export const bootstrapRuntime'),
     );
     expect(managedRuntime).toContain('await terminalSettings.activate(laneProfile.title)');
+    expect(managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider')).toBeLessThan(
+      managedRuntime.indexOf('await terminalSettings.activate(laneProfile.title)'),
+    );
     expect(managedRuntime).toContain('cleanupFailedRuntime({ disposeResources, terminalSettings }');
     expect(managedRuntime).toContain('disposeRuntime({ disposeResources, terminalSettings })');
     expect(managedRuntime).not.toContain('createTerminalSettingsLeaseAdapter');

@@ -931,6 +931,181 @@ test('the installed VSIX suite selects Remove Legacy Settings while candidate ac
   assert.deepEqual(commands, ['notifications.focusToasts', 'notification.acceptPrimaryAction']);
 });
 
+test('the installed VSIX suite verifies that terminal + opens a lane-root session', async () => {
+  const { verifyLaneTerminalFromPlus } = require('./suite/installed-vsix.cjs');
+  const workspaceDirectory = '/tmp/installed/upgrade/workspace';
+  const expectedLaneRoot = path.join(workspaceDirectory, 'lane-b');
+  const probePath = path.join(workspaceDirectory, '.project-lanes-terminal-probe');
+  const files = new Map();
+  const terminals = [];
+  const window = { terminals, activeTerminal: undefined };
+  let disposed = false;
+  const terminal = {
+    name: 'lane-b',
+    sendText(command, addNewLine) {
+      assert.equal(addNewLine, true);
+      assert.match(command, /\$PWD/);
+      assert.match(command, /\$LANES_SESSION_ID/);
+      assert.match(command, /\.project-lanes-terminal-probe/);
+      files.set(probePath, `${expectedLaneRoot}\nlane-session-1\n`);
+    },
+    dispose() {
+      disposed = true;
+    },
+  };
+
+  await verifyLaneTerminalFromPlus({
+    vscodeApi: {
+      window,
+      commands: {
+        async executeCommand(command) {
+          assert.equal(command, 'workbench.action.terminal.new');
+          terminals.push(terminal);
+          window.activeTerminal = terminal;
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(filePath) {
+        return files.has(filePath);
+      },
+      readFileSync(filePath) {
+        return files.get(filePath);
+      },
+      unlinkSync(filePath) {
+        files.delete(filePath);
+      },
+    },
+    workspaceDirectory,
+    expectedLaneLabel: 'lane-b',
+    expectedLaneRoot,
+    delay: async () => {},
+  });
+
+  assert.equal(disposed, true);
+  assert.equal(files.has(probePath), false);
+});
+
+test('the installed VSIX terminal + probe rejects a standard shell at the workspace anchor', async () => {
+  const { verifyLaneTerminalFromPlus } = require('./suite/installed-vsix.cjs');
+  const terminals = [];
+  const window = { terminals, activeTerminal: undefined };
+  let disposed = false;
+  const terminal = {
+    name: 'bash',
+    sendText() {
+      throw new Error('must reject before probing the standard shell');
+    },
+    dispose() {
+      disposed = true;
+    },
+  };
+
+  await assert.rejects(
+    verifyLaneTerminalFromPlus({
+      vscodeApi: {
+        window,
+        commands: {
+          async executeCommand(command) {
+            assert.equal(command, 'workbench.action.terminal.new');
+            terminals.push(terminal);
+            window.activeTerminal = terminal;
+          },
+        },
+      },
+      fileSystem: {
+        existsSync() {
+          return false;
+        },
+        unlinkSync() {
+          throw new Error('must not remove a missing probe');
+        },
+      },
+      workspaceDirectory: '/tmp/installed/upgrade/workspace',
+      expectedLaneLabel: 'lane-b',
+      expectedLaneRoot: '/tmp/installed/upgrade/workspace/lane-b',
+      delay: async () => {},
+    }),
+    /bypassed Lane Terminal/,
+  );
+  assert.equal(disposed, true);
+});
+
+test('the installed VSIX terminal + probe rejects multiple new terminals', async () => {
+  const { verifyLaneTerminalFromPlus } = require('./suite/installed-vsix.cjs');
+  const terminals = [];
+  const window = { terminals, activeTerminal: undefined };
+
+  await assert.rejects(
+    verifyLaneTerminalFromPlus({
+      vscodeApi: {
+        window,
+        commands: {
+          async executeCommand() {
+            terminals.push({ name: 'lane-b' }, { name: 'unexpected' });
+            window.activeTerminal = terminals[0];
+          },
+        },
+      },
+      fileSystem: {
+        existsSync() {
+          return false;
+        },
+      },
+      workspaceDirectory: '/tmp/installed/upgrade/workspace',
+      expectedLaneLabel: 'lane-b',
+      expectedLaneRoot: '/tmp/installed/upgrade/workspace/lane-b',
+      delay: async () => {},
+      now: (() => {
+        let instant = 0;
+        return () => (instant += 12_001);
+      })(),
+    }),
+    /ambiguous result/,
+  );
+});
+
+test('the installed VSIX terminal + probe rejects a new terminal that is not active', async () => {
+  const { verifyLaneTerminalFromPlus } = require('./suite/installed-vsix.cjs');
+  const existingTerminal = { name: 'existing' };
+  const terminals = [existingTerminal];
+  const window = { terminals, activeTerminal: existingTerminal };
+  let disposed = false;
+
+  await assert.rejects(
+    verifyLaneTerminalFromPlus({
+      vscodeApi: {
+        window,
+        commands: {
+          async executeCommand() {
+            terminals.push({
+              name: 'lane-b',
+              dispose() {
+                disposed = true;
+              },
+            });
+          },
+        },
+      },
+      fileSystem: {
+        existsSync() {
+          return false;
+        },
+      },
+      workspaceDirectory: '/tmp/installed/upgrade/workspace',
+      expectedLaneLabel: 'lane-b',
+      expectedLaneRoot: '/tmp/installed/upgrade/workspace/lane-b',
+      delay: async () => {},
+      now: (() => {
+        let instant = 0;
+        return () => (instant += 12_001);
+      })(),
+    }),
+    /did not activate the created terminal/,
+  );
+  assert.equal(disposed, true);
+});
+
 test('the installed VSIX suite accepts only the measured host cancellation contracts', () => {
   const {
     isActivationHostCancellation,
@@ -1057,6 +1232,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   const laneB = path.join(workspaceDirectory, 'lane-b');
   const commands = [];
   const recreatedTargets = [];
+  const verifiedTerminalTargets = [];
   const linkTargets = new Map();
   let version = '0.1.13';
   let activated = false;
@@ -1068,8 +1244,10 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     ],
     getConfiguration() {
       return {
-        inspect() {
-          return { workspaceValue: undefined };
+        inspect(key) {
+          return {
+            workspaceValue: key === 'defaultProfile.linux' ? 'Lane Terminal' : undefined,
+          };
         },
       };
     },
@@ -1127,6 +1305,9 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     runRipgrep() {
       return { status: 0, stdout: 'ripgrep 14.1.1\n', stderr: '' };
     },
+    async verifyTerminal({ expectedLaneRoot }) {
+      verifiedTerminalTargets.push(expectedLaneRoot);
+    },
     fileSystem: {
       realpathSync(value) {
         const target = linkTargets.get(value);
@@ -1159,6 +1340,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
   assert.equal(linkTargets.get(legacyLink), laneB);
   assert.equal(linkTargets.get(namespacedLink), laneB);
   assert.deepEqual(recreatedTargets, [laneB]);
+  assert.deepEqual(verifiedTerminalTargets, []);
 
   activated = false;
   await run({
@@ -1175,6 +1357,7 @@ test('the installed VSIX suite creates v1 state with the baseline then exercises
     ['projectLanes.switchLane', 'lane-b'],
   ]);
   assert.deepEqual(recreatedTargets, [laneB]);
+  assert.deepEqual(verifiedTerminalTargets, [laneB]);
   assert.equal(linkTargets.get(legacyLink), laneB);
   assert.equal(linkTargets.get(namespacedLink), laneB);
 });

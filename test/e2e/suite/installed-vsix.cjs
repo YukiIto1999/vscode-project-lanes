@@ -78,6 +78,63 @@ const isActivationHostCancellation = (error) =>
 
 const isCommandCancellation = (error) => error instanceof Error && error.message === 'Canceled';
 
+const shellQuote = (value) => `'${value.replaceAll("'", `'"'"'`)}'`;
+
+const verifyLaneTerminalFromPlus = async ({
+  vscodeApi,
+  fileSystem,
+  workspaceDirectory,
+  expectedLaneLabel,
+  expectedLaneRoot,
+  delay,
+  now,
+}) => {
+  const probePath = path.join(workspaceDirectory, '.project-lanes-terminal-probe');
+  if (fileSystem.existsSync(probePath)) fileSystem.unlinkSync(probePath);
+  const existingTerminals = new Set(vscodeApi.window.terminals);
+  let terminal;
+
+  try {
+    await vscodeApi.commands.executeCommand('workbench.action.terminal.new');
+    await waitFor(
+      () => {
+        const createdTerminals = vscodeApi.window.terminals.filter(
+          (candidate) => !existingTerminals.has(candidate),
+        );
+        assert.equal(
+          createdTerminals.length,
+          1,
+          'The terminal + action created an ambiguous result',
+        );
+        terminal = createdTerminals[0];
+        assert.equal(
+          vscodeApi.window.activeTerminal,
+          terminal,
+          'The terminal + action did not activate the created terminal',
+        );
+      },
+      { delay, now },
+    );
+
+    assert.equal(terminal.name, expectedLaneLabel, 'The terminal + action bypassed Lane Terminal');
+    terminal.sendText(
+      `printf '%s\\n%s\\n' "$PWD" "$LANES_SESSION_ID" > ${shellQuote(probePath)}`,
+      true,
+    );
+    await waitFor(
+      () => assert.equal(fileSystem.existsSync(probePath), true, 'Terminal probe was not written'),
+      { delay, now },
+    );
+
+    const [cwd, sessionId] = fileSystem.readFileSync(probePath, 'utf8').trimEnd().split(/\r?\n/);
+    assert.equal(path.resolve(cwd), path.resolve(expectedLaneRoot));
+    assert.ok(sessionId, 'Lane Terminal did not expose LANES_SESSION_ID');
+  } finally {
+    terminal?.dispose();
+    if (fileSystem.existsSync(probePath)) fileSystem.unlinkSync(probePath);
+  }
+};
+
 const activateWithLegacyRemoval = async ({
   activation,
   commands,
@@ -126,6 +183,7 @@ const run = async ({
       encoding: 'utf8',
     }),
   respondToLegacySettings = activateWithLegacyRemoval,
+  verifyTerminal = verifyLaneTerminalFromPlus,
   log = (message) => console.log(message),
 } = {}) => {
   const phase = readPhase(environment);
@@ -233,8 +291,8 @@ const run = async ({
   const terminalConfiguration = vscodeApi.workspace.getConfiguration('terminal.integrated');
   assert.equal(
     terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
-    undefined,
-    'Candidate retained the matching legacy default profile',
+    'Lane Terminal',
+    'Candidate did not reacquire the lane-aware default profile',
   );
   assert.equal(
     terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
@@ -242,6 +300,17 @@ const run = async ({
     'Candidate retained the matching legacy persistence override',
   );
   await waitForLane(laneB);
+  if (phase === 'candidate-restart') {
+    await verifyTerminal({
+      vscodeApi,
+      fileSystem,
+      workspaceDirectory,
+      expectedLaneLabel: 'lane-b',
+      expectedLaneRoot: laneB,
+      delay,
+      now,
+    });
+  }
   assert.equal(
     path.resolve(fileSystem.realpathSync(anchor.legacyActiveLinkPath)),
     laneB,
@@ -262,4 +331,5 @@ module.exports = {
   isActivationHostCancellation,
   isCommandCancellation,
   run,
+  verifyLaneTerminalFromPlus,
 };

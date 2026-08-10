@@ -358,7 +358,7 @@ describe('createTerminalSettingsLease', () => {
     ]);
   });
 
-  it('legacy 候補を keep した場合は削除も当該 activate の lease 取得もしない', async () => {
+  it('legacy 候補を keep した場合は現在値を維持した lease として取得する', async () => {
     const harness = createHarness({
       values: {
         'defaultProfile.linux': PROFILE_TITLE,
@@ -374,11 +374,18 @@ describe('createTerminalSettingsLease', () => {
     expect(harness.readState()).toEqual({
       schemaVersion: 1,
       legacyDecision: 'kept',
-      leases: {},
+      leases: {
+        linux: {
+          status: 'owned',
+          platformKey: 'linux',
+          previous: { kind: 'value', value: PROFILE_TITLE },
+          writtenValue: PROFILE_TITLE,
+        },
+      },
     });
   });
 
-  it('legacy prompt の dismiss は決定を保存せず、次の managed activate で再表示する', async () => {
+  it('legacy prompt の dismiss は決定を保存せず、profile lease を取得して次回再表示する', async () => {
     const harness = createHarness({
       values: {
         'defaultProfile.linux': PROFILE_TITLE,
@@ -392,11 +399,20 @@ describe('createTerminalSettingsLease', () => {
 
     expect(harness.prompt).toHaveBeenCalledTimes(2);
     expect(harness.configurationWrites).toEqual([]);
-    expect(harness.stateWrites).toEqual([]);
-    expect(harness.readState()).toBeUndefined();
+    expect(harness.readState()).toEqual({
+      schemaVersion: 1,
+      leases: {
+        linux: {
+          status: 'owned',
+          platformKey: 'linux',
+          previous: { kind: 'value', value: PROFILE_TITLE },
+          writtenValue: PROFILE_TITLE,
+        },
+      },
+    });
   });
 
-  it('legacy 候補の remove は一致値だけを削除し、自動 lease を永続的に抑止する', async () => {
+  it('legacy 候補の remove は一致値だけを削除し、現在 platform の lease を取得する', async () => {
     let updateCount = 0;
     const harness = createHarness({
       platform: 'darwin',
@@ -414,22 +430,35 @@ describe('createTerminalSettingsLease', () => {
 
     await harness.lease.activate(PROFILE_TITLE);
 
-    expect(harness.configurationWrites).toEqual([['defaultProfile.linux', undefined]]);
+    expect(harness.configurationWrites).toEqual([
+      ['defaultProfile.linux', undefined],
+      ['defaultProfile.osx', PROFILE_TITLE],
+    ]);
     expect(harness.values.get('defaultProfile.linux')).toBeUndefined();
     expect(harness.values.get('enablePersistentSessions')).toBe(true);
-    expect(harness.values.get('defaultProfile.osx')).toBe('zsh');
+    expect(harness.values.get('defaultProfile.osx')).toBe(PROFILE_TITLE);
     expect(harness.readState()).toEqual({
       schemaVersion: 1,
       legacyDecision: 'removed',
-      leases: {},
+      leases: {
+        osx: {
+          status: 'owned',
+          platformKey: 'osx',
+          previous: { kind: 'value', value: 'zsh' },
+          writtenValue: PROFILE_TITLE,
+        },
+      },
     });
 
     await harness.lease.activate(PROFILE_TITLE);
-    expect(harness.configurationWrites).toEqual([['defaultProfile.linux', undefined]]);
+    expect(harness.configurationWrites).toEqual([
+      ['defaultProfile.linux', undefined],
+      ['defaultProfile.osx', PROFILE_TITLE],
+    ]);
   });
 
   it.each(['kept', 'removed'] as const)(
-    'legacy decision %s は再 prompt と自動 lease を抑止する',
+    'legacy decision %s は再 prompt せず現在 platform の lease を取得する',
     async (legacyDecision) => {
       const harness = createHarness({
         platform: 'win32',
@@ -440,7 +469,148 @@ describe('createTerminalSettingsLease', () => {
       await harness.lease.activate(PROFILE_TITLE);
 
       expect(harness.prompt).not.toHaveBeenCalled();
-      expect(harness.configurationWrites).toEqual([]);
+      expect(harness.configurationWrites).toEqual([['defaultProfile.windows', PROFILE_TITLE]]);
+    },
+  );
+
+  it('Linux の legacy 候補を remove した activation でも Lane Terminal を既定に戻す', async () => {
+    const harness = createHarness({
+      values: {
+        'defaultProfile.linux': PROFILE_TITLE,
+        enablePersistentSessions: false,
+      },
+      choice: 'remove',
+    });
+
+    await harness.lease.activate(PROFILE_TITLE);
+
+    expect(harness.configurationWrites).toEqual([
+      ['defaultProfile.linux', undefined],
+      ['enablePersistentSessions', undefined],
+      ['defaultProfile.linux', PROFILE_TITLE],
+    ]);
+    expect(harness.readState()).toEqual({
+      schemaVersion: 1,
+      legacyDecision: 'removed',
+      leases: {
+        linux: {
+          status: 'owned',
+          platformKey: 'linux',
+          previous: { kind: 'absent' },
+          writtenValue: PROFILE_TITLE,
+        },
+      },
+    });
+  });
+
+  it('dismiss 後に残った owned lease を release してから legacy 候補を remove する', async () => {
+    const harness = createHarness({
+      values: {
+        'defaultProfile.linux': PROFILE_TITLE,
+        enablePersistentSessions: false,
+      },
+    });
+    harness.prompt.mockResolvedValueOnce(undefined).mockResolvedValueOnce('remove');
+
+    await harness.lease.activate(PROFILE_TITLE);
+    await harness.lease.activate(PROFILE_TITLE);
+
+    expect(harness.configurationWrites).toEqual([
+      ['defaultProfile.linux', PROFILE_TITLE],
+      ['defaultProfile.linux', undefined],
+      ['enablePersistentSessions', undefined],
+      ['defaultProfile.linux', PROFILE_TITLE],
+    ]);
+    expect(harness.readState()).toEqual({
+      schemaVersion: 1,
+      legacyDecision: 'removed',
+      leases: {
+        linux: {
+          status: 'owned',
+          platformKey: 'linux',
+          previous: { kind: 'absent' },
+          writtenValue: PROFILE_TITLE,
+        },
+      },
+    });
+  });
+
+  it('crash 後の prepared lease を破棄してから legacy 候補を remove する', async () => {
+    const harness = createHarness({
+      state: {
+        schemaVersion: 1,
+        leases: {
+          linux: {
+            status: 'prepared',
+            platformKey: 'linux',
+            previous: { kind: 'value', value: PROFILE_TITLE },
+            writtenValue: PROFILE_TITLE,
+          },
+        },
+      },
+      values: {
+        'defaultProfile.linux': PROFILE_TITLE,
+        enablePersistentSessions: false,
+      },
+      choice: 'remove',
+    });
+
+    await harness.lease.activate(PROFILE_TITLE);
+
+    expect(harness.configurationWrites).toEqual([
+      ['defaultProfile.linux', undefined],
+      ['enablePersistentSessions', undefined],
+      ['defaultProfile.linux', PROFILE_TITLE],
+    ]);
+    expect(harness.readState()).toMatchObject({
+      legacyDecision: 'removed',
+      leases: {
+        linux: {
+          status: 'owned',
+          previous: { kind: 'absent' },
+        },
+      },
+    });
+  });
+
+  it.each(['owned', 'prepared', 'releasing'] as const)(
+    'dismiss 後の %s lease を Manage しても既知の previous profile を維持する',
+    async (status) => {
+      const harness = createHarness({
+        state: {
+          schemaVersion: 1,
+          leases: {
+            linux: {
+              status,
+              platformKey: 'linux',
+              previous: { kind: 'value', value: 'bash' },
+              writtenValue: PROFILE_TITLE,
+            },
+          },
+        },
+        values: {
+          'defaultProfile.linux': PROFILE_TITLE,
+          enablePersistentSessions: false,
+        },
+        choice: 'manage',
+      });
+
+      await harness.lease.activate(PROFILE_TITLE);
+
+      expect(harness.readState()).toMatchObject({
+        legacyDecision: 'managed',
+        leases: {
+          linux: {
+            status: 'owned',
+            previous: { kind: 'value', value: 'bash' },
+            writtenValue: PROFILE_TITLE,
+          },
+        },
+      });
+
+      await harness.lease.release();
+
+      expect(harness.values.get('defaultProfile.linux')).toBe('bash');
     },
   );
 
