@@ -351,19 +351,24 @@ export const createTerminalSettingsLease = (
       deps.configuration.inspectWorkspaceValue(TERMINAL_PERSISTENCE_KEY) === false,
   });
 
-  const migrateLegacySettings = async (): Promise<boolean> => {
-    if (envelope.legacyDecision === 'kept' || envelope.legacyDecision === 'removed') return false;
-    if (envelope.legacyDecision === 'scanned' || envelope.legacyDecision === 'managed') return true;
+  const migrateLegacySettings = async (): Promise<void> => {
+    if (envelope.legacyDecision !== undefined) return;
 
     const candidates = inspectLegacyCandidates();
     if (!candidates.defaultProfile && !candidates.persistentSessions) {
       await persist({ ...envelope, legacyDecision: 'scanned' });
-      return true;
+      return;
     }
 
     const choice = await deps.chooseLegacyAction(candidates);
-    if (choice === undefined) return false;
+    if (choice === undefined) return;
     if (choice === 'remove') {
+      if (candidates.defaultProfile) {
+        await releasePlatform('linux');
+        if (envelope.leases.linux) {
+          await persist(withLease(envelope, 'linux', undefined));
+        }
+      }
       if (
         candidates.defaultProfile &&
         deps.configuration.inspectWorkspaceValue(LEGACY_DEFAULT_PROFILE_KEY) ===
@@ -378,7 +383,7 @@ export const createTerminalSettingsLease = (
         await deps.configuration.updateWorkspaceValue(TERMINAL_PERSISTENCE_KEY, undefined);
       }
       await persist({ ...envelope, legacyDecision: 'removed' });
-      return false;
+      return;
     }
 
     if (choice === 'manage' && candidates.defaultProfile) {
@@ -386,25 +391,30 @@ export const createTerminalSettingsLease = (
         deps.configuration.inspectWorkspaceValue(LEGACY_DEFAULT_PROFILE_KEY) ===
         LEGACY_TERMINAL_PROFILE_TITLE
       ) {
-        const adopted: OwnedLease = {
-          status: 'owned',
-          platformKey: 'linux',
-          previous: { kind: 'absent' },
-          writtenValue: LEGACY_TERMINAL_PROFILE_TITLE,
-        };
+        const existing = envelope.leases.linux;
+        const adopted: OwnedLease =
+          existing &&
+          existing.status !== 'user-changed' &&
+          existing.writtenValue === LEGACY_TERMINAL_PROFILE_TITLE
+            ? existing
+            : {
+                status: 'owned',
+                platformKey: 'linux',
+                previous: { kind: 'absent' },
+                writtenValue: LEGACY_TERMINAL_PROFILE_TITLE,
+              };
         await persist(withLease({ ...envelope, legacyDecision: 'managed' }, 'linux', adopted));
-        return true;
+        return;
       }
     }
 
     await persist({ ...envelope, legacyDecision: 'kept' });
-    return false;
   };
 
   return {
     activate: (profileTitle) =>
       enqueue(async () => {
-        if (!(await migrateLegacySettings())) return;
+        await migrateLegacySettings();
         await acquirePlatform(terminalProfileTarget(deps.platform).platformKey, profileTitle);
       }),
     release: () =>

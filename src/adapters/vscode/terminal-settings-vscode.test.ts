@@ -76,7 +76,7 @@ describe('createTerminalSettingsLeaseAdapter', () => {
       'Remove Legacy Settings',
       'Keep Current Settings',
     );
-    expect(vscodeHarness.updates).toEqual([]);
+    expect(vscodeHarness.updates).toEqual([['defaultProfile.osx', 'Lane Terminal', 2]]);
   });
 
   it('設定更新を Workspace target に限定する', async () => {
