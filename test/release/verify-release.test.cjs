@@ -7,10 +7,18 @@ const test = require('node:test');
 
 const { verifyRelease } = require('./verify-release.cjs');
 
+// 利用者の global・system 設定から切り離した使い捨て repo 用の git 環境
+const isolatedGitEnv = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+};
+
 const git = (root, ...args) =>
   execFileSync('git', args, {
     cwd: root,
     encoding: 'utf8',
+    env: isolatedGitEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 
