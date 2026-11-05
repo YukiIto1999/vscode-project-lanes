@@ -142,6 +142,7 @@ const verifyLaneTerminalFromPlus = async ({
 const activateWithLegacyRemoval = async ({
   activation,
   commands,
+  vscodeVersion = VSCODE_VERSION,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   now = () => Date.now(),
 }) => {
@@ -151,7 +152,7 @@ const activateWithLegacyRemoval = async ({
   );
   if (missingCommands.length > 0) {
     throw new Error(
-      `VS Code ${VSCODE_VERSION} is missing required notification commands: ${missingCommands.join(', ')}`,
+      `VS Code ${vscodeVersion} is missing required notification commands: ${missingCommands.join(', ')}`,
     );
   }
 
@@ -224,6 +225,7 @@ const run = async ({
       await respondToLegacySettings({
         activation,
         commands: vscodeApi.commands,
+        vscodeVersion: vscodeApi.version,
         delay,
         now,
       });
