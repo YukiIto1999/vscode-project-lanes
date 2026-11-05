@@ -140,6 +140,21 @@ const scenarios = Object.freeze([
     ),
     suitePath: path.join(__dirname, 'suite', 'legacy-anchor-classification.cjs'),
   }),
+  Object.freeze({
+    name: 'cross-lane-search-navigation',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'cross-lane-search-navigation'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'cross-lane-search-navigation',
+      'cross-lane-search-navigation.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'cross-lane-search-navigation.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'navigate' }),
+    ]),
+  }),
 ]);
 
 const resolveScenarios = (requestedNames, availableScenarios = scenarios) => {

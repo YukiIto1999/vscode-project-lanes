@@ -56,7 +56,7 @@ export interface SearchUiPort {
 export interface FileOpenPort {
   /**
    * 指定位置でのファイルオープン
-   * @param path - 実体の絶対パス
+   * @param path - 開く対象ファイルの絶対パス
    * @param position - カーソル位置、1 始まり。未指定で先頭
    * @returns オープン完了の Promise
    */
