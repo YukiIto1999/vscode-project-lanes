@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
 const E2E_RENAME_LANE_COMMAND = 'projectLanes.e2e.renameLane';
+const E2E_CHOOSE_LEGACY_TERMINAL_SETTINGS_COMMAND = 'projectLanes.e2e.chooseLegacyTerminalSettings';
 const E2E_RESULT_PATH_KEY = 'PROJECT_LANES_E2E_RESULT_PATH';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_SUITE_PATH_KEY = 'PROJECT_LANES_E2E_SUITE_PATH';
@@ -59,6 +60,35 @@ const registerLaneRenameCommand = ({ resultIdentity, vscodeApi }) => {
   });
 };
 
+/**
+ * 旧版ターミナル設定の確認を保留し、suite が決めた時点で答える command の登録
+ * VS Code の終了まで登録を保ち、終了後に届いた確認を command 不在の失敗にしない
+ */
+const registerLegacyTerminalSettingsCommand = ({ vscodeApi }) => {
+  const pendingAnswers = [];
+  let notifyRequested;
+  const requested = new Promise((resolve) => {
+    notifyRequested = resolve;
+  });
+  const disposable = vscodeApi.commands.registerCommand(
+    E2E_CHOOSE_LEGACY_TERMINAL_SETTINGS_COMMAND,
+    (request) =>
+      new Promise((resolve) => {
+        pendingAnswers.push(resolve);
+        notifyRequested(request);
+      }),
+  );
+  return {
+    disposable,
+    prompt: {
+      requested,
+      answer(action) {
+        for (const resolve of pendingAnswers.splice(0)) resolve(action);
+      },
+    },
+  };
+};
+
 const writeResultMarker = ({ fileSystem, markerPath, processApi, result }) => {
   const temporaryMarkerPath = `${markerPath}.tmp-${processApi.pid}`;
   fileSystem.writeFileSync(temporaryMarkerPath, JSON.stringify(result), {
@@ -95,6 +125,8 @@ const runDriver = async ({
   let driverError;
 
   try {
+    // 本体は activation 中に旧版設定の扱いを尋ねるため、環境変数の検証や suite の読込より前に登録する
+    const legacyTerminalSettings = registerLegacyTerminalSettingsCommand({ vscodeApi });
     const markerPath = requiredEnvironmentValue(environment, E2E_RESULT_PATH_KEY);
     const suitePath = requiredEnvironmentValue(environment, E2E_SUITE_PATH_KEY);
     const resultIdentity = JSON.parse(requiredEnvironmentValue(environment, E2E_RUN_KEY));
@@ -109,6 +141,7 @@ const runDriver = async ({
         await suite.run({
           environment,
           vscodeApi,
+          legacyTerminalSettingsPrompt: legacyTerminalSettings.prompt,
           log(value) {
             message = value;
           },
@@ -153,6 +186,7 @@ module.exports = {
   activate,
   deactivate,
   registerLaneRenameCommand,
+  registerLegacyTerminalSettingsCommand,
   registerReplacementPickerCommand,
   runDriver,
 };

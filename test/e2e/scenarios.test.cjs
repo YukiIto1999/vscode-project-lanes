@@ -706,10 +706,18 @@ const createLegacyPromptHarness = ({
             if (command === 'projectLanes.switchLane') {
               await switchLane();
               activeTarget = laneB;
-            } else if (command === 'notification.acceptPrimaryAction') {
-              settings.delete('enablePersistentSessions');
             }
           },
+        },
+      },
+      legacyTerminalSettingsPrompt: {
+        requested: Promise.resolve({
+          message: 'Project Lanes 0.1.13 may have changed this workspace’s terminal settings.',
+          actions: ['Remove Legacy Settings', 'Keep Current Settings', 'Manage Lane Terminal'],
+        }),
+        answer(action) {
+          events.push(['answer', action]);
+          if (action === 'Remove Legacy Settings') settings.delete('enablePersistentSessions');
         },
       },
       fileSystem: {
@@ -770,8 +778,7 @@ test('the pending-prompt phase closes Lane Terminal, switches lanes, and then re
     'sendText',
     'dispose',
     ['projectLanes.switchLane', 'lane-b'],
-    'notifications.focusToasts',
-    'notification.acceptPrimaryAction',
+    ['answer', 'Remove Legacy Settings'],
   ]);
   assert.deepEqual(messages, [
     'E2E PASS: the legacy prompt left Lane Terminal close, activation, and lane commands responsive',
@@ -4399,7 +4406,44 @@ test('the driver extension activates on startup without defining an extension te
   const manifest = require('./driver/package.json');
 
   assert.equal(manifest.main, './extension.cjs');
-  assert.deepEqual(manifest.activationEvents, ['onStartupFinished']);
+  assert.deepEqual(manifest.activationEvents, [
+    'onCommand:projectLanes.e2e.chooseLegacyTerminalSettings',
+    'onStartupFinished',
+  ]);
+});
+
+test('the driver holds the legacy terminal settings question until the suite answers', async () => {
+  const { registerLegacyTerminalSettingsCommand } = require('./driver/extension.cjs');
+  const registrations = [];
+  const registered = registerLegacyTerminalSettingsCommand({
+    vscodeApi: {
+      commands: {
+        registerCommand(command, handler) {
+          registrations.push([command, handler]);
+          return { dispose() {} };
+        },
+      },
+    },
+  });
+
+  assert.equal(registrations.length, 1);
+  const [command, handler] = registrations[0];
+  assert.equal(command, 'projectLanes.e2e.chooseLegacyTerminalSettings');
+  const request = {
+    message: 'legacy',
+    actions: ['Remove Legacy Settings', 'Keep Current Settings'],
+  };
+  let answered = false;
+  const answer = handler(request).then((value) => {
+    answered = true;
+    return value;
+  });
+
+  assert.deepEqual(await registered.prompt.requested, request);
+  await Promise.resolve();
+  assert.equal(answered, false);
+  registered.prompt.answer('Remove Legacy Settings');
+  assert.equal(await answer, 'Remove Legacy Settings');
 });
 
 test('the driver private replacement picker asserts options and returns the relocated folder URI', () => {
@@ -4495,6 +4539,9 @@ test('the driver quits when a required initialization environment variable is mi
       },
       vscodeApi: {
         commands: {
+          registerCommand() {
+            return { dispose() {} };
+          },
           async executeCommand(command) {
             commands.push(command);
           },
@@ -4528,6 +4575,9 @@ test('the driver quits and preserves a malformed result identity error', async (
       },
       vscodeApi: {
         commands: {
+          registerCommand() {
+            return { dispose() {} };
+          },
           async executeCommand(command) {
             commands.push(command);
           },
@@ -4587,6 +4637,9 @@ test('the driver writes a success marker atomically before quitting VS Code', as
     processApi: { pid: 135 },
     vscodeApi: {
       commands: {
+        registerCommand() {
+          return { dispose() {} };
+        },
         async executeCommand(command) {
           operations.push(['command', command]);
         },
@@ -4646,6 +4699,9 @@ test('the driver records a suite failure before quitting VS Code', async () => {
     processApi: { pid: 864 },
     vscodeApi: {
       commands: {
+        registerCommand() {
+          return { dispose() {} };
+        },
         async executeCommand(command) {
           commands.push(command);
         },
@@ -4714,6 +4770,9 @@ test('the driver never replaces a marker published by a concurrent writer', asyn
       processApi: { pid: 579 },
       vscodeApi: {
         commands: {
+          registerCommand() {
+            return { dispose() {} };
+          },
           async executeCommand(command) {
             commands.push(command);
           },
@@ -4780,6 +4839,9 @@ test('the driver reports publish and temporary marker cleanup failures together'
       processApi: { pid: 680 },
       vscodeApi: {
         commands: {
+          registerCommand() {
+            return { dispose() {} };
+          },
           async executeCommand(command) {
             commands.push(command);
           },
@@ -5200,6 +5262,9 @@ test('the initialize phase accepts host cancellation only after reaching the man
         },
       },
       commands: {
+        registerCommand() {
+          return { dispose() {} };
+        },
         async executeCommand(command) {
           commands.push(command);
           workspace.workspaceFolders = [{ uri: { fsPath: activeLink } }];
@@ -5278,6 +5343,9 @@ test('the initialize phase resumes after its workspace-folder change restarts th
         },
       },
       commands: {
+        registerCommand() {
+          return { dispose() {} };
+        },
         async executeCommand(command) {
           commands.push(command);
           workspace.workspaceFolders = [{ uri: { fsPath: activeLink } }];

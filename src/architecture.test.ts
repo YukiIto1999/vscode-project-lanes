@@ -365,6 +365,12 @@ describe('横断検索の子プロセス所有境界', () => {
 
 describe('ターミナル設定の可逆所有境界', () => {
   const bootstrap = readSource(nodePath.join(SRC_ROOT, 'app/bootstrap.ts'));
+
+  it('ターミナル設定 lease adapter へ runtime の ExtensionMode を渡す', () => {
+    expect(bootstrap).toMatch(
+      /createTerminalSettingsLeaseAdapter\(context\.workspaceState, process\.platform, \{\s*extensionMode: context\.extensionMode,\s*\}\)/,
+    );
+  });
   const workspaceAdapter = readSource(nodePath.join(SRC_ROOT, 'adapters/vscode/workspace.ts'));
   const extension = readSource(nodePath.join(SRC_ROOT, 'extension.ts'));
 
