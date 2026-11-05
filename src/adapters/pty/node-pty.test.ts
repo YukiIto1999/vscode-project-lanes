@@ -86,4 +86,39 @@ describe('createShellSessionFactory', () => {
     expect(oldListener).not.toHaveBeenCalled();
     expect(newListener).toHaveBeenCalledWith('new output');
   });
+
+  it('終了済みシェルへの resize と write を PTY へ渡さず、終了直前の resize 失敗も握る', () => {
+    let notifyExit: (() => void) | undefined;
+    const proc = {
+      onData: vi.fn(),
+      onExit: vi.fn((listener: () => void) => {
+        notifyExit = listener;
+        return { dispose: vi.fn() };
+      }),
+      write: vi.fn(),
+      resize: vi.fn(() => {
+        throw new Error('ioctl(2) failed, EBADF');
+      }),
+      kill: vi.fn(),
+    };
+    const factory = createShellSessionFactory({
+      extensionPath: '/extension' as AbsolutePath,
+      activitySink,
+      loadPty: () =>
+        ({
+          spawn: vi.fn(() => proc),
+        }) as unknown as typeof NodePty,
+    });
+    const handle = factory.create(spec);
+
+    expect(() => handle.resize(80, 24)).not.toThrow();
+    expect(proc.resize).toHaveBeenCalledOnce();
+
+    notifyExit!();
+    handle.resize(100, 30);
+    handle.write('ls\n');
+
+    expect(proc.resize).toHaveBeenCalledOnce();
+    expect(proc.write).not.toHaveBeenCalled();
+  });
 });

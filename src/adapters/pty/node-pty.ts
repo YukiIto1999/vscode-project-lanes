@@ -107,8 +107,18 @@ export const createShellSessionFactory = (
 
     return {
       id: spec.id,
-      write: (data) => proc.write(data),
-      resize: (cols, rows) => proc.resize(cols, rows),
+      write: (data) => {
+        if (alive) proc.write(data);
+      },
+      // 終了済み PTY の resize は EBADF を投げ、fd 再利用時は別 PTY を操作し得るため生存中に限る
+      resize: (cols, rows) => {
+        if (!alive) return;
+        try {
+          proc.resize(cols, rows);
+        } catch {
+          // onExit 通知前に終了した PTY の resize 失敗を表示処理へ波及させない
+        }
+      },
 
       attachOutput: (callback) => {
         const output = { listener: callback };
