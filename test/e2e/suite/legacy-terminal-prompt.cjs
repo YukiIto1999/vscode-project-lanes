@@ -9,6 +9,8 @@ const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const EXTENSION_ID = 'yukiito1999.project-lanes';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
+/** 旧版設定の確認で主操作を選んでから、設定の反映を待つ上限 */
+const ACCEPT_SETTLE_TIMEOUT_MS = 3_000;
 const WORKSPACE_FIXTURE = 'legacy-terminal-prompt.code-workspace';
 
 const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
@@ -106,107 +108,149 @@ const run = async ({
       },
       { delay, now },
     );
-  await waitForActiveLane(laneA);
-  if (phase === 'bootstrap') {
-    // 初期化後の extension host 再起動をこの launch 内で済ませ、確認待ちの launch へ持ち越さない
+  // extension host の再起動で suite が再実行された場合も追えるよう、進行を workspace 内へ追記する
+  const progressPath = path.join(workspaceDirectory, `.e2e-progress-${phase}`);
+  const mark = (step) => {
     try {
-      await activation;
-    } catch (error) {
-      if (!isCancellation(error)) throw error;
-    }
-    await waitForActiveLane(laneA);
-    log('E2E PASS: legacy terminal prompt workspace initialized');
-    return;
-  }
-
-  const terminalConfiguration = resolvedVscodeApi.workspace.getConfiguration('terminal.integrated');
-  const assertLegacyPromptPending = () => {
-    assert.equal(
-      terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
-      false,
-      'The legacy terminal settings prompt was answered before the scenario',
-    );
-  };
-  assertLegacyPromptPending();
-
-  let terminal;
-  await waitFor(
-    () => {
-      const terminals = resolvedVscodeApi.window.terminals.filter(
-        (candidate) => candidate.name === 'lane-a',
+      fileSystem.appendFileSync(
+        progressPath,
+        `${new Date().toISOString()} pid=${processApi.pid} ${step}\n`,
       );
-      assert.equal(terminals.length, 1, 'Expected the startup lane-a Terminal');
-      terminal = terminals[0];
-    },
-    { delay, now },
-  );
-  const pidPath = path.join(laneA, 'startup-shell-pid');
-  const temporaryPidPath = `${pidPath}.tmp`;
-  terminal.sendText(
-    `printf '%s' "$$" > ${shellQuote(temporaryPidPath)} && mv ${shellQuote(temporaryPidPath)} ${shellQuote(pidPath)}`,
-  );
-  await waitFor(
-    () => assert.equal(fileSystem.existsSync(pidPath), true, 'Startup shell PID was not written'),
-    { delay, now },
-  );
-  const shellPid = Number(fileSystem.readFileSync(pidPath, 'utf8'));
-  assert.ok(Number.isInteger(shellPid) && shellPid > 0, `Invalid startup shell PID: ${shellPid}`);
-  assert.equal(isProcessAlive(processApi, shellPid), true, 'Startup shell exited early');
+    } catch {
+      // 進行記録は失敗時の診断用で、検証結果を左右させない
+    }
+  };
+  const withProgress = (error) => {
+    let progress = '';
+    try {
+      progress = fileSystem.readFileSync(progressPath, 'utf8');
+    } catch {
+      return error;
+    }
+    if (!(error instanceof Error)) return error;
+    error.message = `${error.message}\nE2E progress:\n${progress}`;
+    return error;
+  };
+  mark('suite started');
 
-  terminal.dispose();
-  await waitFor(
-    () =>
-      assert.equal(
-        isProcessAlive(processApi, shellPid),
-        false,
-        'Closing the startup Lane Terminal left its shell running',
-      ),
-    { delay, now },
-  );
-  assertLegacyPromptPending();
+  try {
+    await waitForActiveLane(laneA);
+    mark('lane-a active');
+    if (phase === 'bootstrap') {
+      // 初期化後の extension host 再起動をこの launch 内で済ませ、確認待ちの launch へ持ち越さない
+      try {
+        await activation;
+      } catch (error) {
+        if (!isCancellation(error)) throw error;
+      }
+      await waitForActiveLane(laneA);
+      log('E2E PASS: legacy terminal prompt workspace initialized');
+      return;
+    }
 
-  await waitForSettlement(
-    activation,
-    'Extension activation waited for the legacy settings answer',
-    { delay, now },
-  );
-  assertLegacyPromptPending();
-  await waitForSettlement(
-    resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-b'),
-    'Switch Lane waited for the legacy settings answer',
-    { delay, now },
-  );
-  await waitForActiveLane(laneB);
-  assertLegacyPromptPending();
-
-  const pause =
-    delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-  const clock = now ?? (() => Date.now());
-  const deadline = clock() + POLL_TIMEOUT_MS;
-  while (terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue === false) {
-    if (clock() > deadline) throw new Error('Timed out while selecting Remove Legacy Settings');
-    await resolvedVscodeApi.commands.executeCommand('notifications.focusToasts');
-    await resolvedVscodeApi.commands.executeCommand('notification.acceptPrimaryAction');
-    await pause(POLL_INTERVAL_MS);
-  }
-  await waitFor(
-    () => {
+    const terminalConfiguration =
+      resolvedVscodeApi.workspace.getConfiguration('terminal.integrated');
+    const assertLegacyPromptPending = () => {
       assert.equal(
         terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
-        undefined,
-        'Remove Legacy Settings kept the persistence override',
+        false,
+        'The legacy terminal settings prompt was answered before the scenario',
       );
-      assert.equal(
-        terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
-        'Lane Terminal',
-        'Remove Legacy Settings did not reacquire the Lane Terminal default profile',
-      );
-    },
-    { delay, now },
-  );
-  log(
-    'E2E PASS: the legacy prompt left Lane Terminal close, activation, and lane commands responsive',
-  );
+    };
+    assertLegacyPromptPending();
+
+    let terminal;
+    await waitFor(
+      () => {
+        const terminals = resolvedVscodeApi.window.terminals.filter(
+          (candidate) => candidate.name === 'lane-a',
+        );
+        assert.equal(terminals.length, 1, 'Expected the startup lane-a Terminal');
+        terminal = terminals[0];
+      },
+      { delay, now },
+    );
+    mark('startup terminal found');
+    const pidPath = path.join(laneA, 'startup-shell-pid');
+    const temporaryPidPath = `${pidPath}.tmp`;
+    terminal.sendText(
+      `printf '%s' "$$" > ${shellQuote(temporaryPidPath)} && mv ${shellQuote(temporaryPidPath)} ${shellQuote(pidPath)}`,
+    );
+    await waitFor(
+      () => assert.equal(fileSystem.existsSync(pidPath), true, 'Startup shell PID was not written'),
+      { delay, now },
+    );
+    const shellPid = Number(fileSystem.readFileSync(pidPath, 'utf8'));
+    assert.ok(Number.isInteger(shellPid) && shellPid > 0, `Invalid startup shell PID: ${shellPid}`);
+    assert.equal(isProcessAlive(processApi, shellPid), true, 'Startup shell exited early');
+
+    terminal.dispose();
+    await waitFor(
+      () =>
+        assert.equal(
+          isProcessAlive(processApi, shellPid),
+          false,
+          'Closing the startup Lane Terminal left its shell running',
+        ),
+      { delay, now },
+    );
+    mark('startup terminal closed');
+    assertLegacyPromptPending();
+
+    await waitForSettlement(
+      activation,
+      'Extension activation waited for the legacy settings answer',
+      { delay, now },
+    );
+    assertLegacyPromptPending();
+    await waitForSettlement(
+      resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-b'),
+      'Switch Lane waited for the legacy settings answer',
+      { delay, now },
+    );
+    await waitForActiveLane(laneB);
+    mark('switched to lane-b');
+    assertLegacyPromptPending();
+
+    const pause =
+      delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    const clock = now ?? (() => Date.now());
+    const deadline = clock() + POLL_TIMEOUT_MS;
+    const isLegacyPending = () =>
+      terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue === false;
+    let acceptCount = 0;
+    while (isLegacyPending()) {
+      if (clock() > deadline) throw new Error('Timed out while selecting Remove Legacy Settings');
+      await resolvedVscodeApi.commands.executeCommand('notifications.focusToasts');
+      await resolvedVscodeApi.commands.executeCommand('notification.acceptPrimaryAction');
+      acceptCount += 1;
+      mark(`accepted primary action #${acceptCount}`);
+      // 選択の反映前に押し直すと、後続の別通知の主操作まで実行し得るため反映を待ってから再試行
+      const settleDeadline = Math.min(clock() + ACCEPT_SETTLE_TIMEOUT_MS, deadline);
+      while (isLegacyPending() && clock() <= settleDeadline) await pause(POLL_INTERVAL_MS);
+    }
+    mark('legacy settings removed');
+    await waitFor(
+      () => {
+        assert.equal(
+          terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
+          undefined,
+          'Remove Legacy Settings kept the persistence override',
+        );
+        assert.equal(
+          terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
+          'Lane Terminal',
+          'Remove Legacy Settings did not reacquire the Lane Terminal default profile',
+        );
+      },
+      { delay, now },
+    );
+    log(
+      'E2E PASS: the legacy prompt left Lane Terminal close, activation, and lane commands responsive',
+    );
+  } catch (error) {
+    throw withProgress(error);
+  }
 };
 
 module.exports = { run };
