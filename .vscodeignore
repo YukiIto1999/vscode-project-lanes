@@ -17,7 +17,7 @@ node_modules/**
 !node_modules/@vscode/ripgrep-linux-x64/package.json
 !node_modules/@vscode/ripgrep-linux-x64/bin/rg
 tsconfig.json
-vite.config.ts
+vite.config.mts
 CLAUDE.md
 .claude/**
 .gitignore
