@@ -140,6 +140,21 @@ const scenarios = Object.freeze([
     ),
     suitePath: path.join(__dirname, 'suite', 'legacy-anchor-classification.cjs'),
   }),
+  Object.freeze({
+    name: 'editor-snapshot-restore',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-restore'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'editor-snapshot-restore',
+      'editor-snapshot-restore.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'editor-snapshot-restore.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'switch' }),
+    ]),
+  }),
 ]);
 
 const resolveScenarios = (requestedNames, availableScenarios = scenarios) => {

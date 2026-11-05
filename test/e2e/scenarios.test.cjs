@@ -137,6 +137,18 @@ const legacyAnchorClassificationScenario = {
   ),
   suitePath: path.join(__dirname, 'suite', 'legacy-anchor-classification.cjs'),
 };
+const editorSnapshotRestoreScenario = {
+  name: 'editor-snapshot-restore',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-restore'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'editor-snapshot-restore',
+    'editor-snapshot-restore.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'editor-snapshot-restore.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'switch' }],
+};
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
   workspaceFixture: '/fixtures/empty.code-workspace',
@@ -296,6 +308,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
     legacyAnchorClassificationScenario,
+    editorSnapshotRestoreScenario,
   ]);
 });
 
@@ -3884,6 +3897,19 @@ test('the workspace-bootstrap suite rejects an unknown phase', async () => {
 
 test('the editor snapshot persistence suite rejects an unknown phase', async () => {
   const { run } = require('./suite/editor-snapshot-persistence.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the editor snapshot restore suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/editor-snapshot-restore.cjs');
 
   await assert.rejects(
     run({

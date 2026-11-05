@@ -35,7 +35,12 @@ export const createEditorAdapter = (): EditorPort & FileOpenPort => ({
     for (const tab of snapshot.tabs) {
       try {
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(tab.uri));
-        await vscode.window.showTextDocument(doc, tab.viewColumn, true);
+        // preview 表示では同一列の後続タブが先行タブを置換するための固定表示
+        await vscode.window.showTextDocument(doc, {
+          viewColumn: tab.viewColumn,
+          preserveFocus: true,
+          preview: false,
+        });
       } catch {
         /* 削除済みファイルは無視 */
       }
