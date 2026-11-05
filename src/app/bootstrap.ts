@@ -303,6 +303,18 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       getShellPath: () => config.read().shellPath,
     });
     track({ dispose: () => terminalService.dispose() });
+    // 表示面の構築前に閉じた Lane Terminal は後続の初回 render が反映する
+    let renderAfterTerminalClose = (): void => {};
+    // 起動時の再整合、初回表示、profile が Lane Terminal を作る前に購読し、閉じたセッションを終了する
+    track(
+      vscode.window.onDidCloseTerminal((terminal) => {
+        const terminalId = presentation.resolveId(terminal);
+        if (!terminalId) return;
+        presentation.forgetTerminal(terminalId);
+        terminalService.handleTerminalClosed(terminalId);
+        renderAfterTerminalClose();
+      }),
+    );
 
     const reportAsyncFailure = createAsyncFailureReporter({
       log: (message, error) => console.error(message, error),
@@ -381,6 +393,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       treeView.render(snapshot);
       statusBar.render(snapshot.statusBar);
     };
+    renderAfterTerminalClose = render;
 
     const workspaceFolderReconciler = createWorkspaceFolderReconciler({
       operationQueue,
@@ -441,17 +454,9 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         },
       }),
     );
-    await terminalSettings.activate(laneProfile.title);
-
-    track(
-      vscode.window.onDidCloseTerminal((terminal) => {
-        const terminalId = presentation.resolveId(terminal);
-        if (!terminalId) return;
-        presentation.forgetTerminal(terminalId);
-        terminalService.handleTerminalClosed(terminalId);
-        render();
-      }),
-    );
+    const terminalSettingsActivation = await terminalSettings.activate(laneProfile.title);
+    // 旧版設定の選択は応答時に反映し、runtime の起動と lane command を応答待ちにしない
+    void runAsyncBoundary(() => terminalSettingsActivation.legacyDecision, reportAsyncFailure);
 
     const commands: ManagedCommandHandlers = {
       'projectLanes.addFolder': async () => {

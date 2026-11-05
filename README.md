@@ -115,7 +115,7 @@ The full 64-character SHA-256 workspace hash gives each `.code-workspace` file i
 
 Project Lanes reads the former `.lanes-root/active` link only when the current workspace folder and saved catalog both confirm that it belongs to the workspace. The former link is migration input only and is never changed or removed.
 
-Earlier versions may also have left terminal workspace settings behind. When current values match those settings, Project Lanes asks how to handle them:
+Earlier versions may also have left terminal workspace settings behind. When current values match those settings, Project Lanes asks how to handle them. Lanes and Lane Terminal stay usable while the question is open, and the choice is applied when you answer:
 
 - `Manage Lane Terminal` adopts the matching default profile into the current reversible lease.
 - `Keep Current Settings` preserves the matching values before Project Lanes acquires the current reversible lease.

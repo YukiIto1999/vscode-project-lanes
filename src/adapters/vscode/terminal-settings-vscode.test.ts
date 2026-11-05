@@ -53,7 +53,9 @@ describe('createTerminalSettingsLeaseAdapter', () => {
     vscodeHarness.showWarningMessage.mockResolvedValue('Manage Lane Terminal');
     const lease = createTerminalSettingsLeaseAdapter(createMemento(), 'linux');
 
-    await lease.activate('Lane Terminal');
+    await (
+      await lease.activate('Lane Terminal')
+    ).legacyDecision;
 
     expect(vscodeHarness.showWarningMessage).toHaveBeenCalledWith(
       'Project Lanes 0.1.13 may have changed this workspace’s terminal settings. Choose how to handle the matching legacy values.',
@@ -69,7 +71,9 @@ describe('createTerminalSettingsLeaseAdapter', () => {
     vscodeHarness.showWarningMessage.mockResolvedValue('Keep Current Settings');
     const lease = createTerminalSettingsLeaseAdapter(createMemento(), 'darwin');
 
-    await lease.activate('Lane Terminal');
+    await (
+      await lease.activate('Lane Terminal')
+    ).legacyDecision;
 
     expect(vscodeHarness.showWarningMessage).toHaveBeenCalledWith(
       expect.any(String),
@@ -90,7 +94,9 @@ describe('createTerminalSettingsLeaseAdapter', () => {
     vscodeHarness.values.set('defaultProfile.windows', 'PowerShell');
     const lease = createTerminalSettingsLeaseAdapter(memento, 'win32');
 
-    await lease.activate('Lane Terminal');
+    await (
+      await lease.activate('Lane Terminal')
+    ).legacyDecision;
     await lease.release();
 
     expect(vscodeHarness.updates).toEqual([

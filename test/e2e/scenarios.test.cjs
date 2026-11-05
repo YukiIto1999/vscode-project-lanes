@@ -82,6 +82,30 @@ const laneSwitchTransactionScenario = {
   suitePath: path.join(__dirname, 'suite', 'lane-switch-transaction.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'transaction' }, { phase: 'restart' }],
 };
+const laneTerminalReplayScenario = {
+  name: 'lane-terminal-replay',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'lane-terminal-replay'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'lane-terminal-replay',
+    'lane-terminal-replay.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'lane-terminal-replay.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'replay' }],
+};
+const legacyTerminalPromptScenario = {
+  name: 'legacy-terminal-prompt',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-terminal-prompt'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'legacy-terminal-prompt',
+    'legacy-terminal-prompt.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'legacy-terminal-prompt.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'pending-prompt' }],
+};
 const editorSnapshotPersistenceScenario = {
   name: 'editor-snapshot-persistence',
   fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-persistence'),
@@ -316,6 +340,8 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceAnchorIsolationScenario,
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
+    laneTerminalReplayScenario,
+    legacyTerminalPromptScenario,
     editorSnapshotPersistenceScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
@@ -434,6 +460,309 @@ test('the cross-lane search navigation suite rejects an unknown phase', async ()
       },
     }),
     /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the lane terminal replay suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/lane-terminal-replay.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the lane terminal replay probe consumes only the live DA1 response before recording input', () => {
+  const { buildProbeCommand } = require('./suite/lane-terminal-replay.cjs');
+
+  assert.equal(
+    buildProbeCommand({ readyPath: '/tmp/lane a/ready', inputPath: "/tmp/it's/input" }),
+    [
+      "printf '\\033[c'",
+      'IFS= read -rs -n 64 -d c -t 5 _',
+      ": > '/tmp/lane a/ready'",
+      "IFS= read -rs -n 256 -d '#' -t 60 extra",
+      `printf '%s' "$extra" > '/tmp/it'\\''s/input.tmp'`,
+      `mv '/tmp/it'\\''s/input.tmp' '/tmp/it'\\''s/input'`,
+    ].join('; '),
+  );
+});
+
+const runLaneTerminalReplay = async (recordedInput) => {
+  const { run } = require('./suite/lane-terminal-replay.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-replay/workspace';
+  const workspaceFile = path.join(workspaceDirectory, 'lane-terminal-replay.code-workspace');
+  const activeLink = activeLinkForPath(workspaceFile);
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const files = new Map();
+  const events = [];
+  let activeTarget = laneA;
+  const createTerminal = (name) => ({
+    name,
+    processId: Promise.resolve(undefined),
+    sendText(text, addNewLine) {
+      events.push(['sendText', name, addNewLine]);
+      if (addNewLine === false) {
+        files.set(path.join(laneA, 'replay-probe-input'), recordedInput);
+        return;
+      }
+      assert.match(text, /^printf '\\033\[c'; /);
+      files.set(path.join(laneA, 'replay-probe-ready'), '');
+    },
+  });
+  const window = { terminals: [createTerminal('lane-a')] };
+  const messages = [];
+
+  await run({
+    environment: { PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'replay' }) },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: { fsPath: workspaceFile },
+        get workspaceFolders() {
+          return [{ uri: { fsPath: activeLink } }];
+        },
+      },
+      extensions: {
+        getExtension() {
+          return { async activate() {} };
+        },
+      },
+      window,
+      commands: {
+        async executeCommand(command, laneLabel) {
+          assert.equal(command, 'projectLanes.switchLane');
+          events.push(['switchLane', laneLabel]);
+          activeTarget = laneLabel === 'lane-a' ? laneA : laneB;
+          window.terminals = [createTerminal(laneLabel)];
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(value) {
+        assert.equal(value, activeLink);
+        return activeTarget;
+      },
+      existsSync(value) {
+        return files.has(value);
+      },
+      readFileSync(value) {
+        return files.get(value);
+      },
+    },
+    delay: async () => {},
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  return { events, messages };
+};
+
+test('the lane terminal replay phase sends the sentinel to the re-attached lane-a Terminal', async () => {
+  const { events, messages } = await runLaneTerminalReplay('');
+
+  assert.deepEqual(events, [
+    ['sendText', 'lane-a', undefined],
+    ['switchLane', 'lane-b'],
+    ['switchLane', 'lane-a'],
+    ['sendText', 'lane-a', false],
+  ]);
+  assert.deepEqual(messages, ['E2E PASS: scrollback replay did not answer terminal queries again']);
+});
+
+test('the lane terminal replay phase rejects terminal responses recorded after re-attaching', async () => {
+  await assert.rejects(
+    runLaneTerminalReplay('\x1b[?1;2c'),
+    /Scrollback replay sent terminal responses to the shell: "\\u001b\[\?1;2c"/,
+  );
+});
+
+test('the legacy terminal prompt suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('legacy terminal prompt fixture keeps the matching v0.1.13 terminal settings', () => {
+  const fixtureSource = fs.readFileSync(legacyTerminalPromptScenario.workspaceFixture, 'utf8');
+  const { settings } = JSON.parse(fixtureSource.replace(/,\s*([}\]])/g, '$1'));
+
+  assert.equal(settings['projectLanes.initializationMode'], 'automatic');
+  assert.equal(settings['terminal.integrated.defaultProfile.linux'], 'Lane Terminal');
+  assert.equal(settings['terminal.integrated.enablePersistentSessions'], false);
+});
+
+const createLegacyPromptHarness = ({
+  killOnDispose = true,
+  activate = async () => {},
+  switchLane = async () => {},
+} = {}) => {
+  const workspaceDirectory = '/tmp/project-lanes-e2e-legacy-prompt/workspace';
+  const workspaceFile = path.join(workspaceDirectory, 'legacy-terminal-prompt.code-workspace');
+  const activeLink = activeLinkForPath(workspaceFile);
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const files = new Map();
+  const events = [];
+  const alive = new Set([4321]);
+  const settings = new Map([
+    ['defaultProfile.linux', 'Lane Terminal'],
+    ['enablePersistentSessions', false],
+  ]);
+  let activeTarget = laneA;
+  const terminal = {
+    name: 'lane-a',
+    sendText(text) {
+      events.push('sendText');
+      assert.match(text, /^printf '%s' "\$\$" > /);
+      files.set(path.join(laneA, 'startup-shell-pid'), '4321');
+    },
+    dispose() {
+      events.push('dispose');
+      if (killOnDispose) alive.delete(4321);
+    },
+  };
+  return {
+    events,
+    dependencies: {
+      environment: { PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'pending-prompt' }) },
+      vscodeApi: {
+        workspace: {
+          workspaceFile: { fsPath: workspaceFile },
+          workspaceFolders: [{ uri: { fsPath: activeLink } }],
+          getConfiguration(section) {
+            assert.equal(section, 'terminal.integrated');
+            return {
+              inspect(key) {
+                assert.ok(['defaultProfile.linux', 'enablePersistentSessions'].includes(key), key);
+                return { workspaceValue: settings.get(key) };
+              },
+            };
+          },
+        },
+        extensions: {
+          getExtension() {
+            return { activate };
+          },
+        },
+        window: { terminals: [terminal] },
+        commands: {
+          async executeCommand(command, argument) {
+            events.push(argument === undefined ? command : [command, argument]);
+            if (command === 'projectLanes.switchLane') {
+              await switchLane();
+              activeTarget = laneB;
+            } else if (command === 'notification.acceptPrimaryAction') {
+              settings.delete('enablePersistentSessions');
+            }
+          },
+        },
+      },
+      fileSystem: {
+        realpathSync(value) {
+          assert.equal(value, activeLink);
+          return activeTarget;
+        },
+        existsSync(value) {
+          return files.has(value);
+        },
+        readFileSync(value) {
+          return files.get(value);
+        },
+      },
+      processApi: {
+        kill(pid, signal) {
+          assert.equal(signal, 0);
+          if (alive.has(pid)) return true;
+          throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+        },
+      },
+      delay: async () => {},
+      now: (() => {
+        let instant = 0;
+        return () => (instant += 1_000);
+      })(),
+    },
+  };
+};
+
+test('the legacy prompt bootstrap phase waits for activation and tolerates its host restart', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness({
+    activate: async () => {
+      throw new Error("Activating extension 'yukiito1999.project-lanes' failed: Canceled.");
+    },
+  });
+  const messages = [];
+
+  await run({
+    ...harness.dependencies,
+    environment: { PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'bootstrap' }) },
+    log: (message) => messages.push(message),
+  });
+
+  assert.deepEqual(harness.events, []);
+  assert.deepEqual(messages, ['E2E PASS: legacy terminal prompt workspace initialized']);
+});
+
+test('the pending-prompt phase closes Lane Terminal, switches lanes, and then removes legacy settings', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness();
+  const messages = [];
+
+  await run({ ...harness.dependencies, log: (message) => messages.push(message) });
+
+  assert.deepEqual(harness.events, [
+    'sendText',
+    'dispose',
+    ['projectLanes.switchLane', 'lane-b'],
+    'notifications.focusToasts',
+    'notification.acceptPrimaryAction',
+  ]);
+  assert.deepEqual(messages, [
+    'E2E PASS: the legacy prompt left Lane Terminal close, activation, and lane commands responsive',
+  ]);
+});
+
+test('the pending-prompt phase rejects a startup shell that survives its closed Terminal', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness({ killOnDispose: false });
+
+  await assert.rejects(
+    run({ ...harness.dependencies, log: () => {} }),
+    /Closing the startup Lane Terminal left its shell running/,
+  );
+});
+
+test('the pending-prompt phase rejects activation that waits for the legacy answer', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness({ activate: () => new Promise(() => {}) });
+
+  await assert.rejects(
+    run({ ...harness.dependencies, log: () => {} }),
+    /Extension activation waited for the legacy settings answer/,
+  );
+});
+
+test('the pending-prompt phase rejects a lane command that waits for the legacy answer', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness({ switchLane: () => new Promise(() => {}) });
+
+  await assert.rejects(
+    run({ ...harness.dependencies, log: () => {} }),
+    /Switch Lane waited for the legacy settings answer/,
   );
 });
 
@@ -965,15 +1294,16 @@ test('the installed VSIX suite activates the isolated candidate and loads its na
   assert.deepEqual(messages, ['E2E PASS: installed yukiito1999.project-lanes@0.1.13 activated']);
 });
 
-test('the installed VSIX suite selects Remove Legacy Settings while candidate activation is pending', async () => {
+test('the installed VSIX suite selects Remove Legacy Settings after activation until the override is removed', async () => {
   const { activateWithLegacyRemoval } = require('./suite/installed-vsix.cjs');
   let resolveActivation;
   const activation = new Promise((resolve) => {
     resolveActivation = resolve;
   });
   const commands = [];
+  let legacyRemoved = false;
 
-  await activateWithLegacyRemoval({
+  const responding = activateWithLegacyRemoval({
     activation,
     commands: {
       async getCommands(includeInternal) {
@@ -982,17 +1312,46 @@ test('the installed VSIX suite selects Remove Legacy Settings while candidate ac
       },
       async executeCommand(command) {
         commands.push(command);
-        if (command === 'notification.acceptPrimaryAction') resolveActivation();
+        if (command === 'notification.acceptPrimaryAction') legacyRemoved = true;
       },
     },
+    isLegacyRemoved: () => legacyRemoved,
     delay: async () => {},
     now: (() => {
       let instant = 0;
       return () => ++instant;
     })(),
   });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(commands, []);
+
+  resolveActivation();
+  await responding;
 
   assert.deepEqual(commands, ['notifications.focusToasts', 'notification.acceptPrimaryAction']);
+});
+
+test('the installed VSIX suite times out when Remove Legacy Settings never applies', async () => {
+  const { activateWithLegacyRemoval } = require('./suite/installed-vsix.cjs');
+
+  await assert.rejects(
+    activateWithLegacyRemoval({
+      activation: Promise.resolve(),
+      commands: {
+        async getCommands() {
+          return ['notifications.focusToasts', 'notification.acceptPrimaryAction'];
+        },
+        async executeCommand() {},
+      },
+      isLegacyRemoved: () => false,
+      delay: async () => {},
+      now: (() => {
+        let instant = 0;
+        return () => (instant += 1_000);
+      })(),
+    }),
+    /Timed out while selecting Remove Legacy Settings/,
+  );
 });
 
 test('the installed VSIX suite verifies that terminal + opens a lane-root session', async () => {
@@ -1278,6 +1637,67 @@ test('the installed VSIX suite propagates a similar cancellation during candidat
     }),
     activationError,
   );
+});
+
+test('the installed VSIX suite treats the removed persistence override as the legacy answer', async () => {
+  const { run } = require('./suite/installed-vsix.cjs');
+  const extensionsDir = '/tmp/installed/migrate-answer/extensions';
+  const stop = new Error('stop after legacy response');
+  let persistentSessionsWorkspaceValue = false;
+  let isLegacyRemoved;
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR: extensionsDir,
+        PROJECT_LANES_E2E_EXPECTED_VERSION: '0.1.16',
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'candidate-migrate' }),
+      },
+      vscodeApi: {
+        workspace: {
+          workspaceFile: {
+            fsPath: '/tmp/installed/migrate-answer/workspace/installed-vsix-upgrade.code-workspace',
+          },
+          getConfiguration(section) {
+            assert.equal(section, 'terminal.integrated');
+            return {
+              inspect(key) {
+                assert.equal(key, 'enablePersistentSessions');
+                return { workspaceValue: persistentSessionsWorkspaceValue };
+              },
+            };
+          },
+        },
+        extensions: {
+          getExtension() {
+            return {
+              extensionPath: path.join(extensionsDir, 'yukiito1999.project-lanes-0.1.16-linux-x64'),
+              packageJSON: { version: '0.1.16' },
+              isActive: true,
+              async activate() {},
+            };
+          },
+        },
+      },
+      async respondToLegacySettings(options) {
+        isLegacyRemoved = options.isLegacyRemoved;
+        throw stop;
+      },
+      fileSystem: {
+        existsSync() {
+          return true;
+        },
+      },
+      resolveRealPath(value) {
+        return value;
+      },
+    }),
+    stop,
+  );
+
+  assert.equal(isLegacyRemoved(), false);
+  persistentSessionsWorkspaceValue = undefined;
+  assert.equal(isLegacyRemoved(), true);
 });
 
 test('the installed VSIX suite rejects measured cancellation for a namespaced baseline', async () => {

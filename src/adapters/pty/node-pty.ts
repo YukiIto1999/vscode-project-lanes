@@ -4,6 +4,7 @@ import type { SessionActivitySink } from '../../lane-activity/ports';
 import type { ShellSessionFactoryPort, ShellSessionHandle } from '../../terminal/ports';
 import { initialParserState, parseChunk, type ParserState } from './osc633';
 import { planShellIntegration } from './shell-integration';
+import { stripTerminalQueries } from './terminal-query';
 
 /**
  * node-pty の遅延ロード
@@ -59,6 +60,8 @@ export const createShellSessionFactory = (
     const exitCallbacks: (() => void)[] = [];
     const scrollbackChunks: string[] = [];
     let scrollbackSize = 0;
+    /** 表示面へ届け済みの scrollback 先頭 chunk 数 */
+    let deliveredChunkCount = 0;
     let currentOutput:
       | {
           readonly listener: (data: string) => void;
@@ -69,6 +72,7 @@ export const createShellSessionFactory = (
     const trimScrollback = (): void => {
       while (scrollbackSize > MAX_SCROLLBACK && scrollbackChunks.length > 1) {
         scrollbackSize -= scrollbackChunks.shift()!.length;
+        if (deliveredChunkCount > 0) deliveredChunkCount -= 1;
       }
     };
 
@@ -93,6 +97,7 @@ export const createShellSessionFactory = (
     proc.onData((data) => {
       scrollbackChunks.push(data);
       scrollbackSize += data.length;
+      if (currentOutput) deliveredChunkCount = scrollbackChunks.length;
       trimScrollback();
       dispatchActivity(data);
       currentOutput?.listener(data);
@@ -107,13 +112,28 @@ export const createShellSessionFactory = (
 
     return {
       id: spec.id,
-      write: (data) => proc.write(data),
-      resize: (cols, rows) => proc.resize(cols, rows),
+      write: (data) => {
+        if (alive) proc.write(data);
+      },
+      // 終了済み PTY の resize は EBADF を投げ、fd 再利用時は別 PTY を操作し得るため生存中に限る
+      resize: (cols, rows) => {
+        if (!alive) return;
+        try {
+          proc.resize(cols, rows);
+        } catch {
+          // onExit 通知前に終了した PTY の resize 失敗を表示処理へ波及させない
+        }
+      },
 
       attachOutput: (callback) => {
         const output = { listener: callback };
         currentOutput = output;
-        if (scrollbackChunks.length > 0) callback(scrollbackChunks.join(''));
+        // 届け済みの問い合わせには以前の表示面が応答したため、再生では応答させない
+        const replay =
+          stripTerminalQueries(scrollbackChunks.slice(0, deliveredChunkCount).join('')) +
+          scrollbackChunks.slice(deliveredChunkCount).join('');
+        deliveredChunkCount = scrollbackChunks.length;
+        if (replay.length > 0) callback(replay);
         return {
           dispose: () => {
             if (currentOutput === output) currentOutput = undefined;

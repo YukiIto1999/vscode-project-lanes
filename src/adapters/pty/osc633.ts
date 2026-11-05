@@ -4,6 +4,9 @@ const OSC_OPEN = ']';
 const OSC_ID_633 = '633';
 const PARAM_SEP = ';';
 const ST_TAIL = '\\';
+/** 実行中の制御文字列を打ち切る CAN / SUB */
+const CAN = '\x18';
+const SUB = '\x1a';
 const PAYLOAD_FG_STARTED = 'C';
 const PAYLOAD_FG_ENDED_PREFIX = 'D';
 
@@ -91,7 +94,8 @@ const stepOsc633St = (state: { phase: 'osc-633-st'; payload: string }, c: string
       emittedOutput: false,
       emittedFg: interpretFgPayload(state.payload),
     };
-  return { state: { phase: 'osc-633', payload: state.payload + ESC + c }, emittedOutput: false };
+  // ST 以外の ESC 後続は OSC を打ち切り、新しいエスケープシーケンスの開始として扱う (xterm.js と同じ)
+  return stepEsc(c);
 };
 
 const stepOscOther = (c: string): StepResult => {
@@ -102,7 +106,7 @@ const stepOscOther = (c: string): StepResult => {
 
 const stepOscOtherSt = (c: string): StepResult => {
   if (c === ST_TAIL) return { state: { phase: 'plain' }, emittedOutput: false };
-  return { state: { phase: 'osc-other' }, emittedOutput: false };
+  return stepEsc(c);
 };
 
 /**
@@ -112,6 +116,10 @@ const stepOscOtherSt = (c: string): StepResult => {
  * @returns 遷移結果
  */
 const step = (state: ParserState, c: string): StepResult => {
+  // CAN / SUB はエスケープシーケンスと OSC を即時に打ち切る
+  if ((c === CAN || c === SUB) && state.phase !== 'plain') {
+    return { state: { phase: 'plain' }, emittedOutput: false };
+  }
   switch (state.phase) {
     case 'plain':
       return stepPlain(c);

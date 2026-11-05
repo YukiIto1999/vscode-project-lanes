@@ -120,11 +120,29 @@ describe('parseChunk: 不正/未確定シーケンス', () => {
     expect(r1.events).toEqual([]);
   });
 
-  it('633 payload 中の ESC が \\ で終わらなければ payload に取り込んで継続', () => {
+  it('633 payload 中の ESC が \\ で終わらなければ OSC を打ち切り、イベントを出さない', () => {
     const r1 = parseChunk(initialParserState(), `${ESC}]633;`);
     const r2 = parseChunk(r1.state, `D${ESC}X`);
-    expect(r2.state.phase).toBe('osc-633');
-    if (r2.state.phase === 'osc-633') expect(r2.state.payload).toBe(`D${ESC}X`);
-    expect(r2.events).toEqual([]);
+    expect(r2.state.phase).toBe('plain');
+    expect(r2.events).toEqual([{ kind: 'output' }]);
+  });
+
+  it('未終端の OSC の後に来た OSC 633 を取りこぼさない', () => {
+    const r = drive([`${ESC}]0;title`, `${ESC}]633;D;0${BEL}`]);
+    expect(r.state.phase).toBe('plain');
+    expect(r.events).toEqual([{ kind: 'fg-ended' }]);
+  });
+
+  it('未終端の OSC 633 の後に来た OSC 633 を取りこぼさない', () => {
+    const r = drive([`${ESC}]633;C`, `${ESC}]633;D;0${BEL}`]);
+    expect(r.events).toEqual([{ kind: 'fg-ended' }]);
+  });
+
+  it('CAN / SUB で OSC を打ち切り、続く通常出力を output として扱う', () => {
+    expect(drive([`${ESC}]633;C\x18after`]).events).toEqual([{ kind: 'output' }]);
+    expect(drive([`${ESC}]0;title\x1aafter`]).events).toEqual([{ kind: 'output' }]);
+    expect(drive([`${ESC}]0;ti`, `\x18${ESC}]633;C${BEL}`]).events).toEqual([
+      { kind: 'fg-started' },
+    ]);
   });
 });

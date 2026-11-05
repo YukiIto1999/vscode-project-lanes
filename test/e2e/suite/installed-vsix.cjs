@@ -143,6 +143,7 @@ const activateWithLegacyRemoval = async ({
   activation,
   commands,
   vscodeVersion = VSCODE_VERSION,
+  isLegacyRemoved,
   delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   now = () => Date.now(),
 }) => {
@@ -156,22 +157,15 @@ const activateWithLegacyRemoval = async ({
     );
   }
 
-  let settled = false;
-  const observedActivation = Promise.resolve(activation).finally(() => {
-    settled = true;
-  });
-  await Promise.resolve();
+  // activation は旧版設定の確認への応答を待たないため、旧版値の削除を観測するまで Remove を選ぶ
+  await activation;
   const deadline = now() + POLL_TIMEOUT_MS;
-
-  while (!settled) {
+  while (!isLegacyRemoved()) {
+    if (now() > deadline) throw new Error('Timed out while selecting Remove Legacy Settings');
     await commands.executeCommand('notifications.focusToasts');
     await commands.executeCommand('notification.acceptPrimaryAction');
-    await Promise.race([observedActivation, delay(POLL_INTERVAL_MS)]);
-    if (!settled && now() > deadline) {
-      throw new Error('Timed out while selecting Remove Legacy Settings');
-    }
+    await delay(POLL_INTERVAL_MS);
   }
-  await observedActivation;
 };
 
 const run = async ({
@@ -226,6 +220,10 @@ const run = async ({
         activation,
         commands: vscodeApi.commands,
         vscodeVersion: vscodeApi.version,
+        isLegacyRemoved: () =>
+          vscodeApi.workspace
+            .getConfiguration('terminal.integrated')
+            .inspect('enablePersistentSessions')?.workspaceValue === undefined,
         delay,
         now,
       });

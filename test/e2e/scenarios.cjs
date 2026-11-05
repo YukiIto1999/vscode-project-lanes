@@ -82,6 +82,36 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'lane-terminal-replay',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'lane-terminal-replay'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'lane-terminal-replay',
+      'lane-terminal-replay.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'lane-terminal-replay.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'replay' }),
+    ]),
+  }),
+  Object.freeze({
+    name: 'legacy-terminal-prompt',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-terminal-prompt'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'legacy-terminal-prompt',
+      'legacy-terminal-prompt.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'legacy-terminal-prompt.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'pending-prompt' }),
+    ]),
+  }),
+  Object.freeze({
     name: 'editor-snapshot-persistence',
     fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-persistence'),
     workspaceFixture: path.join(
