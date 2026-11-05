@@ -14,6 +14,8 @@ const EXPECTED_EXTENSIONS_DIR_KEY = 'PROJECT_LANES_E2E_EXPECTED_EXTENSIONS_DIR';
 const EXPECTED_VERSION_KEY = 'PROJECT_LANES_E2E_EXPECTED_VERSION';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
+/** 旧版設定の確認で主操作を選んでから、設定の反映を待つ上限 */
+const ACCEPT_SETTLE_TIMEOUT_MS = 3_000;
 const UPGRADE_WORKSPACE_FIXTURE = 'installed-vsix-upgrade.code-workspace';
 const LEGACY_PROMPT_COMMANDS = ['notifications.focusToasts', 'notification.acceptPrimaryAction'];
 
@@ -164,7 +166,9 @@ const activateWithLegacyRemoval = async ({
     if (now() > deadline) throw new Error('Timed out while selecting Remove Legacy Settings');
     await commands.executeCommand('notifications.focusToasts');
     await commands.executeCommand('notification.acceptPrimaryAction');
-    await delay(POLL_INTERVAL_MS);
+    // 選択の反映前に押し直すと、後続の別通知の主操作まで実行し得るため反映を待ってから再試行
+    const settleDeadline = Math.min(now() + ACCEPT_SETTLE_TIMEOUT_MS, deadline);
+    while (!isLegacyRemoved() && now() <= settleDeadline) await delay(POLL_INTERVAL_MS);
   }
 };
 
