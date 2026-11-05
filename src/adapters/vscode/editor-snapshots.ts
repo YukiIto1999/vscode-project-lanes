@@ -5,8 +5,8 @@ import type { EditorSnapshotPruneResult, EditorSnapshotStorePort } from '../../l
 
 const EDITOR_SNAPSHOTS_KEY = 'projectLanes.editorSnapshots' as const;
 const EDITOR_SNAPSHOTS_SCHEMA_VERSION = 1 as const;
+/** TabGroup.viewColumn はグリッド順の位置で、10 以上のグループや補助ウィンドウでは 9 を超える */
 const MINIMUM_VIEW_COLUMN = 1;
-const MAXIMUM_VIEW_COLUMN = 9;
 
 interface StoredEditorSnapshotsV1 {
   /** スキーマ版 */
@@ -35,10 +35,7 @@ const isFileUri = (value: unknown): value is UriString => {
 };
 
 const isViewColumn = (value: unknown): value is number =>
-  typeof value === 'number' &&
-  Number.isInteger(value) &&
-  value >= MINIMUM_VIEW_COLUMN &&
-  value <= MAXIMUM_VIEW_COLUMN;
+  typeof value === 'number' && Number.isInteger(value) && value >= MINIMUM_VIEW_COLUMN;
 
 const copySnapshot = (snapshot: EditorSnapshot): EditorSnapshot => ({
   tabs: snapshot.tabs.map((tab) => ({ uri: tab.uri, viewColumn: tab.viewColumn })),
