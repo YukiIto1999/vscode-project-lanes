@@ -1,0 +1,14 @@
+{
+  "folders": [
+    {
+      "path": "lane-a",
+    },
+    {
+      "path": "lane-b",
+    },
+  ],
+  "settings": {
+    "projectLanes.initializationMode": "automatic",
+    "projectLanes.terminal.shellPath": "/bin/bash",
+  },
+}

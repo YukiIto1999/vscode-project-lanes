@@ -82,6 +82,18 @@ const laneSwitchTransactionScenario = {
   suitePath: path.join(__dirname, 'suite', 'lane-switch-transaction.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'transaction' }, { phase: 'restart' }],
 };
+const laneTerminalReplayScenario = {
+  name: 'lane-terminal-replay',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'lane-terminal-replay'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'lane-terminal-replay',
+    'lane-terminal-replay.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'lane-terminal-replay.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'replay' }],
+};
 const editorSnapshotPersistenceScenario = {
   name: 'editor-snapshot-persistence',
   fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-persistence'),
@@ -292,6 +304,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceAnchorIsolationScenario,
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
+    laneTerminalReplayScenario,
     editorSnapshotPersistenceScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
@@ -371,6 +384,125 @@ test('lane switch search fixture exposes a selectable file only in lane-b', () =
 
   assert.deepEqual(laneAEntries, []);
   assert.deepEqual(laneBEntries, ['fixture.txt']);
+});
+
+test('the lane terminal replay suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/lane-terminal-replay.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the lane terminal replay probe consumes only the live DA1 response before recording input', () => {
+  const { buildProbeCommand } = require('./suite/lane-terminal-replay.cjs');
+
+  assert.equal(
+    buildProbeCommand({ readyPath: '/tmp/lane a/ready', inputPath: "/tmp/it's/input" }),
+    [
+      "printf '\\033[c'",
+      'IFS= read -rs -n 64 -d c -t 5 _',
+      ": > '/tmp/lane a/ready'",
+      "IFS= read -rs -n 256 -d '#' -t 60 extra",
+      `printf '%s' "$extra" > '/tmp/it'\\''s/input.tmp'`,
+      `mv '/tmp/it'\\''s/input.tmp' '/tmp/it'\\''s/input'`,
+    ].join('; '),
+  );
+});
+
+const runLaneTerminalReplay = async (recordedInput) => {
+  const { run } = require('./suite/lane-terminal-replay.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-replay/workspace';
+  const workspaceFile = path.join(workspaceDirectory, 'lane-terminal-replay.code-workspace');
+  const activeLink = activeLinkForPath(workspaceFile);
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const files = new Map();
+  const events = [];
+  let activeTarget = laneA;
+  const createTerminal = (name) => ({
+    name,
+    processId: Promise.resolve(undefined),
+    sendText(text, addNewLine) {
+      events.push(['sendText', name, addNewLine]);
+      if (addNewLine === false) {
+        files.set(path.join(laneA, 'replay-probe-input'), recordedInput);
+        return;
+      }
+      assert.match(text, /^printf '\\033\[c'; /);
+      files.set(path.join(laneA, 'replay-probe-ready'), '');
+    },
+  });
+  const window = { terminals: [createTerminal('lane-a')] };
+  const messages = [];
+
+  await run({
+    environment: { PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'replay' }) },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: { fsPath: workspaceFile },
+        get workspaceFolders() {
+          return [{ uri: { fsPath: activeLink } }];
+        },
+      },
+      extensions: {
+        getExtension() {
+          return { async activate() {} };
+        },
+      },
+      window,
+      commands: {
+        async executeCommand(command, laneLabel) {
+          assert.equal(command, 'projectLanes.switchLane');
+          events.push(['switchLane', laneLabel]);
+          activeTarget = laneLabel === 'lane-a' ? laneA : laneB;
+          window.terminals = [createTerminal(laneLabel)];
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(value) {
+        assert.equal(value, activeLink);
+        return activeTarget;
+      },
+      existsSync(value) {
+        return files.has(value);
+      },
+      readFileSync(value) {
+        return files.get(value);
+      },
+    },
+    delay: async () => {},
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  return { events, messages };
+};
+
+test('the lane terminal replay phase sends the sentinel to the re-attached lane-a Terminal', async () => {
+  const { events, messages } = await runLaneTerminalReplay('');
+
+  assert.deepEqual(events, [
+    ['sendText', 'lane-a', undefined],
+    ['switchLane', 'lane-b'],
+    ['switchLane', 'lane-a'],
+    ['sendText', 'lane-a', false],
+  ]);
+  assert.deepEqual(messages, ['E2E PASS: scrollback replay did not answer terminal queries again']);
+});
+
+test('the lane terminal replay phase rejects terminal responses recorded after re-attaching', async () => {
+  await assert.rejects(
+    runLaneTerminalReplay('\x1b[?1;2c'),
+    /Scrollback replay sent terminal responses to the shell: "\\u001b\[\?1;2c"/,
+  );
 });
 
 test('the active-lane reconciliation suite rejects an unknown phase', async () => {
