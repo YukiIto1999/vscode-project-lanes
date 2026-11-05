@@ -22,6 +22,8 @@ __lanes_precmd() {
         __lanes_osc "D;$status"
     fi
     __lanes_osc "A"
+    # 後続の PROMPT_COMMAND (終了コード表示のプロンプト等) へ直前コマンドの終了コードを引き継ぐ
+    return "$status"
 }
 
 # PS1 末尾に B (プロンプト終端 = コマンド開始位置) を非印字マーカーで追加
