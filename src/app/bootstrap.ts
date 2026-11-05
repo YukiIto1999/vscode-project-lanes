@@ -544,7 +544,9 @@ export const bootstrapRuntime = async (
   const laneIdFactory: LaneIdFactoryPort = { next: () => toLaneId(randomUUID()) };
   const anchorTarget = createAnchorTargetAdapter();
   const terminalSettings = createTerminalSettingsLifecycle({
-    lease: createTerminalSettingsLeaseAdapter(context.workspaceState, process.platform),
+    lease: createTerminalSettingsLeaseAdapter(context.workspaceState, process.platform, {
+      extensionMode: context.extensionMode,
+    }),
     register: (lifecycle) => activeTerminalSettingsLifecycles.add(lifecycle),
     unregister: (lifecycle) => activeTerminalSettingsLifecycles.delete(lifecycle),
     reportReleaseFailure: (error) => {

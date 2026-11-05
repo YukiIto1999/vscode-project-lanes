@@ -6,6 +6,7 @@
   "publisher": "project-lanes-e2e",
   "main": "./extension.cjs",
   "activationEvents": [
+    "onCommand:projectLanes.e2e.chooseLegacyTerminalSettings",
     "onStartupFinished"
   ],
   "engines": {

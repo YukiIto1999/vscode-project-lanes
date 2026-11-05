@@ -5,12 +5,16 @@ const vscodeHarness = vi.hoisted(() => {
   const values = new Map<string, unknown>();
   const updates: Array<readonly [string, unknown, unknown]> = [];
   const showWarningMessage = vi.fn();
+  const executeCommand = vi.fn();
   return {
     values,
     updates,
     showWarningMessage,
+    executeCommand,
     vscode: {
       ConfigurationTarget: { Workspace: 2 },
+      ExtensionMode: { Production: 1, Development: 2, Test: 3 },
+      commands: { executeCommand },
       workspace: {
         getConfiguration: vi.fn(() => ({
           inspect: (key: string) => ({ workspaceValue: values.get(key) }),
@@ -46,6 +50,46 @@ describe('createTerminalSettingsLeaseAdapter', () => {
     vscodeHarness.values.clear();
     vscodeHarness.updates.splice(0);
     vscodeHarness.showWarningMessage.mockReset();
+    vscodeHarness.executeCommand.mockReset();
+  });
+
+  it('Development の E2E driver 実行では通知を出さず driver コマンドへ同じ選択肢を尋ねる', async () => {
+    vscodeHarness.values.set('enablePersistentSessions', false);
+    vscodeHarness.executeCommand.mockResolvedValue('Remove Legacy Settings');
+    const lease = createTerminalSettingsLeaseAdapter(createMemento(), 'linux', {
+      extensionMode: 2,
+      environment: { PROJECT_LANES_E2E_PAYLOAD: '{}', PROJECT_LANES_E2E_RUN: '{}' },
+    });
+
+    await (
+      await lease.activate('Lane Terminal')
+    ).legacyDecision;
+
+    expect(vscodeHarness.showWarningMessage).not.toHaveBeenCalled();
+    expect(vscodeHarness.executeCommand).toHaveBeenCalledWith(
+      'projectLanes.e2e.chooseLegacyTerminalSettings',
+      {
+        message: expect.stringContaining('Project Lanes 0.1.13'),
+        actions: ['Remove Legacy Settings', 'Keep Current Settings'],
+      },
+    );
+    expect(vscodeHarness.values.has('enablePersistentSessions')).toBe(false);
+  });
+
+  it('Production では E2E 用の環境変数があっても通知で尋ねる', async () => {
+    vscodeHarness.values.set('enablePersistentSessions', false);
+    vscodeHarness.showWarningMessage.mockResolvedValue('Keep Current Settings');
+    const lease = createTerminalSettingsLeaseAdapter(createMemento(), 'linux', {
+      extensionMode: 1,
+      environment: { PROJECT_LANES_E2E_PAYLOAD: '{}', PROJECT_LANES_E2E_RUN: '{}' },
+    });
+
+    await (
+      await lease.activate('Lane Terminal')
+    ).legacyDecision;
+
+    expect(vscodeHarness.executeCommand).not.toHaveBeenCalled();
+    expect(vscodeHarness.showWarningMessage).toHaveBeenCalledOnce();
   });
 
   it('legacy default 候補では明示的な3択を表示し、Manage を lease 選択へ変換する', async () => {

@@ -1,9 +1,8 @@
 import * as vscode from 'vscode';
 import type { LaneId, UriString } from '../../foundation/model';
 import type { LanePromptPort } from '../../lane/ports';
+import { usesE2eDriver } from './e2e-driver';
 
-const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
-const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
 const E2E_RENAME_LANE_COMMAND = 'projectLanes.e2e.renameLane';
 const RELOAD_LANES_COMMAND = 'projectLanes.reloadLanes';
@@ -19,15 +18,6 @@ interface PromptAdapterOptions {
 interface LanePickItem extends vscode.QuickPickItem {
   readonly laneId: LaneId;
 }
-
-/** Development E2E driver の有効状態 */
-const usesE2eDriver = (
-  extensionMode: vscode.ExtensionMode,
-  environment: Readonly<Record<string, string | undefined>>,
-): boolean =>
-  extensionMode === vscode.ExtensionMode.Development &&
-  Boolean(environment[E2E_PAYLOAD_KEY]) &&
-  Boolean(environment[E2E_RUN_KEY]);
 
 /**
  * VS Code QuickPick / InputBox / WarningMessage 経由の対話アダプターの生成

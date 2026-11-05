@@ -9,8 +9,12 @@ const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const EXTENSION_ID = 'yukiito1999.project-lanes';
 const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
-/** 旧版設定の確認で主操作を選んでから、設定の反映を待つ上限 */
-const ACCEPT_SETTLE_TIMEOUT_MS = 3_000;
+const REMOVE_LEGACY_SETTINGS_ACTION = 'Remove Legacy Settings';
+const LEGACY_SETTINGS_ACTIONS = [
+  REMOVE_LEGACY_SETTINGS_ACTION,
+  'Keep Current Settings',
+  'Manage Lane Terminal',
+];
 const WORKSPACE_FIXTURE = 'legacy-terminal-prompt.code-workspace';
 
 const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
@@ -80,6 +84,7 @@ const run = async ({
   vscodeApi,
   delay,
   now,
+  legacyTerminalSettingsPrompt,
   log = (message) => console.log(message),
 } = {}) => {
   const phase = readPhase(environment);
@@ -127,7 +132,7 @@ const run = async ({
     } catch {
       return error;
     }
-    if (!(error instanceof Error)) return error;
+    if (!progress || !(error instanceof Error)) return error;
     error.message = `${error.message}\nE2E progress:\n${progress}`;
     return error;
   };
@@ -171,6 +176,18 @@ const run = async ({
       );
     };
     assertLegacyPromptPending();
+    // 通知の主操作の自動選択は別の通知を選び得るため、旧版設定の確認には driver 経由で答える
+    assert.ok(
+      legacyTerminalSettingsPrompt,
+      'The E2E driver did not provide the legacy terminal settings prompt',
+    );
+    const legacyRequest = await waitForSettlement(
+      legacyTerminalSettingsPrompt.requested,
+      'Project Lanes did not ask how to handle the legacy terminal settings',
+      { delay, now },
+    );
+    assert.deepEqual(legacyRequest.actions, LEGACY_SETTINGS_ACTIONS);
+    mark('legacy settings prompt requested');
 
     let terminal;
     await waitFor(
@@ -225,24 +242,8 @@ const run = async ({
     mark('switched to lane-b');
     assertLegacyPromptPending();
 
-    const pause =
-      delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
-    const clock = now ?? (() => Date.now());
-    const deadline = clock() + POLL_TIMEOUT_MS;
-    const isLegacyPending = () =>
-      terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue === false;
-    let acceptCount = 0;
-    while (isLegacyPending()) {
-      if (clock() > deadline) throw new Error('Timed out while selecting Remove Legacy Settings');
-      await resolvedVscodeApi.commands.executeCommand('notifications.focusToasts');
-      await resolvedVscodeApi.commands.executeCommand('notification.acceptPrimaryAction');
-      acceptCount += 1;
-      mark(`accepted primary action #${acceptCount}`);
-      // 選択の反映前に押し直すと、後続の別通知の主操作まで実行し得るため反映を待ってから再試行
-      const settleDeadline = Math.min(clock() + ACCEPT_SETTLE_TIMEOUT_MS, deadline);
-      while (isLegacyPending() && clock() <= settleDeadline) await pause(POLL_INTERVAL_MS);
-    }
-    mark('legacy settings removed');
+    legacyTerminalSettingsPrompt.answer(REMOVE_LEGACY_SETTINGS_ACTION);
+    mark('answered Remove Legacy Settings');
     await waitFor(
       () => {
         assert.equal(
@@ -258,6 +259,7 @@ const run = async ({
       },
       { delay, now },
     );
+    mark('legacy settings removed');
     log(
       'E2E PASS: the legacy prompt left Lane Terminal close, activation, and lane commands responsive',
     );
