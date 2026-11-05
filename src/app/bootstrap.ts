@@ -558,7 +558,7 @@ export const bootstrapRuntime = async (
     return {
       fileInfo,
       anchor,
-      link: createWorkspaceLinkAdapter(anchor),
+      link: createWorkspaceLinkAdapter(anchor, directory),
       legacyLink: createLegacyWorkspaceLinkReader(anchor),
     };
   };

@@ -6,6 +6,10 @@ const E2E_PAYLOAD_KEY = 'PROJECT_LANES_E2E_PAYLOAD';
 const E2E_RUN_KEY = 'PROJECT_LANES_E2E_RUN';
 const E2E_PICK_REPLACEMENT_FOLDER_COMMAND = 'projectLanes.e2e.pickReplacementFolder';
 const E2E_RENAME_LANE_COMMAND = 'projectLanes.e2e.renameLane';
+const RELOAD_LANES_COMMAND = 'projectLanes.reloadLanes';
+const RELOAD_LANES_ACTION = 'Reload Lanes';
+const RECONCILIATION_REQUIRED_WARNING =
+  'The active lane link is missing or out of date. Reload Lanes to repair it.';
 
 interface PromptAdapterOptions {
   readonly extensionMode?: vscode.ExtensionMode;
@@ -51,6 +55,16 @@ export const createPromptAdapter = ({
 
   warnDirtyEditors: () => {
     vscode.window.showWarningMessage('There are unsaved files. Save them before switching lanes.');
+  },
+
+  warnReconciliationRequired: () => {
+    void vscode.window
+      .showWarningMessage(RECONCILIATION_REQUIRED_WARNING, RELOAD_LANES_ACTION)
+      .then(async (selection) => {
+        if (selection === RELOAD_LANES_ACTION) {
+          await vscode.commands.executeCommand(RELOAD_LANES_COMMAND);
+        }
+      });
   },
 
   promptRename: async (current, validate) => {

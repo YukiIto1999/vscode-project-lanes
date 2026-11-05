@@ -461,6 +461,9 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         if (result.kind === 'blocked' && result.reason === 'dirty-editors') {
           prompt.warnDirtyEditors();
         }
+        if (result.kind === 'blocked' && result.reason === 'reconciliation-required') {
+          prompt.warnReconciliationRequired();
+        }
         return result;
       });
     },

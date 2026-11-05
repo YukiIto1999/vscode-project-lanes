@@ -1,14 +1,21 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as nodePath from 'node:path';
 import type { AbsolutePath } from '../../foundation/model';
 import type { WorkspaceAnchor } from '../../workspace/anchor';
+import type { DirectoryPort } from '../../workspace/ports';
+
+vi.mock('vscode', () => ({}));
+
+import { createDirectoryAdapter } from '../vscode/workspace';
 import {
   createLegacyWorkspaceLinkReader,
   createSymlinkOps,
   createWorkspaceLinkAdapter,
 } from './symlink';
+
+const directory = createDirectoryAdapter();
 
 describe('SymlinkOps', () => {
   const ops = createSymlinkOps();
@@ -229,7 +236,7 @@ describe('SymlinkOps', () => {
     fs.mkdirSync(target);
     const anchor = makeAnchor();
     fs.mkdirSync(anchor.namespaceDirectoryPath, { recursive: true });
-    const adapter = createWorkspaceLinkAdapter(anchor);
+    const adapter = createWorkspaceLinkAdapter(anchor, directory);
     adapter.swap(target);
 
     expect(adapter.readTarget()).toBe(target);
@@ -272,7 +279,7 @@ describe('SymlinkOps', () => {
     const anchor = makeAnchor();
     fs.mkdirSync(anchor.namespaceDirectoryPath, { recursive: true });
     fs.writeFileSync(anchor.activeLinkPath, 'preserve');
-    const adapter = createWorkspaceLinkAdapter(anchor);
+    const adapter = createWorkspaceLinkAdapter(anchor, directory);
 
     expect(captureError(() => adapter.readTarget())).toMatchObject({
       code: 'EINVAL',
@@ -289,12 +296,48 @@ describe('SymlinkOps', () => {
     fs.mkdirSync(target);
     const anchor = makeAnchor();
     fs.symlinkSync(externalDirectory, anchor.rootDirectoryPath);
-    const adapter = createWorkspaceLinkAdapter(anchor);
+    const adapter = createWorkspaceLinkAdapter(anchor, directory);
 
     expect(() => adapter.swap(target)).toThrowError(
       `Workspace link parent is not a real directory: ${anchor.rootDirectoryPath}`,
     );
     expect(fs.readdirSync(externalDirectory)).toEqual([]);
+  });
+
+  it('WorkspaceLinkPort は削除された `.lanes-root` と hash directory を再作成して link を作る', () => {
+    const target = abs('target');
+    fs.mkdirSync(target);
+    const anchor = makeAnchor();
+    const adapter = createWorkspaceLinkAdapter(anchor, directory);
+
+    expect(adapter.readTarget()).toBeUndefined();
+    adapter.swap(target);
+
+    expect(adapter.readTarget()).toBe(target);
+    for (const directoryPath of [anchor.rootDirectoryPath, anchor.namespaceDirectoryPath]) {
+      const stats = fs.lstatSync(directoryPath);
+      expect(stats.isDirectory() && !stats.isSymbolicLink()).toBe(true);
+    }
+  });
+
+  it('WorkspaceLinkPort は anchor directory を確保できなければ link を作らない', () => {
+    const target = abs('target');
+    fs.mkdirSync(target);
+    const anchor = makeAnchor();
+    const ensured: AbsolutePath[] = [];
+    const failingDirectory: DirectoryPort = {
+      ensureDirectory: (path) => {
+        ensured.push(path);
+        return false;
+      },
+    };
+    const adapter = createWorkspaceLinkAdapter(anchor, failingDirectory);
+
+    expect(() => adapter.swap(target)).toThrowError(
+      `Workspace link parent is not a real directory: ${anchor.rootDirectoryPath}`,
+    );
+    expect(ensured).toEqual([anchor.rootDirectoryPath]);
+    expect(fs.existsSync(anchor.rootDirectoryPath)).toBe(false);
   });
 
   it('WorkspaceLinkPort は symlink 化された hash directory を辿らない', () => {
@@ -305,7 +348,7 @@ describe('SymlinkOps', () => {
     const anchor = makeAnchor();
     fs.mkdirSync(anchor.rootDirectoryPath);
     fs.symlinkSync(externalDirectory, anchor.namespaceDirectoryPath);
-    const adapter = createWorkspaceLinkAdapter(anchor);
+    const adapter = createWorkspaceLinkAdapter(anchor, directory);
 
     expect(() => adapter.swap(target)).toThrowError(
       `Workspace link parent is not a real directory: ${anchor.namespaceDirectoryPath}`,

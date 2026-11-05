@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 import type { AbsolutePath } from '../../foundation/model';
 import type { WorkspaceAnchor } from '../../workspace/anchor';
-import type { WorkspaceLinkPort } from '../../workspace/ports';
+import type { DirectoryPort, WorkspaceLinkPort } from '../../workspace/ports';
 
 /** symlink 操作 */
 export interface SymlinkOps {
@@ -157,16 +157,28 @@ export const createSymlinkOps = (): SymlinkOps => ({
 /**
  * 現 workspace の namespaced link へ束縛した symlink ポートの生成
  * @param anchor - 現 workspace の anchor
+ * @param directory - 削除された anchor directory の再作成
  * @returns symlink 操作ポート
  */
-export const createWorkspaceLinkAdapter = (anchor: WorkspaceAnchor): WorkspaceLinkPort => {
+export const createWorkspaceLinkAdapter = (
+  anchor: WorkspaceAnchor,
+  directory: DirectoryPort,
+): WorkspaceLinkPort => {
   const ops = createSymlinkOps();
   const linkPath = anchor.activeLinkPath;
   const requiredDirectories = [anchor.rootDirectoryPath, anchor.namespaceDirectoryPath] as const;
   return {
     linkPath,
     readTarget: () => ops.read(linkPath, requiredDirectories),
-    swap: (target) => ops.replace(linkPath, target, requiredDirectories),
+    swap: (target) => {
+      // 起動後に削除された `.lanes-root` からも復旧できるよう親から順に再作成
+      for (const directoryPath of requiredDirectories) {
+        if (!directory.ensureDirectory(directoryPath)) {
+          throw new Error(`Workspace link parent is not a real directory: ${directoryPath}`);
+        }
+      }
+      ops.replace(linkPath, target, requiredDirectories);
+    },
     clear: () => ops.clear(linkPath, requiredDirectories),
   };
 };

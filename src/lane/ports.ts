@@ -136,6 +136,8 @@ export interface LanePromptPort {
   readonly pickLane: (lanes: readonly Lane[]) => Promise<LaneId | undefined>;
   /** 未保存タブ警告の表示 */
   readonly warnDirtyEditors: () => void;
+  /** active link と catalog の不整合で切替できない場合の再読込案内 */
+  readonly warnReconciliationRequired: () => void;
   /**
    * リネーム入力ダイアログ
    * @param current - 現在のラベル

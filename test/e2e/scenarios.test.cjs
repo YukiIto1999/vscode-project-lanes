@@ -153,6 +153,18 @@ const foreignAnchorRecoveryScenario = {
     { phase: 'copied-recover', workspaceFixtureName: 'copied.code-workspace' },
   ],
 };
+const deletedAnchorRecoveryScenario = {
+  name: 'deleted-anchor-recovery',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'deleted-anchor-recovery'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'deleted-anchor-recovery',
+    'deleted-anchor-recovery.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'deleted-anchor-recovery.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'delete-and-reload' }],
+};
 const legacyAnchorClassificationScenario = {
   name: 'legacy-anchor-classification',
   fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
@@ -324,6 +336,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     missingLaneRecoveryScenario,
     sameLabelLaneSwitchScenario,
     foreignAnchorRecoveryScenario,
+    deletedAnchorRecoveryScenario,
     legacyAnchorClassificationScenario,
   ]);
 });
@@ -1103,6 +1116,108 @@ test('the copied-recover phase rejects a lane rooted at the foreign active link'
       now: () => (clock += 20_000),
     }),
     /Timed out waiting for foreign anchor recovery/,
+  );
+});
+
+test('the deleted anchor recovery suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/deleted-anchor-recovery.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+const runDeletedAnchorPhase = ({ reloadRecreatesAnchor, now }) => {
+  const { run } = require('./suite/deleted-anchor-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-deleted-anchor/workspace';
+  const workspaceFilePath = path.join(workspaceDirectory, 'deleted-anchor-recovery.code-workspace');
+  const anchor = deriveWorkspaceAnchor({ fsPath: workspaceFilePath });
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const commands = [];
+  const messages = [];
+  let anchorExists = true;
+  let activeTarget = laneA;
+  const workspace = {
+    workspaceFile: { fsPath: workspaceFilePath },
+    workspaceFolders: [{ uri: { fsPath: anchor.activeLinkPath }, name: 'lane-a' }],
+  };
+  const realDirectory = { isDirectory: () => true, isSymbolicLink: () => false };
+
+  return run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'delete-and-reload' }),
+    },
+    vscodeApi: {
+      workspace,
+      extensions: activeExtension,
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.reloadLanes') {
+            anchorExists = reloadRecreatesAnchor;
+            return;
+          }
+          if (command === 'projectLanes.switchLane' && anchorExists) {
+            activeTarget = laneB;
+            workspace.workspaceFolders = [{ uri: { fsPath: anchor.activeLinkPath }, name: laneId }];
+          }
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(target) {
+        assert.equal(target, anchor.rootDirectoryPath);
+        return anchorExists;
+      },
+      lstatSync(target) {
+        assert.ok(
+          [anchor.rootDirectoryPath, anchor.namespaceDirectoryPath].includes(target),
+          `Unexpected lstat: ${target}`,
+        );
+        return realDirectory;
+      },
+      realpathSync(target) {
+        assert.equal(target, anchor.activeLinkPath);
+        if (!anchorExists) throw Object.assign(new Error('missing link'), { code: 'ENOENT' });
+        return activeTarget;
+      },
+    },
+    removeAnchorRoot() {
+      anchorExists = false;
+    },
+    delay: async () => {},
+    now,
+    log(message) {
+      messages.push(message);
+    },
+  }).then(() => ({ commands, messages }));
+};
+
+test('the delete-and-reload phase recovers the deleted anchor before switching lanes', async () => {
+  const { commands, messages } = await runDeletedAnchorPhase({ reloadRecreatesAnchor: true });
+
+  assert.deepEqual(commands, [
+    ['projectLanes.switchLane', 'lane-b'],
+    ['projectLanes.reloadLanes', undefined],
+    ['projectLanes.switchLane', 'lane-b'],
+  ]);
+  assert.deepEqual(messages, [
+    'E2E PASS: Reload Lanes recreated the deleted anchor and lane switching resumed',
+  ]);
+});
+
+test('the delete-and-reload phase rejects a reload that leaves the anchor missing', async () => {
+  let clock = 0;
+
+  await assert.rejects(
+    runDeletedAnchorPhase({ reloadRecreatesAnchor: false, now: () => (clock += 20_000) }),
+    /Timed out waiting for deleted anchor recovery: missing link/,
   );
 });
 

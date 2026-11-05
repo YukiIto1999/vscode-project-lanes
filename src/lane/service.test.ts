@@ -65,6 +65,7 @@ const createHarness = ({
   swapLink = () => {},
   clearLink = () => {},
   warnDirtyEditors = () => {},
+  warnReconciliationRequired = () => {},
   loadSelection,
   selectionLaneId = 'web' as LaneId,
   saveSelection = async () => {},
@@ -92,6 +93,7 @@ const createHarness = ({
   readonly swapLink?: (target: AbsolutePath) => void;
   readonly clearLink?: () => void;
   readonly warnDirtyEditors?: LanePromptPort['warnDirtyEditors'];
+  readonly warnReconciliationRequired?: LanePromptPort['warnReconciliationRequired'];
   readonly loadSelection?: LaneSelectionStorePort['load'];
   readonly selectionLaneId?: LaneId | undefined;
   readonly saveSelection?: LaneSelectionStorePort['save'];
@@ -164,6 +166,7 @@ const createHarness = ({
     pickLane,
     pickReplacementFolder,
     warnDirtyEditors,
+    warnReconciliationRequired,
     promptRename,
     confirmRemoval,
     warnActiveLaneRemoval: () => {},
@@ -1227,11 +1230,13 @@ describe('createLaneService interaction boundary', () => {
     expect(saveCatalog).not.toHaveBeenCalled();
   });
 
-  it('reconciliation-required を dirty editor として警告しない', async () => {
+  it('reconciliation-required は dirty editor ではなく再読込として警告する', async () => {
     const warnDirtyEditors = vi.fn();
+    const warnReconciliationRequired = vi.fn();
     const h = createHarness({
       linkTarget: '/repo/missing' as AbsolutePath,
       warnDirtyEditors,
+      warnReconciliationRequired,
     });
 
     await expect(h.service.focus('api' as LaneId)).resolves.toEqual({
@@ -1239,6 +1244,36 @@ describe('createLaneService interaction boundary', () => {
       reason: 'reconciliation-required',
     });
     expect(warnDirtyEditors).not.toHaveBeenCalled();
+    expect(warnReconciliationRequired).toHaveBeenCalledOnce();
+  });
+
+  it('active link の親 directory が削除されて link が読めなければ再読込を案内する', async () => {
+    const warnReconciliationRequired = vi.fn();
+    const h = createHarness({ linkTarget: null, warnReconciliationRequired });
+
+    await expect(h.service.focus('api' as LaneId)).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'reconciliation-required',
+    });
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(warnReconciliationRequired).toHaveBeenCalledOnce();
+  });
+
+  it('dirty editor による blocked は再読込を案内しない', async () => {
+    const warnDirtyEditors = vi.fn();
+    const warnReconciliationRequired = vi.fn();
+    const h = createHarness({
+      hasDirtyEditors: () => true,
+      warnDirtyEditors,
+      warnReconciliationRequired,
+    });
+
+    await expect(h.service.focus('api' as LaneId)).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'dirty-editors',
+    });
+    expect(warnDirtyEditors).toHaveBeenCalledOnce();
+    expect(warnReconciliationRequired).not.toHaveBeenCalled();
   });
 });
 

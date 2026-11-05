@@ -166,6 +166,21 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'deleted-anchor-recovery',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'deleted-anchor-recovery'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'deleted-anchor-recovery',
+      'deleted-anchor-recovery.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'deleted-anchor-recovery.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'delete-and-reload' }),
+    ]),
+  }),
+  Object.freeze({
     name: 'legacy-anchor-classification',
     fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
     workspaceFixture: path.join(
