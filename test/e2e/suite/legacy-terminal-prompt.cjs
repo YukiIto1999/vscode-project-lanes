@@ -131,7 +131,20 @@ const run = async ({
     error.message = `${error.message}\nE2E progress:\n${progress}`;
     return error;
   };
-  mark('suite started');
+  const describeState = () => {
+    try {
+      const terminal = resolvedVscodeApi.workspace.getConfiguration('terminal.integrated');
+      const folders = (resolvedVscodeApi.workspace.workspaceFolders ?? []).map(
+        (folder) => `${folder.name}=${path.relative(workspaceDirectory, folder.uri.fsPath)}`,
+      );
+      return `folders=[${folders.join(', ')}] persistentSessions=${String(
+        terminal.inspect('enablePersistentSessions')?.workspaceValue,
+      )} defaultProfile=${String(terminal.inspect('defaultProfile.linux')?.workspaceValue)}`;
+    } catch (error) {
+      return `state unavailable: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  };
+  mark(`suite started ${describeState()}`);
 
   try {
     await waitForActiveLane(laneA);
