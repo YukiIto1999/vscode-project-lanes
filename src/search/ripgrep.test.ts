@@ -193,33 +193,58 @@ describe('parseContentMatches', () => {
     expect(() => parseContentMatches(`not json\n${matchLine}\n`, roots, 100)).toThrow(Error);
   });
 
-  it.each([
-    {
-      label: 'path の bytes payload',
-      event: {
-        type: 'match',
-        data: {
-          path: { bytes: 'L3JlcG8vd2ViL3NyYy9hLnRz' },
-          lines: { text: 'foo\n' },
-          line_number: 1,
-          submatches: [{ start: 0 }],
-        },
+  it('UTF-8 で表せない path の match だけを除外し、他の一致を残す', () => {
+    const bytesPath = JSON.stringify({
+      type: 'match',
+      data: {
+        path: { bytes: 'L3JlcG8vd2ViL2NhZulmLnR4dA==' },
+        lines: { text: 'foo\n' },
+        line_number: 1,
+        submatches: [{ start: 0 }],
       },
-    },
-    {
-      label: 'lines の bytes payload',
-      event: {
-        type: 'match',
-        data: {
-          path: { text: '/repo/web/src/a.ts' },
-          lines: { bytes: 'Zm9vCg==' },
-          line_number: 1,
-          submatches: [{ start: 0 }],
-        },
+    });
+    const { results } = parseContentMatches(`${bytesPath}\n${matchLine}\n`, roots, 100);
+    expect(results).toHaveLength(1);
+    expect(results[0]?.path).toBe('/repo/web/src/a.ts');
+  });
+
+  it('非 UTF-8 の行 (Shift_JIS 等) を置換文字で復号し、byte offset から桁を求める', () => {
+    // 'ab\x93\x8c foo\n' の Shift_JIS 相当 byte 列、foo は byte offset 5
+    const line = Buffer.from([0x61, 0x62, 0x93, 0x8c, 0x20, 0x66, 0x6f, 0x6f, 0x0a]);
+    const event = JSON.stringify({
+      type: 'match',
+      data: {
+        path: { text: '/repo/web/data.csv' },
+        lines: { bytes: line.toString('base64') },
+        line_number: 3,
+        submatches: [{ start: 5 }],
       },
-    },
-  ])('$label を backend error として拒否する', ({ event }) => {
-    expect(() => parseContentMatches(`${JSON.stringify(event)}\n`, roots, 100)).toThrow(Error);
+    });
+    const { results } = parseContentMatches(`${event}\n`, roots, 100);
+    expect(results).toEqual([
+      {
+        kind: 'content',
+        laneId: 'web',
+        path: '/repo/web/data.csv',
+        relativePath: 'data.csv',
+        line: 3,
+        column: 6,
+        preview: 'ab\uFFFD\uFFFD foo',
+      },
+    ]);
+  });
+
+  it('text と bytes のどちらも持たない payload を backend error として拒否する', () => {
+    const event = JSON.stringify({
+      type: 'match',
+      data: {
+        path: { text: '/repo/web/src/a.ts' },
+        lines: {},
+        line_number: 1,
+        submatches: [{ start: 0 }],
+      },
+    });
+    expect(() => parseContentMatches(`${event}\n`, roots, 100)).toThrow(Error);
   });
 
   it('必須フィールドを欠く match を backend error として拒否する', () => {

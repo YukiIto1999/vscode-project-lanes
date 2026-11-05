@@ -109,22 +109,41 @@ describe('createRipgrepSearchAdapter', () => {
     });
   });
 
-  it('chunk 分割された単一出力行が1Mi code unitを超えた時点で停止する', async () => {
+  it('chunk 分割された単一出力行が1Mi code unitを超えたら、その行だけを捨てて検索を続ける', async () => {
     const { adapter, child } = createHarness();
     const pending = adapter.searchContent('foo' as LaneQuery, roots);
 
+    child.stdout.write(`${matchLine('first foo\n', 6, '/repo/web/first.ts')}\n`);
     child.stdout.write('x'.repeat(512 * 1024));
     child.stdout.write('x'.repeat(512 * 1024));
-    const killCountAtLimit = child.kill.mock.calls.length;
     child.stdout.write('x');
-    const killCountBeforeClose = child.kill.mock.calls.length;
+    child.stdout.write(`${'x'.repeat(16)}\n${matchLine('last foo\n', 5, '/repo/web/last.ts')}\n`);
     child.stdout.end();
     close(child, 0);
 
-    await expect(pending).rejects.toThrow(/ripgrep output line exceeded/);
-    expect(killCountAtLimit).toBe(0);
-    expect(killCountBeforeClose).toBe(1);
-    expect(child.kill).toHaveBeenCalledOnce();
+    await expect(pending).resolves.toMatchObject({
+      kind: 'results',
+      truncated: false,
+      results: [
+        expect.objectContaining({ path: '/repo/web/first.ts' }),
+        expect.objectContaining({ path: '/repo/web/last.ts' }),
+      ],
+    });
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it('改行なしで終わる上限超過の末尾行も捨てて正常終了する', async () => {
+    const { adapter, child } = createHarness();
+    const pending = adapter.searchContent('foo' as LaneQuery, roots);
+
+    child.stdout.write(`${matchLine()}\n`);
+    child.stdout.end('x'.repeat(1024 * 1024 + 1));
+    close(child, 0);
+
+    await expect(pending).resolves.toMatchObject({
+      kind: 'results',
+      results: [expect.objectContaining({ path: '/repo/web/a.ts' })],
+    });
   });
 
   it('2000件と summary の正常終了は truncated にしない', async () => {
@@ -244,7 +263,30 @@ describe('createRipgrepSearchAdapter', () => {
     await expect(pending).resolves.toEqual({ kind: 'unavailable' });
   });
 
-  it('exit 2 は末尾64KiB以内の stderr を含む Error で拒否する', async () => {
+  it('exit 2 でも出力があれば、読めないディレクトリ等を除いた部分結果として扱う', async () => {
+    const content = createHarness();
+    const contentPending = content.adapter.searchContent('foo' as LaneQuery, roots);
+    content.child.stderr.end('rg: /repo/web/data: Permission denied (os error 13)\n');
+    content.child.stdout.end(`${matchLine()}\n${JSON.stringify({ type: 'summary', data: {} })}\n`);
+    close(content.child, 2);
+    await expect(contentPending).resolves.toMatchObject({
+      kind: 'results',
+      truncated: false,
+      results: [expect.objectContaining({ path: '/repo/web/a.ts' })],
+    });
+
+    const files = createHarness();
+    const filesPending = files.adapter.listFiles(roots);
+    files.child.stderr.end('rg: /repo/web/data: Permission denied (os error 13)\n');
+    files.child.stdout.end('/repo/web/a.ts\n');
+    close(files.child, 2);
+    await expect(filesPending).resolves.toMatchObject({
+      kind: 'results',
+      results: [expect.objectContaining({ path: '/repo/web/a.ts' })],
+    });
+  });
+
+  it('出力のない exit 2 は末尾64KiB以内の stderr を含む Error で拒否する', async () => {
     const { adapter, child } = createHarness();
     const pending = adapter.listFiles(roots);
 
@@ -270,28 +312,40 @@ describe('createRipgrepSearchAdapter', () => {
     expect(child.kill).toHaveBeenCalledOnce();
   });
 
-  it('壊れた relevant JSON と bytes payload を Error として拒否する', async () => {
+  it('壊れた relevant JSON を Error として拒否する', async () => {
     const malformed = createHarness();
     const malformedPending = malformed.adapter.searchContent('foo' as LaneQuery, roots);
     malformed.child.stdout.write('not-json\n');
     await expect(malformedPending).rejects.toBeInstanceOf(Error);
     expect(malformed.child.kill).toHaveBeenCalledOnce();
+  });
 
-    const bytes = createHarness();
-    const bytesPending = bytes.adapter.searchContent('foo' as LaneQuery, roots);
-    bytes.child.stdout.write(
-      `${JSON.stringify({
+  it('非 UTF-8 の path と行を含む出力でも検索全体を失敗させない', async () => {
+    const { adapter, child } = createHarness();
+    const pending = adapter.searchContent('foo' as LaneQuery, roots);
+    const event = (path: object, lines: object) =>
+      JSON.stringify({
         type: 'match',
-        data: {
-          path: { bytes: 'L3JlcG8vd2ViL2EudHM=' },
-          lines: { text: 'foo\n' },
-          line_number: 1,
-          submatches: [{ start: 0 }],
-        },
-      })}\n`,
+        data: { path, lines, line_number: 1, submatches: [{ start: 0 }] },
+      });
+    child.stdout.end(
+      [
+        event({ bytes: 'L3JlcG8vd2ViL2NhZulmLnR4dA==' }, { text: 'foo\n' }),
+        event({ text: '/repo/web/sjis.csv' }, { bytes: 'Zm9vLJOMi54K' }),
+        matchLine(),
+        '',
+      ].join('\n'),
     );
-    await expect(bytesPending).rejects.toBeInstanceOf(Error);
-    expect(bytes.child.kill).toHaveBeenCalledOnce();
+    close(child, 0);
+
+    await expect(pending).resolves.toMatchObject({
+      kind: 'results',
+      results: [
+        expect.objectContaining({ path: '/repo/web/sjis.csv', column: 1 }),
+        expect.objectContaining({ path: '/repo/web/a.ts' }),
+      ],
+    });
+    expect(child.kill).not.toHaveBeenCalled();
   });
 
   it('dispose は pending 呼出しを cancelled で一度だけ解決し、kill も一度に限る', async () => {
