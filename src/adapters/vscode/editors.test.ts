@@ -1,3 +1,4 @@
+import { constants as fsConstants } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const vscodeMock = vi.hoisted(() => {
@@ -18,21 +19,29 @@ const vscodeMock = vi.hoisted(() => {
     ) {}
   }
   return {
+    access: vi.fn(),
     close: vi.fn(),
     executeCommand: vi.fn(),
     openTextDocument: vi.fn(),
     showTextDocument: vi.fn(),
+    stat: vi.fn(),
     groups: [] as Array<{ viewColumn: number; tabs: unknown[] }>,
     Range,
     TabInputText,
   };
 });
 
+vi.mock('node:fs/promises', () => ({
+  access: vscodeMock.access,
+  stat: vscodeMock.stat,
+}));
+
 vi.mock('vscode', () => ({
   Range: vscodeMock.Range,
   TabInputText: vscodeMock.TabInputText,
   Uri: {
     file: (path: string) => ({ scheme: 'file', fsPath: path }),
+    parse: (value: string) => ({ fsPath: new URL(value).pathname }),
   },
   commands: {
     executeCommand: vscodeMock.executeCommand,
@@ -51,15 +60,20 @@ vi.mock('vscode', () => ({
   },
 }));
 
-import type { AbsolutePath } from '../../foundation/model';
+import type { AbsolutePath, UriString } from '../../foundation/model';
 import { createEditorAdapter } from './editors';
 
 describe('createEditorAdapter', () => {
   beforeEach(() => {
     vscodeMock.close.mockReset();
+    vscodeMock.access.mockReset();
     vscodeMock.executeCommand.mockReset();
     vscodeMock.openTextDocument.mockReset();
     vscodeMock.showTextDocument.mockReset();
+    vscodeMock.stat.mockReset();
+    vscodeMock.stat.mockResolvedValue({ isFile: () => true });
+    vscodeMock.access.mockResolvedValue(undefined);
+    vscodeMock.executeCommand.mockResolvedValue(undefined);
     vscodeMock.groups.splice(
       0,
       vscodeMock.groups.length,
@@ -128,6 +142,43 @@ describe('createEditorAdapter', () => {
     expect(vscodeMock.showTextDocument).not.toHaveBeenCalled();
   });
 
+  it('snapshot の順に各 tab を元の列へ固定表示で focus を保って復元する', async () => {
+    await createEditorAdapter().restoreSnapshot({
+      tabs: [
+        { uri: 'file:///active/a.ts' as UriString, viewColumn: 1 },
+        { uri: 'file:///active/b.ts' as UriString, viewColumn: 1 },
+        { uri: 'file:///active/c.ts' as UriString, viewColumn: 2 },
+      ],
+    });
+
+    expect(vscodeMock.executeCommand.mock.calls).toEqual([
+      [
+        'vscode.open',
+        { fsPath: '/active/a.ts' },
+        { viewColumn: 1, preserveFocus: true, preview: false },
+      ],
+      [
+        'vscode.open',
+        { fsPath: '/active/b.ts' },
+        { viewColumn: 1, preserveFocus: true, preview: false },
+      ],
+      [
+        'vscode.open',
+        { fsPath: '/active/c.ts' },
+        { viewColumn: 2, preserveFocus: true, preview: false },
+      ],
+    ]);
+  });
+
+  it('document 参照を拡張側に残す openTextDocument を復元に使わない', async () => {
+    await createEditorAdapter().restoreSnapshot({
+      tabs: [{ uri: 'file:///active/a.ts' as UriString, viewColumn: 1 }],
+    });
+
+    expect(vscodeMock.openTextDocument).not.toHaveBeenCalled();
+    expect(vscodeMock.showTextDocument).not.toHaveBeenCalled();
+  });
+
   it('openAt は位置未指定のとき選択範囲を渡さずに開く', async () => {
     vscodeMock.executeCommand.mockResolvedValue(undefined);
 
@@ -138,5 +189,49 @@ describe('createEditorAdapter', () => {
       { scheme: 'file', fsPath: '/workspace/active/a.ts' },
       {},
     );
+  });
+
+  it('削除済み・ディレクトリ・読取不能の tab を開かず残りの復元を続ける', async () => {
+    vscodeMock.stat.mockImplementation(async (path: string) => {
+      if (path === '/active/deleted.ts') throw new Error('ENOENT');
+      return { isFile: () => path !== '/active/directory' };
+    });
+    vscodeMock.access.mockImplementation(async (path: string) => {
+      if (path === '/active/unreadable.ts') throw new Error('EACCES');
+    });
+
+    await createEditorAdapter().restoreSnapshot({
+      tabs: [
+        { uri: 'file:///active/deleted.ts' as UriString, viewColumn: 1 },
+        { uri: 'file:///active/directory' as UriString, viewColumn: 1 },
+        { uri: 'file:///active/unreadable.ts' as UriString, viewColumn: 1 },
+        { uri: 'file:///active/kept.ts' as UriString, viewColumn: 1 },
+      ],
+    });
+
+    expect(vscodeMock.access).toHaveBeenCalledWith('/active/unreadable.ts', fsConstants.R_OK);
+    expect(vscodeMock.executeCommand.mock.calls).toEqual([
+      [
+        'vscode.open',
+        { fsPath: '/active/kept.ts' },
+        { viewColumn: 1, preserveFocus: true, preview: false },
+      ],
+    ]);
+  });
+
+  it('開けなかった tab を飛ばして残りの tab の復元を続ける', async () => {
+    vscodeMock.executeCommand.mockRejectedValueOnce(new Error('open failed'));
+
+    await createEditorAdapter().restoreSnapshot({
+      tabs: [
+        { uri: 'file:///active/failed.ts' as UriString, viewColumn: 1 },
+        { uri: 'file:///active/kept.ts' as UriString, viewColumn: 1 },
+      ],
+    });
+
+    expect(vscodeMock.executeCommand.mock.calls.map(([, uri]) => uri)).toEqual([
+      { fsPath: '/active/failed.ts' },
+      { fsPath: '/active/kept.ts' },
+    ]);
   });
 });

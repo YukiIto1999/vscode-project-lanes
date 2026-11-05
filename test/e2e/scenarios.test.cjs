@@ -149,6 +149,18 @@ const crossLaneSearchNavigationScenario = {
   suitePath: path.join(__dirname, 'suite', 'cross-lane-search-navigation.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'navigate' }],
 };
+const editorSnapshotRestoreScenario = {
+  name: 'editor-snapshot-restore',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-restore'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'editor-snapshot-restore',
+    'editor-snapshot-restore.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'editor-snapshot-restore.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'switch' }],
+};
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
   workspaceFixture: '/fixtures/empty.code-workspace',
@@ -309,6 +321,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     missingLaneRecoveryScenario,
     legacyAnchorClassificationScenario,
     crossLaneSearchNavigationScenario,
+    editorSnapshotRestoreScenario,
   ]);
 });
 
@@ -3963,6 +3976,29 @@ test('the editor snapshot persistence suite rejects an unknown phase', async () 
     }),
     /Unknown E2E phase: unknown/,
   );
+});
+
+test('the editor snapshot restore suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/editor-snapshot-restore.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('editor snapshot restore fixture shares a same-size relative path between lanes', () => {
+  const readFixture = (...segments) =>
+    fs.readFileSync(path.join(editorSnapshotRestoreScenario.fixtureRoot, ...segments));
+  const laneAShared = readFixture('lane-a', 'src', 'shared.txt');
+  const laneBShared = readFixture('lane-b', 'src', 'shared.txt');
+
+  assert.equal(laneAShared.length, laneBShared.length);
+  assert.notDeepEqual(laneAShared, laneBShared);
 });
 
 test('the editor snapshot restore phase requires exactly one tab in each saved column', async () => {
