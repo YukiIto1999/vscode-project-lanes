@@ -182,6 +182,21 @@ describe('createInitializationCoordinator', () => {
     expect(setStatus).toHaveBeenCalledWith('recoverable');
   });
 
+  it('状態判定の失敗を通知して recoverable にし、初期化を実行しない', async () => {
+    const failure = new Error('Invalid stored lane catalog');
+    const { deps, inspect, initialize, reportFailure, setStatus } = createDeps();
+    inspect.mockImplementationOnce(() => {
+      throw failure;
+    });
+    const coordinator = createInitializationCoordinator(deps);
+
+    await expect(coordinator.ensureReady()).resolves.toEqual({ kind: 'recoverable' });
+
+    expect(reportFailure).toHaveBeenCalledWith(failure);
+    expect(setStatus).toHaveBeenLastCalledWith('recoverable');
+    expect(initialize).not.toHaveBeenCalled();
+  });
+
   it('runtime 起動失敗を通知し、再初期化後に一度だけ起動する', async () => {
     const failure = new Error('runtime failed');
     const { deps, initialize, startRuntime, reportFailure } = createDeps();

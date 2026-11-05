@@ -705,7 +705,13 @@ export const bootstrapRuntime = async (
     coordinator,
   );
 
-  const classification = inspect();
+  let classification: InitializationClassification;
+  try {
+    classification = inspect();
+  } catch {
+    // 壊れた catalog 等で判定できない場合は、初期化試行と同じ経路で報告し再試行可能な状態にする
+    return toBootstrapOutcome(await coordinator.ensureReady());
+  }
   const outcome = await coordinator.activate(config.read().initializationMode, classification);
   return toBootstrapOutcome(outcome);
 };
