@@ -1280,6 +1280,21 @@ test('the installed VSIX suite rejects a VS Code build without its required noti
     }),
     /VS Code 1\.101\.0.*notification\.acceptPrimaryAction/,
   );
+  await assert.rejects(
+    activateWithLegacyRemoval({
+      activation: new Promise(() => {}),
+      commands: {
+        async getCommands() {
+          return ['notifications.focusToasts'];
+        },
+        async executeCommand() {
+          throw new Error('must not execute');
+        },
+      },
+      vscodeVersion: '1.145.0',
+    }),
+    /VS Code 1\.145\.0.*notification\.acceptPrimaryAction/,
+  );
 });
 
 test('the installed VSIX suite creates v1 state with the baseline then exercises legacy-label commands after upgrade', async () => {
@@ -2277,7 +2292,7 @@ test('the installed VSIX entrypoint requires candidate and baseline artifact pat
   );
 });
 
-test('the VS Code download cache can be overridden outside the repository', () => {
+test('the VS Code download cache and version can be overridden outside the repository', () => {
   assert.deepEqual(buildDownloadOptions({}), {
     version: '1.101.0',
     cachePath: '/tmp/vscode-project-lanes-vscode-test-cache',
@@ -2291,6 +2306,10 @@ test('the VS Code download cache can be overridden outside the repository', () =
       cachePath: '/var/tmp/project-lanes-vscode-cache',
     },
   );
+  assert.deepEqual(buildDownloadOptions({ PROJECT_LANES_VSCODE_VERSION: 'stable' }), {
+    version: 'stable',
+    cachePath: '/tmp/vscode-project-lanes-vscode-test-cache',
+  });
 });
 
 test('a scenario setup failure removes its temporary root', async () => {

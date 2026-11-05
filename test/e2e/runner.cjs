@@ -135,7 +135,7 @@ const getProcessCleanupRegistry = (processApi) => {
 };
 
 const buildDownloadOptions = (environment = process.env) => ({
-  version: VSCODE_VERSION,
+  version: environment.PROJECT_LANES_VSCODE_VERSION || VSCODE_VERSION,
   cachePath: environment.PROJECT_LANES_VSCODE_TEST_CACHE || DEFAULT_CACHE_PATH,
 });
 
