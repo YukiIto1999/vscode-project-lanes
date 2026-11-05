@@ -3158,6 +3158,7 @@ test('the installed VSIX entrypoint downloads VS Code and verifies the requested
       '0.1.12',
       '/tmp/project-lanes-linux-x64-0.1.12.vsix',
     ],
+    environment: {},
     packageMetadata: { version: '0.1.13' },
     async downloadVSCode(options) {
       calls.push({ download: options });
