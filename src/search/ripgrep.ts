@@ -6,6 +6,26 @@ import type { LaneQuery, LaneRoot, LaneSearchResult } from './model';
 /** 検索結果 preview の UTF-16 code unit 上限 */
 const PREVIEW_CODE_UNIT_LIMIT = 1000;
 
+const isWithin = (rootPath: string, absolutePath: string): boolean =>
+  absolutePath === rootPath || absolutePath.startsWith(`${rootPath}/`);
+
+/**
+ * 他ルート配下に入れ子となるルートを除いた走査起点の抽出
+ * @param roots - 検索対象レーンルート列
+ * @returns 重複走査を生まない走査起点パス列
+ */
+export const searchEntryPaths = (roots: readonly LaneRoot[]): readonly string[] => {
+  const paths: string[] = [];
+  for (const { rootPath } of roots) {
+    if (paths.includes(rootPath)) continue;
+    const nested = roots.some(
+      (other) => other.rootPath !== rootPath && isWithin(other.rootPath, rootPath),
+    );
+    if (!nested) paths.push(rootPath);
+  }
+  return paths;
+};
+
 /**
  * content 検索の ripgrep 引数組立
  * @param query - 検証済みクエリ
@@ -22,7 +42,7 @@ export const buildContentArgs = (
   '--smart-case',
   '--',
   query,
-  ...roots.map((root) => root.rootPath),
+  ...searchEntryPaths(roots),
 ];
 
 /**
@@ -34,7 +54,7 @@ export const buildFileListArgs = (roots: readonly LaneRoot[]): readonly string[]
   '--no-config',
   '--files',
   '--',
-  ...roots.map((root) => root.rootPath),
+  ...searchEntryPaths(roots),
 ];
 
 /**
@@ -49,8 +69,7 @@ export const attributeLane = (
 ): LaneRoot | undefined => {
   let matched: LaneRoot | undefined;
   for (const root of roots) {
-    const within = absolutePath === root.rootPath || absolutePath.startsWith(`${root.rootPath}/`);
-    if (!within) continue;
+    if (!isWithin(root.rootPath, absolutePath)) continue;
     if (!matched || root.rootPath.length > matched.rootPath.length) matched = root;
   }
   return matched;
@@ -62,19 +81,46 @@ const toRelative = (root: LaneRoot, absolutePath: string): string =>
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null;
 
+/** ripgrep の行 payload の復号結果 */
+interface DecodedLine {
+  /** 行の byte 列 */
+  readonly bytes: Buffer;
+  /** preview 用の行テキスト */
+  readonly text: string;
+  /** 不正 UTF-8 を置換文字で復号した payload か */
+  readonly lossy: boolean;
+}
+
+/**
+ * ripgrep の行 payload の復号
+ * @param lines - `text` または base64 の `bytes` を持つ payload
+ * @returns 復号結果、どちらも欠く payload で undefined
+ */
+const decodeLinePayload = (lines: Readonly<Record<string, unknown>>): DecodedLine | undefined => {
+  if (typeof lines.text === 'string') {
+    return { bytes: Buffer.from(lines.text, 'utf8'), text: lines.text, lossy: false };
+  }
+  if (typeof lines.bytes === 'string') {
+    const bytes = Buffer.from(lines.bytes, 'base64');
+    return { bytes, text: new TextDecoder('utf-8').decode(bytes), lossy: true };
+  }
+  return undefined;
+};
+
 /**
  * UTF-8 byte offset から UTF-16 offset への変換
- * @param text - UTF-8 へ符号化する行テキスト
+ * @param line - 復号済みの行
  * @param byteOffset - 0 始まり byte offset
  * @returns 0 始まり UTF-16 offset
  */
-const toUtf16Offset = (text: string, byteOffset: number): number => {
-  const bytes = Buffer.from(text, 'utf8');
-  if (!Number.isInteger(byteOffset) || byteOffset < 0 || byteOffset > bytes.length) {
+const toUtf16Offset = (line: DecodedLine, byteOffset: number): number => {
+  if (!Number.isInteger(byteOffset) || byteOffset < 0 || byteOffset > line.bytes.length) {
     throw new Error('Malformed ripgrep match byte offset');
   }
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, byteOffset)).length;
+    return new TextDecoder('utf-8', { fatal: !line.lossy }).decode(
+      line.bytes.subarray(0, byteOffset),
+    ).length;
   } catch {
     throw new Error('Malformed ripgrep match byte offset');
   }
@@ -125,16 +171,14 @@ export const parseContentMatchLine = (
 
   const path = value.data.path;
   const lines = value.data.lines;
-  if (
-    !isRecord(path) ||
-    'bytes' in path ||
-    typeof path.text !== 'string' ||
-    !isRecord(lines) ||
-    'bytes' in lines ||
-    typeof lines.text !== 'string'
-  ) {
-    throw new Error('Unsupported ripgrep bytes payload');
+  if (!isRecord(path) || !isRecord(lines)) throw new Error('Malformed ripgrep match event');
+  // UTF-8 で表せないパスは開けないため、その一致だけを除外
+  if (typeof path.text !== 'string') {
+    if (typeof path.bytes === 'string') return undefined;
+    throw new Error('Malformed ripgrep match event');
   }
+  const decodedLine = decodeLinePayload(lines);
+  if (!decodedLine) throw new Error('Malformed ripgrep match event');
 
   const lineNumber = value.data.line_number;
   const submatches = value.data.submatches;
@@ -150,7 +194,7 @@ export const parseContentMatchLine = (
 
   const root = attributeLane(roots, path.text);
   if (!root) return undefined;
-  const utf16Offset = toUtf16Offset(lines.text, submatches[0].start as number);
+  const utf16Offset = toUtf16Offset(decodedLine, submatches[0].start as number);
   return {
     kind: 'content',
     laneId: root.laneId,
@@ -158,7 +202,7 @@ export const parseContentMatchLine = (
     relativePath: toRelative(root, path.text),
     line: lineNumber as number,
     column: utf16Offset + 1,
-    preview: createPreview(lines.text, utf16Offset),
+    preview: createPreview(decodedLine.text, utf16Offset),
   };
 };
 

@@ -9,16 +9,39 @@ const vscodeMock = vi.hoisted(() => {
       },
     ) {}
   }
+  class Range {
+    constructor(
+      readonly startLine: number,
+      readonly startCharacter: number,
+      readonly endLine: number,
+      readonly endCharacter: number,
+    ) {}
+  }
   return {
     close: vi.fn(),
+    executeCommand: vi.fn(),
+    openTextDocument: vi.fn(),
+    showTextDocument: vi.fn(),
     groups: [] as Array<{ viewColumn: number; tabs: unknown[] }>,
+    Range,
     TabInputText,
   };
 });
 
 vi.mock('vscode', () => ({
+  Range: vscodeMock.Range,
   TabInputText: vscodeMock.TabInputText,
+  Uri: {
+    file: (path: string) => ({ scheme: 'file', fsPath: path }),
+  },
+  commands: {
+    executeCommand: vscodeMock.executeCommand,
+  },
+  workspace: {
+    openTextDocument: vscodeMock.openTextDocument,
+  },
   window: {
+    showTextDocument: vscodeMock.showTextDocument,
     tabGroups: {
       get all() {
         return vscodeMock.groups;
@@ -28,11 +51,15 @@ vi.mock('vscode', () => ({
   },
 }));
 
+import type { AbsolutePath } from '../../foundation/model';
 import { createEditorAdapter } from './editors';
 
 describe('createEditorAdapter', () => {
   beforeEach(() => {
     vscodeMock.close.mockReset();
+    vscodeMock.executeCommand.mockReset();
+    vscodeMock.openTextDocument.mockReset();
+    vscodeMock.showTextDocument.mockReset();
     vscodeMock.groups.splice(
       0,
       vscodeMock.groups.length,
@@ -82,5 +109,34 @@ describe('createEditorAdapter', () => {
 
     await expect(createEditorAdapter().closeAll()).resolves.toBe(true);
     expect(vscodeMock.close).not.toHaveBeenCalled();
+  });
+
+  it('openAt は document 参照を拡張側に残さない vscode.open で 0 始まりの位置へ開く', async () => {
+    vscodeMock.executeCommand.mockResolvedValue(undefined);
+
+    await createEditorAdapter().openAt('/workspace/active/src/a.ts' as AbsolutePath, {
+      line: 3,
+      column: 5,
+    });
+
+    expect(vscodeMock.executeCommand).toHaveBeenCalledWith(
+      'vscode.open',
+      { scheme: 'file', fsPath: '/workspace/active/src/a.ts' },
+      { selection: new vscodeMock.Range(2, 4, 2, 4) },
+    );
+    expect(vscodeMock.openTextDocument).not.toHaveBeenCalled();
+    expect(vscodeMock.showTextDocument).not.toHaveBeenCalled();
+  });
+
+  it('openAt は位置未指定のとき選択範囲を渡さずに開く', async () => {
+    vscodeMock.executeCommand.mockResolvedValue(undefined);
+
+    await createEditorAdapter().openAt('/workspace/active/a.ts' as AbsolutePath);
+
+    expect(vscodeMock.executeCommand).toHaveBeenCalledWith(
+      'vscode.open',
+      { scheme: 'file', fsPath: '/workspace/active/a.ts' },
+      {},
+    );
   });
 });

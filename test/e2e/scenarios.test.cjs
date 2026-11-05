@@ -137,6 +137,18 @@ const legacyAnchorClassificationScenario = {
   ),
   suitePath: path.join(__dirname, 'suite', 'legacy-anchor-classification.cjs'),
 };
+const crossLaneSearchNavigationScenario = {
+  name: 'cross-lane-search-navigation',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'cross-lane-search-navigation'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'cross-lane-search-navigation',
+    'cross-lane-search-navigation.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'cross-lane-search-navigation.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'navigate' }],
+};
 const emptyWorkspaceScenario = {
   name: 'empty-workspace',
   workspaceFixture: '/fixtures/empty.code-workspace',
@@ -296,6 +308,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
     legacyAnchorClassificationScenario,
+    crossLaneSearchNavigationScenario,
   ]);
 });
 
@@ -371,6 +384,44 @@ test('lane switch search fixture exposes a selectable file only in lane-b', () =
 
   assert.deepEqual(laneAEntries, []);
   assert.deepEqual(laneBEntries, ['fixture.txt']);
+});
+
+test('cross-lane search fixture shares one visible relative path with lane-specific contents', () => {
+  const visibleFiles = (laneName) =>
+    fs
+      .readdirSync(path.join(crossLaneSearchNavigationScenario.fixtureRoot, laneName), {
+        recursive: true,
+        withFileTypes: true,
+      })
+      .filter((entry) => entry.isFile() && !entry.name.startsWith('.'))
+      .map((entry) =>
+        path.relative(
+          path.join(crossLaneSearchNavigationScenario.fixtureRoot, laneName),
+          path.join(entry.parentPath, entry.name),
+        ),
+      );
+  const readShared = (laneName) =>
+    fs.readFileSync(
+      path.join(crossLaneSearchNavigationScenario.fixtureRoot, laneName, 'src', 'shared.txt'),
+      'utf8',
+    );
+
+  assert.deepEqual(visibleFiles('lane-a'), [path.join('src', 'shared.txt')]);
+  assert.deepEqual(visibleFiles('lane-b'), [path.join('src', 'shared.txt')]);
+  assert.notEqual(readShared('lane-a'), readShared('lane-b'));
+});
+
+test('the cross-lane search navigation suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/cross-lane-search-navigation.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
 });
 
 test('the active-lane reconciliation suite rejects an unknown phase', async () => {

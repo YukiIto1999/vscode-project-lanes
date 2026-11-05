@@ -96,6 +96,8 @@ export const createRipgrepSearchAdapter = (): RipgrepSearchAdapter => {
     return new Promise<LaneSearchOutcome>((resolve, reject) => {
       const decoder = new StringDecoder('utf8');
       let bufferedLine = '';
+      let discardingLine = false;
+      let sawOutputLine = false;
       let stderrTail: Buffer = Buffer.alloc(0);
       let settled = false;
       let killed = false;
@@ -171,6 +173,7 @@ export const createRipgrepSearchAdapter = (): RipgrepSearchAdapter => {
 
       const consume = (line: string): boolean => {
         if (settled || line.length === 0) return settled;
+        sawOutputLine = true;
         try {
           const outcome = consumeLine(line);
           if (outcome) stopWith(outcome);
@@ -187,12 +190,15 @@ export const createRipgrepSearchAdapter = (): RipgrepSearchAdapter => {
           const newlineIndex = text.indexOf('\n', cursor);
           const fragmentEnd = newlineIndex >= 0 ? newlineIndex : text.length;
           const fragmentLength = fragmentEnd - cursor;
-          if (bufferedLine.length + fragmentLength > MAX_OUTPUT_LINE_CODE_UNITS) {
-            fail(
-              'ripgrep output line exceeded limit',
-              new Error(`${MAX_OUTPUT_LINE_CODE_UNITS} UTF-16 code units`),
-            );
-            return;
+          // 上限超過の行 (minify 済み bundle の一致など) だけを捨て、検索全体は継続
+          if (discardingLine || bufferedLine.length + fragmentLength > MAX_OUTPUT_LINE_CODE_UNITS) {
+            discardingLine = true;
+            bufferedLine = '';
+            if (newlineIndex < 0) return;
+            discardingLine = false;
+            sawOutputLine = true;
+            cursor = newlineIndex + 1;
+            continue;
           }
           bufferedLine += text.slice(cursor, fragmentEnd);
           if (newlineIndex < 0) return;
@@ -245,9 +251,10 @@ export const createRipgrepSearchAdapter = (): RipgrepSearchAdapter => {
         if (settled) return;
         consumeChunk(decoder.end());
         if (settled) return;
-        if (bufferedLine.length > 0 && consume(bufferedLine)) return;
+        if (!discardingLine && bufferedLine.length > 0 && consume(bufferedLine)) return;
         bufferedLine = '';
-        if (code === 0 || code === 1) {
+        // exit 2 は読めない入れ子ディレクトリ等の非致命エラーでも返るため、出力があれば部分結果として扱う
+        if (code === 0 || code === 1 || (code === 2 && sawOutputLine)) {
           resolveOnce(completedOutcome());
           return;
         }

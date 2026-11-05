@@ -17,7 +17,7 @@ vi.mock('vscode', () => ({
   },
 }));
 
-import { createSearchUiAdapter } from './search-pick';
+import { createSearchUiAdapter, escapeIconSyntax } from './search-pick';
 
 const lane = (id: string, label: string, rootPath: string): Lane => ({
   id: id as LaneId,
@@ -73,5 +73,39 @@ describe('createSearchUiAdapter', () => {
       }),
     );
     expect(JSON.stringify(visibleFields)).not.toContain('opaque-');
+  });
+
+  it('ファイル内容・パス・レーン名の $(...) をアイコンでなく文字として表示させる', async () => {
+    const lanes = [lane('web', '$(rocket) web', '/projects/web')];
+    const ui = createSearchUiAdapter(() => lanes);
+
+    await ui.pickContentResult(
+      [
+        {
+          kind: 'content',
+          laneId: 'web' as LaneId,
+          path: '/projects/web/$(dir)/build.sh' as AbsolutePath,
+          relativePath: '$(dir)/build.sh',
+          line: 3,
+          column: 1,
+          preview: 'cd $(pwd) && $(CC) -o out $( spaced )',
+        },
+      ],
+      false,
+    );
+
+    expect(vscode.showQuickPick.mock.calls[0]?.[0]).toEqual([
+      expect.objectContaining({ label: '\\$(rocket) web' }),
+      expect.objectContaining({
+        label: '\\$(dir)/build.sh:3',
+        detail: 'cd \\$(pwd) && \\$(CC) -o out $( spaced )',
+      }),
+    ]);
+  });
+
+  it('アイコン構文に当たらない $( はそのまま残し、修飾子付きと既存のバックスラッシュも保つ', () => {
+    expect(escapeIconSyntax('$(sync~spin) \\$(x) $( y) $(')).toBe(
+      '\\$(sync~spin) \\\\$(x) $( y) $(',
+    );
   });
 });

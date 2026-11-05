@@ -6,6 +6,8 @@ import type { LaneSearchOutcome, LaneSearchResult } from './model';
 import type { FileOpenPort, LaneSearchPort, SearchUiPort } from './ports';
 import { createLaneSearchService } from './service';
 
+const ACTIVE_LINK = '/workspace/.lanes-root/hash/active' as AbsolutePath;
+
 const lane = (id: string): Lane => ({
   id: id as LaneId,
   label: id,
@@ -102,6 +104,7 @@ const serviceFrom = (h: ReturnType<typeof harness>, getCatalog: () => LaneCatalo
     fileOpen: h.fileOpen,
     focus: h.focus,
     rootAvailability: h.rootAvailability,
+    activeLinkPath: ACTIVE_LINK,
   });
 
 describe('createLaneSearchService.findInLanes', () => {
@@ -194,7 +197,34 @@ describe('createLaneSearchService.findInLanes', () => {
     });
     const service = serviceFrom(h);
     await service.findInLanes();
-    expect(h.openAt).toHaveBeenCalledWith('/repo/api/a.ts', { line: 3, column: 5 });
+    expect(h.openAt).toHaveBeenCalledWith(`${ACTIVE_LINK}/a.ts`, { line: 3, column: 5 });
+  });
+
+  it('実体パスでなく active link 配下の同じ相対パスで開く', async () => {
+    const hit: LaneSearchResult = {
+      kind: 'content',
+      laneId: 'api' as LaneId,
+      path: '/repo/api/src/nested/a.ts' as AbsolutePath,
+      relativePath: 'src/nested/a.ts',
+      line: 1,
+      column: 1,
+      preview: 'hit',
+    };
+    const h = harness({
+      query: 'foo',
+      contentOutcome: { kind: 'results', results: [hit], truncated: false },
+      picked: hit,
+      focusResult: focusOk('api'),
+    });
+    const service = serviceFrom(h);
+
+    await service.findInLanes();
+
+    expect(h.openAt).toHaveBeenCalledOnce();
+    expect(h.openAt).toHaveBeenCalledWith(`${ACTIVE_LINK}/src/nested/a.ts`, {
+      line: 1,
+      column: 1,
+    });
   });
 
   it('focus が blocked のとき開かない', async () => {
@@ -267,7 +297,7 @@ describe('createLaneSearchService.findInLanes', () => {
 
     await service.findInLanes();
 
-    expect(h.openAt).toHaveBeenCalledWith('/repo/api/a.ts', { line: 3, column: 5 });
+    expect(h.openAt).toHaveBeenCalledWith(`${ACTIVE_LINK}/a.ts`, { line: 3, column: 5 });
   });
 });
 
@@ -359,6 +389,6 @@ describe('createLaneSearchService.goToFileInLanes', () => {
     });
     const service = serviceFrom(h);
     await service.goToFileInLanes();
-    expect(h.openAt).toHaveBeenCalledWith('/repo/web/a.ts', undefined);
+    expect(h.openAt).toHaveBeenCalledWith(`${ACTIVE_LINK}/a.ts`, undefined);
   });
 });

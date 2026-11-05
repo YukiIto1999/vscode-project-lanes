@@ -352,6 +352,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       fileOpen: editor,
       focus: (laneId) => laneService.focus(laneId),
       rootAvailability,
+      activeLinkPath: link.linkPath,
     });
 
     const treeView = createTreeViewAdapter();

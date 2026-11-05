@@ -43,8 +43,6 @@ export const createEditorAdapter = (): EditorPort & FileOpenPort => ({
   },
 
   openAt: async (path, position) => {
-    const uri = vscode.Uri.file(path);
-    const doc = await vscode.workspace.openTextDocument(uri);
     const options: vscode.TextDocumentShowOptions = position
       ? {
           selection: new vscode.Range(
@@ -55,6 +53,7 @@ export const createEditorAdapter = (): EditorPort & FileOpenPort => ({
           ),
         }
       : {};
-    await vscode.window.showTextDocument(doc, options);
+    // openTextDocument の参照保持による active link 配下モデルのレーン切替後の残留回避
+    await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path), options);
   },
 });

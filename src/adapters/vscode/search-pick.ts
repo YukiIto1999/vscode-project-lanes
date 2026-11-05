@@ -8,6 +8,16 @@ interface ResultItem extends vscode.QuickPickItem {
   readonly result: LaneSearchResult;
 }
 
+/** VS Code がテーマアイコンとして描画する `$(name)` / `$(name~modifier)` 構文 */
+const ICON_SYNTAX = /\$\([A-Za-z0-9-]+(?:~[A-Za-z]+)?\)/g;
+
+/**
+ * ファイル内容やパス中の `$(...)` をアイコンでなく文字として表示させるエスケープ
+ * @param text - QuickPick 項目へ表示する文字列
+ * @returns アイコン構文を無効化した文字列
+ */
+export const escapeIconSyntax = (text: string): string => text.replace(ICON_SYNTAX, '\\$&');
+
 /**
  * VS Code QuickPick / InputBox 経由の横断検索対話アダプターの生成
  * @returns 横断検索対話ポート
@@ -36,20 +46,20 @@ export const createSearchUiAdapter = (getLanes: () => readonly Lane[]): SearchUi
       const separator: vscode.QuickPickItem =
         lane && labelCounts.get(lane.label) !== 1
           ? {
-              label: lane.label,
-              description: lane.rootPath,
+              label: escapeIconSyntax(lane.label),
+              description: escapeIconSyntax(lane.rootPath),
               kind: vscode.QuickPickItemKind.Separator,
             }
           : {
-              label: lane?.label ?? 'Unknown lane',
+              label: lane ? escapeIconSyntax(lane.label) : 'Unknown lane',
               kind: vscode.QuickPickItemKind.Separator,
             };
       items.push(separator);
       for (const result of list) {
         if (result.kind !== 'content') continue;
         items.push({
-          label: `${result.relativePath}:${result.line}`,
-          detail: result.preview,
+          label: escapeIconSyntax(`${result.relativePath}:${result.line}`),
+          detail: escapeIconSyntax(result.preview),
           result,
         });
       }
@@ -76,7 +86,11 @@ export const createSearchUiAdapter = (getLanes: () => readonly Lane[]): SearchUi
           ? lane.label
           : `${lane.label} — ${lane.rootPath}`
         : 'Unknown lane';
-      items.push({ label: result.relativePath, description, result });
+      items.push({
+        label: escapeIconSyntax(result.relativePath),
+        description: escapeIconSyntax(description),
+        result,
+      });
     }
     const picked = await vscode.window.showQuickPick(items, {
       title: 'Go to File in Lanes',

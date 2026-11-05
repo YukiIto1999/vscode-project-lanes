@@ -1,4 +1,5 @@
-import type { LaneId } from '../foundation/model';
+import * as nodePath from 'node:path';
+import type { AbsolutePath, LaneId } from '../foundation/model';
 import type { LaneCatalog, LaneFocusPlan } from '../lane/model';
 import type { LaneRootAvailabilityPort } from '../workspace/ports';
 import type { LaneRoot, LaneSearchResult } from './model';
@@ -19,6 +20,8 @@ export interface LaneSearchServiceDeps {
   readonly focus: (laneId: LaneId) => Promise<LaneFocusPlan>;
   /** レーンルート利用可否の検査ポート */
   readonly rootAvailability: LaneRootAvailabilityPort;
+  /** 検索結果を開く起点の active link 絶対パス */
+  readonly activeLinkPath: AbsolutePath;
 }
 
 /** 横断検索サービスの操作 */
@@ -35,7 +38,7 @@ export interface LaneSearchService {
  * @returns サービスインスタンス
  */
 export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearchService => {
-  const { getCatalog, search, ui, fileOpen, focus, rootAvailability } = deps;
+  const { getCatalog, search, ui, fileOpen, focus, rootAvailability, activeLinkPath } = deps;
 
   const availableRootsOf = (): readonly LaneRoot[] => {
     const roots: LaneRoot[] = [];
@@ -55,7 +58,9 @@ export const createLaneSearchService = (deps: LaneSearchServiceDeps): LaneSearch
     if (!targetActive) return;
     const position =
       result.kind === 'content' ? { line: result.line, column: result.column } : undefined;
-    await fileOpen.openAt(result.path, position);
+    // Explorer など link 経由で開いた既存エディタとの URI 一致のための active link 起点の解決
+    const linkedPath = nodePath.join(activeLinkPath, result.relativePath) as AbsolutePath;
+    await fileOpen.openAt(linkedPath, position);
   };
 
   return {
