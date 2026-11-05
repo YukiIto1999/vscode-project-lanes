@@ -12,11 +12,12 @@ __lanes_osc() { builtin print -n "\033]633;$1\007" }
 
 typeset -g __lanes_first=1
 __lanes_precmd() {
-    local status=$?
+    # zsh の status は読取専用の特殊変数のため別名で保持
+    local ret=$?
     if (( __lanes_first )); then
         __lanes_first=0
     else
-        __lanes_osc "D;$status"
+        __lanes_osc "D;$ret"
     fi
     __lanes_osc "A"
 }
