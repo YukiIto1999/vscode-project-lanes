@@ -64,7 +64,7 @@ describe('createEditorSnapshotStoreAdapter', () => {
             tabs: [{ uri: 'untitled:invalid', viewColumn: 1 }],
           },
           'adcf7e75-eea5-4301-8b36-7454374322c0': {
-            tabs: [{ uri: 'file:///invalid-column.ts', viewColumn: 10 }],
+            tabs: [{ uri: 'file:///invalid-column.ts', viewColumn: 0 }],
           },
         },
       }),
@@ -86,7 +86,7 @@ describe('createEditorSnapshotStoreAdapter', () => {
     ['non-integer', 1.5],
     ['zero', 0],
     ['negative', -1],
-    ['too large', 10],
+    ['NaN', Number.NaN],
   ])('不正な viewColumn (%s) の lane を除外する', (_label, viewColumn) => {
     const store = createEditorSnapshotStoreAdapter(
       createMemento({
@@ -374,6 +374,21 @@ describe('createEditorSnapshotStoreAdapter', () => {
     );
     await expect(store.prune([webId])).resolves.toBe('protected');
     expect(updateCount).toBe(0);
+  });
+
+  it('10 以上の editor group の viewColumn を読込・保存できる', async () => {
+    const store = createEditorSnapshotStoreAdapter(
+      createMemento({
+        schemaVersion: 1,
+        byLaneId: { [webId]: snapshot('file:///repo/web/source.ts', 12) },
+      }),
+    );
+
+    expect(store.get(webId)).toEqual(snapshot('file:///repo/web/source.ts', 12));
+    await expect(
+      store.save(apiId, snapshot('file:///repo/api/main.ts', 10)),
+    ).resolves.not.toThrow();
+    expect(store.get(apiId)).toEqual(snapshot('file:///repo/api/main.ts', 10));
   });
 
   it('save 入力が不正なら永続値を更新しない', async () => {

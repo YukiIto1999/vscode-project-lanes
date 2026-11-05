@@ -70,6 +70,14 @@ describe('inspectWorkspace', () => {
     ['同名の別 folder', mkFolder('.lanes-root', '/home/user/project')],
     ['別 directory の active path', mkFolder('active', '/other/.lanes-root/active')],
     ['active に似た path', mkFolder('active', '/home/user/.lanes-root/active-copy')],
+    [
+      '別 workspace の namespaced active link',
+      mkFolder(
+        'web',
+        deriveWorkspaceAnchor({ ...fileInfo, uri: toUri('/home/user/other.code-workspace') })
+          .activeLinkPath,
+      ),
+    ],
   ])('%s だけでは unmanaged', (_case, folder) => {
     expect(inspect({ folders: [folder] })).toEqual({ kind: 'unmanaged' });
   });

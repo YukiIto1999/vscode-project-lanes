@@ -243,7 +243,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     }
 
     if (!current.viewRebound) {
-      const rebound = await viewRebind.rebindActiveFolder(current.target);
+      const rebound = await viewRebind.rebindActiveFolder(current.target, false);
       if (!rebound) throw new Error('workspace-folder-mutation-rejected');
       current = { ...current, viewRebound: true };
       pendingRename = current;
@@ -390,7 +390,7 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
     }
 
     try {
-      const rebound = await viewRebind.rebindActiveFolder(plan.lane);
+      const rebound = await viewRebind.rebindActiveFolder(plan.lane, swapped);
       if (!rebound) throw new Error('workspace-folder-mutation-rejected');
     } catch (error) {
       if (swapped) {
@@ -460,6 +460,9 @@ export const createLaneService = (deps: LaneServiceDeps): LaneService => {
         const result = await focusTransaction.focus(targetId);
         if (result.kind === 'blocked' && result.reason === 'dirty-editors') {
           prompt.warnDirtyEditors();
+        }
+        if (result.kind === 'blocked' && result.reason === 'reconciliation-required') {
+          prompt.warnReconciliationRequired();
         }
         return result;
       });

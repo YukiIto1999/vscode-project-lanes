@@ -1,7 +1,7 @@
 import type { OperationQueue } from '../foundation/operation-queue';
 import type { WorkspaceFolder } from './model';
-import type { WorkspaceHostPort } from './ports';
-import { classifyWorkspaceFolder, type WorkspaceAnchor } from './anchor';
+import type { AnchorTargetPort, WorkspaceHostPort } from './ports';
+import { classifyWorkspaceFolder, resolveLaneCandidate, type WorkspaceAnchor } from './anchor';
 
 /** ユーザー操作による workspaceFolders 変化への応答アクション */
 export type ReconciliationAction =
@@ -30,6 +30,8 @@ export interface ReconcileInput {
   readonly activeLabel: string;
   /** symlink folder の URI */
   readonly linkUri: WorkspaceFolder['uri'];
+  /** 他 workspace の anchor folder の参照先解決 */
+  readonly anchorTarget: AnchorTargetPort;
 }
 
 /** workspace folder 再整合の結果 */
@@ -65,6 +67,8 @@ export interface WorkspaceFolderReconcilerDeps {
   readonly anchor: WorkspaceAnchor;
   /** active link URI */
   readonly linkUri: WorkspaceFolder['uri'];
+  /** 他 workspace の anchor folder の参照先解決 */
+  readonly anchorTarget: AnchorTargetPort;
 }
 
 /** workspace folder 再整合 */
@@ -82,7 +86,7 @@ export interface WorkspaceFolderReconciler {
  * @returns 応答アクション
  */
 export const reconcileUserChange = (input: ReconcileInput): ReconciliationAction => {
-  const { rawFolders, currentLanes, anchor, activeLabel, linkUri } = input;
+  const { rawFolders, currentLanes, anchor, activeLabel, linkUri, anchorTarget } = input;
 
   if (
     rawFolders.length === 1 &&
@@ -91,9 +95,10 @@ export const reconcileUserChange = (input: ReconcileInput): ReconciliationAction
     return { kind: 'noop' };
   }
 
-  const nonSystem = rawFolders.filter(
-    (folder) => classifyWorkspaceFolder(folder, anchor) === 'lane',
-  );
+  const nonSystem = rawFolders.flatMap((folder) => {
+    const candidate = resolveLaneCandidate(folder, anchor, anchorTarget);
+    return candidate ? [candidate] : [];
+  });
   const known = new Set(currentLanes.map((f) => f.uri));
   const additions = nonSystem.filter((f) => !known.has(f.uri));
 
@@ -121,6 +126,7 @@ export const createWorkspaceFolderReconciler = (
     finalizePendingOperations,
     anchor,
     linkUri,
+    anchorTarget,
   } = deps;
 
   return {
@@ -134,6 +140,7 @@ export const createWorkspaceFolderReconciler = (
           anchor,
           activeLabel: getActiveLabel(),
           linkUri,
+          anchorTarget,
         });
         if (action.kind === 'noop') return { kind: 'noop' };
 

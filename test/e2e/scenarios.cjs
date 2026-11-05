@@ -160,6 +160,57 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'same-label-lane-switch',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'same-label-lane-switch'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'same-label-lane-switch',
+      'same-label-lane-switch.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'same-label-lane-switch.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'prepare-second-lane' }),
+      Object.freeze({ phase: 'switch-same-label' }),
+    ]),
+  }),
+  Object.freeze({
+    name: 'foreign-anchor-recovery',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'foreign-anchor-recovery'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'foreign-anchor-recovery',
+      'alpha.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'foreign-anchor-recovery.cjs'),
+    launches: Object.freeze([
+      Object.freeze({
+        phase: 'alpha-initialize',
+        workspaceFixtureName: 'alpha.code-workspace',
+      }),
+      Object.freeze({
+        phase: 'copied-recover',
+        workspaceFixtureName: 'copied.code-workspace',
+      }),
+    ]),
+  }),
+  Object.freeze({
+    name: 'deleted-anchor-recovery',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'deleted-anchor-recovery'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'deleted-anchor-recovery',
+      'deleted-anchor-recovery.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'deleted-anchor-recovery.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'bootstrap' }),
+      Object.freeze({ phase: 'delete-and-reload' }),
+    ]),
+  }),
+  Object.freeze({
     name: 'legacy-anchor-classification',
     fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
     workspaceFixture: path.join(

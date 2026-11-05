@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "path": "lane-a",
+    },
+    {
+      "path": "lane-b",
+    },
+  ],
+  "settings": {
+    "projectLanes.initializationMode": "automatic",
+  },
+}

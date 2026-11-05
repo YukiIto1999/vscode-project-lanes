@@ -76,9 +76,10 @@ export interface LaneViewRebindPort {
   /**
    * 切替先レーンへの active folder ビューの再走査要求
    * @param activeLane - 切替先レーン
+   * @param targetChanged - 直前に active link の参照先を入れ替えた場合は true
    * @returns workspace folder mutation が受理された場合は true
    */
-  readonly rebindActiveFolder: (activeLane: Lane) => Promise<boolean>;
+  readonly rebindActiveFolder: (activeLane: Lane, targetChanged: boolean) => Promise<boolean>;
 }
 
 /** ターミナル切替ポート */
@@ -135,6 +136,8 @@ export interface LanePromptPort {
   readonly pickLane: (lanes: readonly Lane[]) => Promise<LaneId | undefined>;
   /** 未保存タブ警告の表示 */
   readonly warnDirtyEditors: () => void;
+  /** active link と catalog の不整合で切替できない場合の再読込案内 */
+  readonly warnReconciliationRequired: () => void;
   /**
    * リネーム入力ダイアログ
    * @param current - 現在のラベル

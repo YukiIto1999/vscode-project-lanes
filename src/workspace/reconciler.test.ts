@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AbsolutePath, UriString } from '../foundation/model';
 import { createOperationQueue } from '../foundation/operation-queue';
 import type { WorkspaceFileInfo, WorkspaceFolder } from './model';
-import type { WorkspaceHostPort } from './ports';
+import type { AnchorTargetPort, WorkspaceHostPort } from './ports';
 import { deriveWorkspaceAnchor } from './anchor';
 import { createWorkspaceFolderReconciler, reconcileUserChange } from './reconciler';
 
@@ -15,10 +15,17 @@ const fileInfo: WorkspaceFileInfo = {
 const anchor = deriveWorkspaceAnchor(fileInfo);
 const linkUri = toUri(anchor.activeLinkPath);
 
+const noAnchorTarget: AnchorTargetPort = { resolve: () => undefined };
+const otherAnchor = deriveWorkspaceAnchor({
+  uri: toUri('/ws/other.code-workspace'),
+  directoryPath: '/ws' as AbsolutePath,
+});
+
 const baseInput = {
   anchor,
   activeLabel: 'web',
   linkUri,
+  anchorTarget: noAnchorTarget,
 };
 
 describe('reconcileUserChange', () => {
@@ -68,6 +75,40 @@ describe('reconcileUserChange', () => {
     expect(result.kind).toBe('absorb');
     if (result.kind !== 'absorb') return;
     expect(result.additions.map((f) => f.name)).toEqual(['new']);
+  });
+
+  it('別 workspace の active link は参照先を additions にし、解決不能な anchor folder は除外する', () => {
+    const result = reconcileUserChange({
+      ...baseInput,
+      anchorTarget: {
+        resolve: (path) => (path === otherAnchor.activeLinkPath ? toUri('/p/new') : undefined),
+      },
+      rawFolders: [
+        { name: 'web', uri: linkUri },
+        mkFolder('new', otherAnchor.activeLinkPath),
+        mkFolder('namespace', anchor.namespaceDirectoryPath),
+      ],
+      currentLanes: [mkFolder('web', '/p/web')],
+    });
+    expect(result).toEqual({
+      kind: 'absorb',
+      additions: [mkFolder('new', '/p/new')],
+      collapsedFolder: { uri: linkUri, name: 'web' },
+    });
+  });
+
+  it('別 workspace の active link の参照先が既知 lane なら additions に含めず縮退する', () => {
+    const result = reconcileUserChange({
+      ...baseInput,
+      anchorTarget: { resolve: () => toUri('/p/web') },
+      rawFolders: [mkFolder('web', otherAnchor.activeLinkPath)],
+      currentLanes: [mkFolder('web', '/p/web')],
+    });
+    expect(result).toEqual({
+      kind: 'absorb',
+      additions: [],
+      collapsedFolder: { uri: linkUri, name: 'web' },
+    });
   });
 
   it('表示名が `.lanes-root` の実レーンを additions に残す', () => {
@@ -125,6 +166,7 @@ describe('createWorkspaceFolderReconciler', () => {
       },
       anchor,
       linkUri,
+      anchorTarget: noAnchorTarget,
     });
 
     const pending = reconciler.reconcileWorkspaceFolders();
@@ -164,6 +206,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       anchor,
       linkUri,
+      anchorTarget: noAnchorTarget,
     });
 
     const pending = reconciler.reconcileWorkspaceFolders();
@@ -198,6 +241,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       anchor,
       linkUri,
+      anchorTarget: noAnchorTarget,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).resolves.toEqual({ kind: 'rejected' });
@@ -222,6 +266,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       anchor,
       linkUri,
+      anchorTarget: noAnchorTarget,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).rejects.toBe(failure);
@@ -251,6 +296,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       anchor,
       linkUri,
+      anchorTarget: noAnchorTarget,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).resolves.toEqual({ kind: 'rejected' });
@@ -279,6 +325,7 @@ describe('createWorkspaceFolderReconciler', () => {
       finalizePendingOperations: async () => undefined,
       anchor,
       linkUri,
+      anchorTarget: noAnchorTarget,
     });
 
     await expect(reconciler.reconcileWorkspaceFolders()).rejects.toBe(failure);

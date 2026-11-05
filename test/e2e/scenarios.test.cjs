@@ -150,6 +150,45 @@ const missingLaneRecoveryScenario = {
     { phase: 'restart-and-switch-recovered' },
   ],
 };
+const sameLabelLaneSwitchScenario = {
+  name: 'same-label-lane-switch',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'same-label-lane-switch'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'same-label-lane-switch',
+    'same-label-lane-switch.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'same-label-lane-switch.cjs'),
+  launches: [{ phase: 'prepare-second-lane' }, { phase: 'switch-same-label' }],
+};
+const foreignAnchorRecoveryScenario = {
+  name: 'foreign-anchor-recovery',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'foreign-anchor-recovery'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'foreign-anchor-recovery',
+    'alpha.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'foreign-anchor-recovery.cjs'),
+  launches: [
+    { phase: 'alpha-initialize', workspaceFixtureName: 'alpha.code-workspace' },
+    { phase: 'copied-recover', workspaceFixtureName: 'copied.code-workspace' },
+  ],
+};
+const deletedAnchorRecoveryScenario = {
+  name: 'deleted-anchor-recovery',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'deleted-anchor-recovery'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'deleted-anchor-recovery',
+    'deleted-anchor-recovery.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'deleted-anchor-recovery.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'delete-and-reload' }],
+};
 const legacyAnchorClassificationScenario = {
   name: 'legacy-anchor-classification',
   fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
@@ -345,6 +384,9 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     editorSnapshotPersistenceScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
+    sameLabelLaneSwitchScenario,
+    foreignAnchorRecoveryScenario,
+    deletedAnchorRecoveryScenario,
     legacyAnchorClassificationScenario,
     crossLaneSearchNavigationScenario,
     editorSnapshotRestoreScenario,
@@ -1177,6 +1219,399 @@ test('the restart-and-switch-recovered phase switches to the persisted relocated
   assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-a']]);
   assert.equal(activeTarget, movedLaneA);
   assert.deepEqual(messages, ['E2E PASS: relocated lane-a persisted and switched after restart']);
+});
+
+test('the same-label lane switch suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/same-label-lane-switch.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the same-label lane switch fixture gives both lanes the same default label', () => {
+  const workspaceFile = fs.readFileSync(sameLabelLaneSwitchScenario.workspaceFixture, 'utf8');
+
+  assert.match(workspaceFile, /"path": "one\/app"/);
+  assert.match(workspaceFile, /"path": "two\/app"/);
+  assert.doesNotMatch(workspaceFile, /"name"/);
+});
+
+test('the prepare-second-lane phase retargets the active link behind the same label', async () => {
+  const { run } = require('./suite/same-label-lane-switch.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-same-label-prepare/workspace';
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+  );
+  const messages = [];
+  let activeTarget = path.join(workspaceDirectory, 'one', 'app');
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'prepare-second-lane' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'app' }],
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    replaceActiveLink(target) {
+      activeTarget = target;
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.equal(activeTarget, path.join(workspaceDirectory, 'two', 'app'));
+  assert.deepEqual(messages, ['E2E PASS: second same-label lane prepared behind the active link']);
+});
+
+const runSameLabelSwitchPhase = async ({ emitFolderChange }) => {
+  const { run } = require('./suite/same-label-lane-switch.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-same-label-switch/workspace';
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+  );
+  const firstLane = path.join(workspaceDirectory, 'one', 'app');
+  const commands = [];
+  const messages = [];
+  const listeners = new Set();
+  let activeTarget = path.join(workspaceDirectory, 'two', 'app');
+  let completeSwitch;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'switch-same-label' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'app' }],
+        onDidChangeWorkspaceFolders(listener) {
+          listeners.add(listener);
+          return { dispose: () => listeners.delete(listener) };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.switchLane') {
+            return new Promise((resolve) => {
+              completeSwitch = resolve;
+            });
+          }
+          if (command === 'workbench.action.acceptSelectedQuickOpenItem') {
+            assert.ok(completeSwitch, 'Expected the lane picker to be open');
+            activeTarget = firstLane;
+            if (emitFolderChange) for (const listener of listeners) listener({});
+            completeSwitch();
+          }
+          return undefined;
+        },
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    delay: async () => {},
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  return { commands, listeners, messages };
+};
+
+test('the switch-same-label phase picks the other same-label lane and observes its folder change', async () => {
+  const { commands, listeners, messages } = await runSameLabelSwitchPhase({
+    emitFolderChange: true,
+  });
+
+  assert.deepEqual(commands, [
+    ['projectLanes.switchLane', undefined],
+    ['workbench.action.acceptSelectedQuickOpenItem', undefined],
+  ]);
+  assert.equal(listeners.size, 0);
+  assert.deepEqual(messages, [
+    'E2E PASS: same-label lane switch rebuilt the active workspace folder',
+  ]);
+});
+
+test('the switch-same-label phase rejects a retarget without a workspace folder change', async () => {
+  await assert.rejects(
+    runSameLabelSwitchPhase({ emitFolderChange: false }),
+    /Expected a workspace folder change after retargeting/,
+  );
+});
+
+test('the foreign anchor recovery suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/foreign-anchor-recovery.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+const foreignAnchorPaths = (workspaceDirectory) => ({
+  alphaWorkspace: path.join(workspaceDirectory, 'alpha.code-workspace'),
+  copiedWorkspace: path.join(workspaceDirectory, 'copied.code-workspace'),
+  alphaLink: activeLinkForPath(path.join(workspaceDirectory, 'alpha.code-workspace')),
+  copiedLink: activeLinkForPath(path.join(workspaceDirectory, 'copied.code-workspace')),
+  laneA: path.join(workspaceDirectory, 'lane-a'),
+  laneB: path.join(workspaceDirectory, 'lane-b'),
+});
+
+const activeExtension = {
+  getExtension() {
+    return { isActive: true, async activate() {} };
+  },
+};
+
+test('the alpha-initialize phase copies the workspace with its own active link folder', async () => {
+  const { run } = require('./suite/foreign-anchor-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-foreign-alpha/workspace';
+  const paths = foreignAnchorPaths(workspaceDirectory);
+  const alphaFolderPath = path.relative(workspaceDirectory, paths.alphaLink);
+  const commands = [];
+  const messages = [];
+  const written = new Map();
+  let alphaTarget = paths.laneA;
+  const workspace = {
+    workspaceFile: { fsPath: paths.alphaWorkspace },
+    workspaceFolders: [{ uri: { fsPath: paths.alphaLink }, name: 'lane-a' }],
+  };
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'alpha-initialize' }),
+    },
+    vscodeApi: {
+      workspace,
+      extensions: activeExtension,
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          alphaTarget = paths.laneB;
+          workspace.workspaceFolders = [{ uri: { fsPath: paths.alphaLink }, name: 'lane-b' }];
+        },
+      },
+    },
+    fileSystem: {
+      readlinkSync(target) {
+        assert.equal(target, paths.alphaLink);
+        return alphaTarget;
+      },
+      readFileSync(target) {
+        assert.equal(target, paths.alphaWorkspace);
+        return `{"folders":[{"name":"lane-b","path":${JSON.stringify(alphaFolderPath)}}]}`;
+      },
+      writeFileSync(target, content) {
+        written.set(target, content);
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-b']]);
+  assert.deepEqual(JSON.parse(written.get(paths.copiedWorkspace)), {
+    folders: [{ name: 'lane-b', path: alphaFolderPath }],
+    settings: { 'projectLanes.initializationMode': 'automatic' },
+  });
+  assert.deepEqual(messages, ['E2E PASS: alpha workspace copied with its active link folder']);
+});
+
+const runCopiedRecoverPhase = ({ copiedTarget, now }) => {
+  const { run } = require('./suite/foreign-anchor-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-foreign-copied/workspace';
+  const paths = foreignAnchorPaths(workspaceDirectory);
+  const messages = [];
+  const targets = new Map([
+    [paths.alphaLink, paths.laneB],
+    [paths.copiedLink, copiedTarget(paths)],
+  ]);
+
+  return run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'copied-recover' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: { fsPath: paths.copiedWorkspace },
+        workspaceFolders: [{ uri: { fsPath: paths.copiedLink }, name: 'lane-b' }],
+      },
+      extensions: activeExtension,
+    },
+    fileSystem: {
+      readlinkSync(target) {
+        assert.ok(targets.has(target), `Unexpected readlink: ${target}`);
+        return targets.get(target);
+      },
+    },
+    delay: async () => {},
+    now,
+    log(message) {
+      messages.push(message);
+    },
+  }).then(() => messages);
+};
+
+test('the copied-recover phase requires the copied link to target the real lane', async () => {
+  const messages = await runCopiedRecoverPhase({ copiedTarget: (paths) => paths.laneB });
+
+  assert.deepEqual(messages, [
+    'E2E PASS: copied workspace recovered the lane behind the foreign active link',
+  ]);
+});
+
+test('the copied-recover phase rejects a lane rooted at the foreign active link', async () => {
+  let clock = 0;
+
+  await assert.rejects(
+    runCopiedRecoverPhase({
+      copiedTarget: (paths) => paths.alphaLink,
+      now: () => (clock += 20_000),
+    }),
+    /Timed out waiting for foreign anchor recovery/,
+  );
+});
+
+test('the deleted anchor recovery suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/deleted-anchor-recovery.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+const runDeletedAnchorPhase = ({ reloadRecreatesAnchor, now }) => {
+  const { run } = require('./suite/deleted-anchor-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-deleted-anchor/workspace';
+  const workspaceFilePath = path.join(workspaceDirectory, 'deleted-anchor-recovery.code-workspace');
+  const anchor = deriveWorkspaceAnchor({ fsPath: workspaceFilePath });
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const commands = [];
+  const messages = [];
+  let anchorExists = true;
+  let activeTarget = laneA;
+  const workspace = {
+    workspaceFile: { fsPath: workspaceFilePath },
+    workspaceFolders: [{ uri: { fsPath: anchor.activeLinkPath }, name: 'lane-a' }],
+  };
+  const realDirectory = { isDirectory: () => true, isSymbolicLink: () => false };
+
+  return run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'delete-and-reload' }),
+    },
+    vscodeApi: {
+      workspace,
+      extensions: activeExtension,
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.reloadLanes') {
+            anchorExists = reloadRecreatesAnchor;
+            return;
+          }
+          if (command === 'projectLanes.switchLane' && anchorExists) {
+            activeTarget = laneB;
+            workspace.workspaceFolders = [{ uri: { fsPath: anchor.activeLinkPath }, name: laneId }];
+          }
+        },
+      },
+    },
+    fileSystem: {
+      existsSync(target) {
+        assert.equal(target, anchor.rootDirectoryPath);
+        return anchorExists;
+      },
+      lstatSync(target) {
+        assert.ok(
+          [anchor.rootDirectoryPath, anchor.namespaceDirectoryPath].includes(target),
+          `Unexpected lstat: ${target}`,
+        );
+        return realDirectory;
+      },
+      realpathSync(target) {
+        assert.equal(target, anchor.activeLinkPath);
+        if (!anchorExists) throw Object.assign(new Error('missing link'), { code: 'ENOENT' });
+        return activeTarget;
+      },
+    },
+    removeAnchorRoot() {
+      anchorExists = false;
+    },
+    delay: async () => {},
+    now,
+    log(message) {
+      messages.push(message);
+    },
+  }).then(() => ({ commands, messages }));
+};
+
+test('the delete-and-reload phase recovers the deleted anchor before switching lanes', async () => {
+  const { commands, messages } = await runDeletedAnchorPhase({ reloadRecreatesAnchor: true });
+
+  assert.deepEqual(commands, [
+    ['projectLanes.switchLane', 'lane-b'],
+    ['projectLanes.reloadLanes', undefined],
+    ['projectLanes.switchLane', 'lane-b'],
+  ]);
+  assert.deepEqual(messages, [
+    'E2E PASS: Reload Lanes recreated the deleted anchor and lane switching resumed',
+  ]);
+});
+
+test('the delete-and-reload phase rejects a reload that leaves the anchor missing', async () => {
+  let clock = 0;
+
+  await assert.rejects(
+    runDeletedAnchorPhase({ reloadRecreatesAnchor: false, now: () => (clock += 20_000) }),
+    /Timed out waiting for deleted anchor recovery: missing link/,
+  );
 });
 
 test('the empty-workspace suite verifies activation and reports success', async () => {

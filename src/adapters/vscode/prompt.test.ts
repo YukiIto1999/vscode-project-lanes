@@ -59,6 +59,44 @@ describe('createPromptAdapter pickLane', () => {
   });
 });
 
+describe('createPromptAdapter warnReconciliationRequired', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('Reload Lanes の選択で再読込 command を実行する', async () => {
+    vscode.showWarningMessage.mockResolvedValue('Reload Lanes');
+    vscode.executeCommand.mockResolvedValue(undefined);
+
+    createPromptAdapter().warnReconciliationRequired();
+
+    await vi.waitFor(() => {
+      expect(vscode.executeCommand).toHaveBeenCalledWith('projectLanes.reloadLanes');
+    });
+    expect(vscode.showWarningMessage).toHaveBeenCalledWith(
+      'The active lane link is missing or out of date. Reload Lanes to repair it.',
+      'Reload Lanes',
+    );
+  });
+
+  it('警告を閉じただけなら再読込しない', async () => {
+    let dismiss!: (selection: undefined) => void;
+    vscode.showWarningMessage.mockReturnValue(
+      new Promise((resolve) => {
+        dismiss = resolve;
+      }),
+    );
+
+    createPromptAdapter().warnReconciliationRequired();
+    dismiss(undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(vscode.showWarningMessage).toHaveBeenCalledOnce();
+    expect(vscode.executeCommand).not.toHaveBeenCalled();
+  });
+});
+
 describe('createPromptAdapter promptRename', () => {
   beforeEach(() => {
     vi.clearAllMocks();

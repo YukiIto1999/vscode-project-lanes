@@ -65,6 +65,7 @@ const createHarness = ({
   swapLink = () => {},
   clearLink = () => {},
   warnDirtyEditors = () => {},
+  warnReconciliationRequired = () => {},
   loadSelection,
   selectionLaneId = 'web' as LaneId,
   saveSelection = async () => {},
@@ -92,6 +93,7 @@ const createHarness = ({
   readonly swapLink?: (target: AbsolutePath) => void;
   readonly clearLink?: () => void;
   readonly warnDirtyEditors?: LanePromptPort['warnDirtyEditors'];
+  readonly warnReconciliationRequired?: LanePromptPort['warnReconciliationRequired'];
   readonly loadSelection?: LaneSelectionStorePort['load'];
   readonly selectionLaneId?: LaneId | undefined;
   readonly saveSelection?: LaneSelectionStorePort['save'];
@@ -164,6 +166,7 @@ const createHarness = ({
     pickLane,
     pickReplacementFolder,
     warnDirtyEditors,
+    warnReconciliationRequired,
     promptRename,
     confirmRemoval,
     warnActiveLaneRemoval: () => {},
@@ -276,6 +279,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.linkSwap).not.toHaveBeenCalled();
     expect(h.viewRebind).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'api', rootPath: '/repo/api' }),
+      false,
     );
     expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'api');
   });
@@ -296,6 +300,10 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('api');
     expect(h.linkSwap).toHaveBeenCalledOnce();
     expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
+    expect(h.viewRebind).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'api', rootPath: '/repo/api' }),
+      true,
+    );
     expect(h.selectionSave).not.toHaveBeenCalled();
   });
 
@@ -454,7 +462,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('api');
     expect(h.currentLinkTarget()).toBe('/repo/api');
     expect(h.editorRestore).toHaveBeenCalledWith(sourceSnapshot);
-    expect(h.viewRebind).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'api' }));
+    expect(h.viewRebind).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'api' }), true);
     expect(h.selectionSave).not.toHaveBeenCalled();
   });
 
@@ -574,7 +582,7 @@ describe('createLaneService active lane reconciliation', () => {
 
     expect(h.linkSwap).not.toHaveBeenCalled();
     expect(h.viewRebind).toHaveBeenCalledOnce();
-    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web' }));
+    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web' }), false);
   });
 
   it('view mutation が false なら link を旧 target へ戻して reject する', async () => {
@@ -909,7 +917,10 @@ describe('createLaneService operation queue', () => {
     ]);
     expect(h.service.snapshot().activeLaneId).toBe('web');
     expect(h.selectionSave).not.toHaveBeenCalled();
-    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web', label: 'api' }));
+    expect(h.viewRebind).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'web', label: 'api' }),
+      false,
+    );
   });
 
   it('rename 後に service を再生成しても同じ LaneId と新 label を復元する', async () => {
@@ -1219,11 +1230,13 @@ describe('createLaneService interaction boundary', () => {
     expect(saveCatalog).not.toHaveBeenCalled();
   });
 
-  it('reconciliation-required を dirty editor として警告しない', async () => {
+  it('reconciliation-required は dirty editor ではなく再読込として警告する', async () => {
     const warnDirtyEditors = vi.fn();
+    const warnReconciliationRequired = vi.fn();
     const h = createHarness({
       linkTarget: '/repo/missing' as AbsolutePath,
       warnDirtyEditors,
+      warnReconciliationRequired,
     });
 
     await expect(h.service.focus('api' as LaneId)).resolves.toEqual({
@@ -1231,6 +1244,36 @@ describe('createLaneService interaction boundary', () => {
       reason: 'reconciliation-required',
     });
     expect(warnDirtyEditors).not.toHaveBeenCalled();
+    expect(warnReconciliationRequired).toHaveBeenCalledOnce();
+  });
+
+  it('active link の親 directory が削除されて link が読めなければ再読込を案内する', async () => {
+    const warnReconciliationRequired = vi.fn();
+    const h = createHarness({ linkTarget: null, warnReconciliationRequired });
+
+    await expect(h.service.focus('api' as LaneId)).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'reconciliation-required',
+    });
+    expect(h.linkSwap).not.toHaveBeenCalled();
+    expect(warnReconciliationRequired).toHaveBeenCalledOnce();
+  });
+
+  it('dirty editor による blocked は再読込を案内しない', async () => {
+    const warnDirtyEditors = vi.fn();
+    const warnReconciliationRequired = vi.fn();
+    const h = createHarness({
+      hasDirtyEditors: () => true,
+      warnDirtyEditors,
+      warnReconciliationRequired,
+    });
+
+    await expect(h.service.focus('api' as LaneId)).resolves.toEqual({
+      kind: 'blocked',
+      reason: 'dirty-editors',
+    });
+    expect(warnDirtyEditors).toHaveBeenCalledOnce();
+    expect(warnReconciliationRequired).not.toHaveBeenCalled();
   });
 });
 
@@ -1263,6 +1306,7 @@ describe('createLaneService relocation', () => {
     expect(h.linkSwap).toHaveBeenCalledWith('/moved/web');
     expect(h.viewRebind).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'web', rootPath: '/moved/web' }),
+      true,
     );
     expect(h.service.snapshot().activeLaneId).toBe('web');
   });
@@ -1312,6 +1356,7 @@ describe('createLaneService relocation', () => {
     expect(h.currentLinkTarget()).toBe('/repo/web');
     expect(h.viewRebind).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'web', rootPath: '/repo/web' }),
+      true,
     );
   });
 
@@ -1358,6 +1403,7 @@ describe('createLaneService relocation', () => {
     expect(h.editorRestore).toHaveBeenCalledOnce();
     expect(h.viewRebind).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'web', rootPath: '/repo/web' }),
+      true,
     );
   });
 
