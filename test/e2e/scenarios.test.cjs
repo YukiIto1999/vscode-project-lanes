@@ -126,6 +126,18 @@ const missingLaneRecoveryScenario = {
     { phase: 'restart-and-switch-recovered' },
   ],
 };
+const sameLabelLaneSwitchScenario = {
+  name: 'same-label-lane-switch',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'same-label-lane-switch'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'same-label-lane-switch',
+    'same-label-lane-switch.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'same-label-lane-switch.cjs'),
+  launches: [{ phase: 'prepare-second-lane' }, { phase: 'switch-same-label' }],
+};
 const legacyAnchorClassificationScenario = {
   name: 'legacy-anchor-classification',
   fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
@@ -295,6 +307,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     editorSnapshotPersistenceScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
+    sameLabelLaneSwitchScenario,
     legacyAnchorClassificationScenario,
   ]);
 });
@@ -784,6 +797,159 @@ test('the restart-and-switch-recovered phase switches to the persisted relocated
   assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-a']]);
   assert.equal(activeTarget, movedLaneA);
   assert.deepEqual(messages, ['E2E PASS: relocated lane-a persisted and switched after restart']);
+});
+
+test('the same-label lane switch suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/same-label-lane-switch.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('the same-label lane switch fixture gives both lanes the same default label', () => {
+  const workspaceFile = fs.readFileSync(sameLabelLaneSwitchScenario.workspaceFixture, 'utf8');
+
+  assert.match(workspaceFile, /"path": "one\/app"/);
+  assert.match(workspaceFile, /"path": "two\/app"/);
+  assert.doesNotMatch(workspaceFile, /"name"/);
+});
+
+test('the prepare-second-lane phase retargets the active link behind the same label', async () => {
+  const { run } = require('./suite/same-label-lane-switch.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-same-label-prepare/workspace';
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+  );
+  const messages = [];
+  let activeTarget = path.join(workspaceDirectory, 'one', 'app');
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'prepare-second-lane' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'app' }],
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    replaceActiveLink(target) {
+      activeTarget = target;
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.equal(activeTarget, path.join(workspaceDirectory, 'two', 'app'));
+  assert.deepEqual(messages, ['E2E PASS: second same-label lane prepared behind the active link']);
+});
+
+const runSameLabelSwitchPhase = async ({ emitFolderChange }) => {
+  const { run } = require('./suite/same-label-lane-switch.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-same-label-switch/workspace';
+  const activeLink = activeLinkForPath(
+    path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+  );
+  const firstLane = path.join(workspaceDirectory, 'one', 'app');
+  const commands = [];
+  const messages = [];
+  const listeners = new Set();
+  let activeTarget = path.join(workspaceDirectory, 'two', 'app');
+  let completeSwitch;
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'switch-same-label' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: {
+          fsPath: path.join(workspaceDirectory, 'same-label-lane-switch.code-workspace'),
+        },
+        workspaceFolders: [{ uri: { fsPath: activeLink }, name: 'app' }],
+        onDidChangeWorkspaceFolders(listener) {
+          listeners.add(listener);
+          return { dispose: () => listeners.delete(listener) };
+        },
+      },
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          if (command === 'projectLanes.switchLane') {
+            return new Promise((resolve) => {
+              completeSwitch = resolve;
+            });
+          }
+          if (command === 'workbench.action.acceptSelectedQuickOpenItem') {
+            assert.ok(completeSwitch, 'Expected the lane picker to be open');
+            activeTarget = firstLane;
+            if (emitFolderChange) for (const listener of listeners) listener({});
+            completeSwitch();
+          }
+          return undefined;
+        },
+      },
+      extensions: {
+        getExtension() {
+          return { isActive: true, async activate() {} };
+        },
+      },
+    },
+    fileSystem: {
+      realpathSync(target) {
+        assert.equal(target, activeLink);
+        return activeTarget;
+      },
+    },
+    delay: async () => {},
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  return { commands, listeners, messages };
+};
+
+test('the switch-same-label phase picks the other same-label lane and observes its folder change', async () => {
+  const { commands, listeners, messages } = await runSameLabelSwitchPhase({
+    emitFolderChange: true,
+  });
+
+  assert.deepEqual(commands, [
+    ['projectLanes.switchLane', undefined],
+    ['workbench.action.acceptSelectedQuickOpenItem', undefined],
+  ]);
+  assert.equal(listeners.size, 0);
+  assert.deepEqual(messages, [
+    'E2E PASS: same-label lane switch rebuilt the active workspace folder',
+  ]);
+});
+
+test('the switch-same-label phase rejects a retarget without a workspace folder change', async () => {
+  await assert.rejects(
+    runSameLabelSwitchPhase({ emitFolderChange: false }),
+    /Expected a workspace folder change after retargeting/,
+  );
 });
 
 test('the empty-workspace suite verifies activation and reports success', async () => {

@@ -130,6 +130,21 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'same-label-lane-switch',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'same-label-lane-switch'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'same-label-lane-switch',
+      'same-label-lane-switch.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'same-label-lane-switch.cjs'),
+    launches: Object.freeze([
+      Object.freeze({ phase: 'prepare-second-lane' }),
+      Object.freeze({ phase: 'switch-same-label' }),
+    ]),
+  }),
+  Object.freeze({
     name: 'legacy-anchor-classification',
     fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
     workspaceFixture: path.join(

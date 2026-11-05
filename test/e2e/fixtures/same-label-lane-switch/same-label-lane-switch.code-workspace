@@ -1,0 +1,13 @@
+{
+  "folders": [
+    {
+      "path": "one/app",
+    },
+    {
+      "path": "two/app",
+    },
+  ],
+  "settings": {
+    "projectLanes.initializationMode": "automatic",
+  },
+}

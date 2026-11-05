@@ -76,9 +76,10 @@ export interface LaneViewRebindPort {
   /**
    * 切替先レーンへの active folder ビューの再走査要求
    * @param activeLane - 切替先レーン
+   * @param targetChanged - 直前に active link の参照先を入れ替えた場合は true
    * @returns workspace folder mutation が受理された場合は true
    */
-  readonly rebindActiveFolder: (activeLane: Lane) => Promise<boolean>;
+  readonly rebindActiveFolder: (activeLane: Lane, targetChanged: boolean) => Promise<boolean>;
 }
 
 /** ターミナル切替ポート */

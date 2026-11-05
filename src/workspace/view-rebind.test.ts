@@ -35,14 +35,19 @@ const createHarness = (
 
 describe('createWorkspaceViewRebind', () => {
   it.each([
-    ['folder が空', []],
-    ['folder が複数', [folder('API', activeLinkUri), folder('Web', 'file:///web' as UriString)]],
-    ['URI が不一致', [folder('API', 'file:///projects/api' as UriString)]],
-    ['表示名が不一致', [folder('Web', activeLinkUri)]],
-  ])('%sなら active link folder 一件へ修復する', async (_case, currentFolders) => {
+    ['folder が空', [], false],
+    [
+      'folder が複数',
+      [folder('API', activeLinkUri), folder('Web', 'file:///web' as UriString)],
+      false,
+    ],
+    ['URI が不一致', [folder('API', 'file:///projects/api' as UriString)], false],
+    ['表示名が不一致', [folder('Web', activeLinkUri)], false],
+    ['参照先変更時に表示名が不一致', [folder('Web', activeLinkUri)], true],
+  ])('%sなら active link folder 一件へ修復する', async (_case, currentFolders, targetChanged) => {
     const h = createHarness(currentFolders);
 
-    await expect(h.viewRebind.rebindActiveFolder(activeLane)).resolves.toBe(true);
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, targetChanged)).resolves.toBe(true);
 
     expect(h.applyMutation).toHaveBeenCalledOnce();
     expect(h.applyMutation).toHaveBeenCalledWith({
@@ -55,19 +60,46 @@ describe('createWorkspaceViewRebind', () => {
     expect(h.rebindGitRepository).toHaveBeenCalledWith(activeLane);
   });
 
-  it('folder 構成が一致すれば mutation を省略する', async () => {
+  it('参照先が不変で folder 構成が一致すれば mutation を省略する', async () => {
     const h = createHarness([folder(activeLane.label, activeLinkUri)]);
 
-    await expect(h.viewRebind.rebindActiveFolder(activeLane)).resolves.toBe(true);
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, false)).resolves.toBe(true);
 
     expect(h.applyMutation).not.toHaveBeenCalled();
     expect(h.rebindGitRepository).toHaveBeenCalledOnce();
   });
 
+  it('参照先が変わり folder 構成が一致すれば一時名を経由して folder 変更を発生させる', async () => {
+    const boundFolders = [folder(activeLane.label, activeLinkUri)];
+    const transientFolders = [folder('API (/projects/api)', activeLinkUri)];
+    const h = createHarness(boundFolders);
+
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, true)).resolves.toBe(true);
+
+    expect(h.applyMutation.mock.calls).toEqual([
+      [{ expectedFolders: boundFolders, start: 0, deleteCount: 1, folders: transientFolders }],
+      [{ expectedFolders: transientFolders, start: 0, deleteCount: 1, folders: boundFolders }],
+    ]);
+    expect(h.rebindGitRepository).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['一時名への変更', [false]],
+    ['表示名の復元', [true, false]],
+  ])('%sの拒否を返して Git 再走査へ進まない', async (_case, results) => {
+    const h = createHarness([folder(activeLane.label, activeLinkUri)]);
+    for (const result of results) h.applyMutation.mockResolvedValueOnce(result);
+
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, true)).resolves.toBe(false);
+
+    expect(h.applyMutation).toHaveBeenCalledTimes(results.length);
+    expect(h.rebindGitRepository).not.toHaveBeenCalled();
+  });
+
   it('workspace mutation の拒否を返して Git 再走査へ進まない', async () => {
     const h = createHarness([folder('Web', activeLinkUri)], false);
 
-    await expect(h.viewRebind.rebindActiveFolder(activeLane)).resolves.toBe(false);
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, false)).resolves.toBe(false);
 
     expect(h.rebindGitRepository).not.toHaveBeenCalled();
   });
@@ -76,7 +108,7 @@ describe('createWorkspaceViewRebind', () => {
     const failure = new Error('mutation failed');
     const h = createHarness([folder('Web', activeLinkUri)], failure);
 
-    await expect(h.viewRebind.rebindActiveFolder(activeLane)).rejects.toBe(failure);
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, false)).rejects.toBe(failure);
 
     expect(h.rebindGitRepository).not.toHaveBeenCalled();
   });
@@ -85,6 +117,6 @@ describe('createWorkspaceViewRebind', () => {
     const h = createHarness([folder('Web', activeLinkUri)]);
     h.rebindGitRepository.mockRejectedValueOnce(new Error('Git unavailable'));
 
-    await expect(h.viewRebind.rebindActiveFolder(activeLane)).resolves.toBe(true);
+    await expect(h.viewRebind.rebindActiveFolder(activeLane, false)).resolves.toBe(true);
   });
 });

@@ -138,7 +138,7 @@ export const createLaneFocusTransaction = (
         failures.push(error);
       }
       try {
-        const rebound = await viewRebind.rebindActiveFolder(source);
+        const rebound = await viewRebind.rebindActiveFolder(source, true);
         if (!rebound) failures.push(new Error('workspace-folder-rollback-rejected'));
       } catch (error) {
         failures.push(error);
@@ -178,7 +178,7 @@ export const createLaneFocusTransaction = (
         link.swap(swap.to);
       }
 
-      const rebound = await viewRebind.rebindActiveFolder(target);
+      const rebound = await viewRebind.rebindActiveFolder(target, swap !== undefined);
       if (!rebound) throw new Error('workspace-folder-mutation-rejected');
       if (commitPrepared) {
         try {

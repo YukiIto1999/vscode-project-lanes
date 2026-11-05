@@ -276,6 +276,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.linkSwap).not.toHaveBeenCalled();
     expect(h.viewRebind).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'api', rootPath: '/repo/api' }),
+      false,
     );
     expect(h.selectionSave).toHaveBeenCalledWith(workspaceKey, 'api');
   });
@@ -296,6 +297,10 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('api');
     expect(h.linkSwap).toHaveBeenCalledOnce();
     expect(h.linkSwap).toHaveBeenCalledWith('/repo/api');
+    expect(h.viewRebind).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'api', rootPath: '/repo/api' }),
+      true,
+    );
     expect(h.selectionSave).not.toHaveBeenCalled();
   });
 
@@ -454,7 +459,7 @@ describe('createLaneService active lane reconciliation', () => {
     expect(h.service.snapshot().activeLaneId).toBe('api');
     expect(h.currentLinkTarget()).toBe('/repo/api');
     expect(h.editorRestore).toHaveBeenCalledWith(sourceSnapshot);
-    expect(h.viewRebind).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'api' }));
+    expect(h.viewRebind).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'api' }), true);
     expect(h.selectionSave).not.toHaveBeenCalled();
   });
 
@@ -574,7 +579,7 @@ describe('createLaneService active lane reconciliation', () => {
 
     expect(h.linkSwap).not.toHaveBeenCalled();
     expect(h.viewRebind).toHaveBeenCalledOnce();
-    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web' }));
+    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web' }), false);
   });
 
   it('view mutation が false なら link を旧 target へ戻して reject する', async () => {
@@ -909,7 +914,10 @@ describe('createLaneService operation queue', () => {
     ]);
     expect(h.service.snapshot().activeLaneId).toBe('web');
     expect(h.selectionSave).not.toHaveBeenCalled();
-    expect(h.viewRebind).toHaveBeenCalledWith(expect.objectContaining({ id: 'web', label: 'api' }));
+    expect(h.viewRebind).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'web', label: 'api' }),
+      false,
+    );
   });
 
   it('rename 後に service を再生成しても同じ LaneId と新 label を復元する', async () => {
@@ -1263,6 +1271,7 @@ describe('createLaneService relocation', () => {
     expect(h.linkSwap).toHaveBeenCalledWith('/moved/web');
     expect(h.viewRebind).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'web', rootPath: '/moved/web' }),
+      true,
     );
     expect(h.service.snapshot().activeLaneId).toBe('web');
   });
@@ -1312,6 +1321,7 @@ describe('createLaneService relocation', () => {
     expect(h.currentLinkTarget()).toBe('/repo/web');
     expect(h.viewRebind).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'web', rootPath: '/repo/web' }),
+      true,
     );
   });
 
@@ -1358,6 +1368,7 @@ describe('createLaneService relocation', () => {
     expect(h.editorRestore).toHaveBeenCalledOnce();
     expect(h.viewRebind).toHaveBeenLastCalledWith(
       expect.objectContaining({ id: 'web', rootPath: '/repo/web' }),
+      true,
     );
   });
 

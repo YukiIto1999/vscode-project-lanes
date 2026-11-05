@@ -134,8 +134,10 @@ const createHarness = ({
       currentLinkTarget = undefined;
     },
   };
+  const rebindCalls: Array<readonly [AbsolutePath, boolean]> = [];
   const viewRebind: LaneViewRebindPort = {
-    rebindActiveFolder: async (activeLane) => {
+    rebindActiveFolder: async (activeLane, targetChanged) => {
+      rebindCalls.push([activeLane.rootPath, targetChanged]);
       const source = activeLane.rootPath === sourceLane.rootPath;
       events.push(source ? 'view:web' : 'view:api');
       if (source && failing.has('source-rebind')) throw errors.sourceRebind;
@@ -186,6 +188,7 @@ const createHarness = ({
   return {
     transaction,
     events,
+    rebindCalls,
     failing,
     errors,
     currentActiveLaneId: () => currentActiveLaneId,
@@ -235,6 +238,33 @@ describe('createLaneFocusTransaction', () => {
     ]);
     expect(h.currentActiveLaneId()).toBe(targetLane.id);
     expect(h.currentLinkTarget()).toBe(targetLane.rootPath);
+  });
+
+  it('link を入れ替えた切替は参照先変更として view を再構成する', async () => {
+    const h = createHarness();
+
+    await h.transaction.focus(targetLane.id);
+
+    expect(h.rebindCalls).toEqual([[targetLane.rootPath, true]]);
+  });
+
+  it('rollback は source への link 復元を参照先変更として view を再構成する', async () => {
+    const h = createHarness({ failures: ['target-rebind-false'] });
+
+    await h.transaction.focus(targetLane.id);
+
+    expect(h.rebindCalls).toEqual([
+      [targetLane.rootPath, true],
+      [sourceLane.rootPath, true],
+    ]);
+  });
+
+  it('active root relocation は同じ lane でも参照先変更として view を再構成する', async () => {
+    const h = createHarness();
+
+    await h.transaction.relocateActive(sourceLane, relocatedSourceLane, async () => {});
+
+    expect(h.rebindCalls).toEqual([[relocatedSourceLane.rootPath, true]]);
   });
 
   it('link target と一致する source が無ければ tabs を閉じず reconciliation を要求する', async () => {
