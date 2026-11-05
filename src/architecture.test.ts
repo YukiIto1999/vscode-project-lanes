@@ -385,6 +385,20 @@ describe('ターミナル設定の可逆所有境界', () => {
     expect(bootstrap).not.toContain('setDefaultTerminalProfile');
   });
 
+  it('managed runtime は旧版設定の選択を待たずに起動し、反映失敗を共通失敗境界へ渡す', () => {
+    const managedRuntime = bootstrap.slice(
+      bootstrap.indexOf('const createManagedRuntime'),
+      bootstrap.indexOf('export const bootstrapRuntime'),
+    );
+    expect(managedRuntime).toContain(
+      'void runAsyncBoundary(() => terminalSettingsActivation.legacyDecision, reportAsyncFailure);',
+    );
+    expect(managedRuntime).not.toMatch(/await\s+terminalSettingsActivation\.legacyDecision/);
+    expect(managedRuntime.indexOf('terminalSettingsActivation.legacyDecision')).toBeLessThan(
+      managedRuntime.indexOf('const commands: ManagedCommandHandlers'),
+    );
+  });
+
   it('workspace adapter は terminal.integrated 設定を書き換えない', () => {
     expect(workspaceAdapter).not.toContain('defaultProfile.');
     expect(workspaceAdapter).not.toContain('enablePersistentSessions');

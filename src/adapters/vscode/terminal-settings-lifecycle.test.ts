@@ -11,6 +11,7 @@ import {
 } from './terminal-settings-lifecycle';
 
 const PROFILE_TITLE = 'Lane Terminal';
+const settledActivation = async () => ({ legacyDecision: Promise.resolve() });
 
 const deferred = () => {
   let resolve!: () => void;
@@ -27,7 +28,7 @@ describe('createTerminalSettingsLifecycle', () => {
     const register = vi.fn();
     const lifecycle = createTerminalSettingsLifecycle({
       lease: {
-        activate: async () => {},
+        activate: settledActivation,
         release: async () => {},
       },
       register,
@@ -39,6 +40,24 @@ describe('createTerminalSettingsLifecycle', () => {
 
     expect(register).toHaveBeenCalledWith(lifecycle);
     await activation;
+  });
+
+  it('旧版設定の選択を待たずに完了し、選択待ちを呼出元へ渡す', async () => {
+    const legacyDecision = new Promise<void>(() => {});
+    const lifecycle = createTerminalSettingsLifecycle({
+      lease: {
+        activate: async () => ({ legacyDecision }),
+        release: async () => {},
+      },
+      register: vi.fn(),
+      unregister: vi.fn(),
+      reportReleaseFailure: vi.fn(),
+    });
+
+    const activation = await lifecycle.activate(PROFILE_TITLE);
+
+    expect(activation.legacyDecision).toBe(legacyDecision);
+    await expect(lifecycle.release()).resolves.toBeUndefined();
   });
 
   it('設定反映後の owned state 保存失敗時に元の設定へ戻して登録を解除する', async () => {
@@ -126,6 +145,7 @@ describe('createTerminalSettingsLifecycle', () => {
       lease: {
         activate: async () => {
           calls.push('activate');
+          return settledActivation();
         },
         release: async () => {
           calls.push('release');
@@ -158,7 +178,7 @@ describe('createTerminalSettingsLifecycle', () => {
     const registered = new Set<TerminalSettingsLifecycle>();
     const lifecycle = createTerminalSettingsLifecycle({
       lease: {
-        activate: async () => {},
+        activate: settledActivation,
         release: async () => {
           releaseCount += 1;
           if (releaseCount === 1) await releasing.promise;
@@ -190,6 +210,7 @@ describe('createTerminalSettingsLifecycle', () => {
       lease: {
         activate: async () => {
           calls.push('activate');
+          return settledActivation();
         },
         release: async () => {
           calls.push('release');
@@ -270,7 +291,7 @@ describe('createTerminalSettingsLifecycle', () => {
     let releaseCount = 0;
     const lifecycle = createTerminalSettingsLifecycle({
       lease: {
-        activate: async () => {},
+        activate: settledActivation,
         release: async () => {
           releaseCount += 1;
           if (releaseCount === 1) throw failure;

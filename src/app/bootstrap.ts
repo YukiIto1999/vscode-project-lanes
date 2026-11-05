@@ -453,7 +453,9 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
         },
       }),
     );
-    await terminalSettings.activate(laneProfile.title);
+    const terminalSettingsActivation = await terminalSettings.activate(laneProfile.title);
+    // 旧版設定の選択は応答時に反映し、runtime の起動と lane command を応答待ちにしない
+    void runAsyncBoundary(() => terminalSettingsActivation.legacyDecision, reportAsyncFailure);
 
     const commands: ManagedCommandHandlers = {
       'projectLanes.addFolder': async () => {

@@ -11,6 +11,8 @@ const POLL_INTERVAL_MS = 100;
 const POLL_TIMEOUT_MS = 12_000;
 const WORKSPACE_FIXTURE = 'legacy-terminal-prompt.code-workspace';
 
+const isCancellation = (error) => error instanceof Error && error.message.includes('Canceled');
+
 const waitFor = async (
   assertion,
   {
@@ -49,6 +51,16 @@ const readPhase = (environment) => {
 
 const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 
+const waitForSettlement = async (promise, message, timing) => {
+  let settled = false;
+  const observed = Promise.resolve(promise).finally(() => {
+    settled = true;
+  });
+  observed.catch(() => {});
+  await waitFor(() => assert.equal(settled, true, message), timing);
+  return observed;
+};
+
 const isProcessAlive = (processApi, pid) => {
   try {
     processApi.kill(pid, 0);
@@ -76,23 +88,33 @@ const run = async ({
 
   const extension = resolvedVscodeApi.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension, `Extension not found: ${EXTENSION_ID}`);
-  // 旧版設定の確認は利用者が答えるまで閉じないため、activation の完了を前提にしない
+  // 旧版設定の確認は利用者が答えるまで閉じないため、確認前の状態は activation の完了を待たずに検証する
   const activation = Promise.resolve(extension.activate());
   activation.catch(() => {});
 
   const workspaceDirectory = path.dirname(workspaceFile.fsPath);
   const activeLink = deriveWorkspaceAnchor(workspaceFile).activeLinkPath;
   const laneA = path.join(workspaceDirectory, 'lane-a');
-  await waitFor(
-    () => {
-      const folders = resolvedVscodeApi.workspace.workspaceFolders;
-      assert.equal(folders?.length, 1, 'Expected one active workspace folder');
-      assert.equal(path.resolve(folders[0].uri.fsPath), activeLink);
-      assert.equal(path.resolve(fileSystem.realpathSync(activeLink)), laneA);
-    },
-    { delay, now },
-  );
+  const laneB = path.join(workspaceDirectory, 'lane-b');
+  const waitForActiveLane = (expectedTarget) =>
+    waitFor(
+      () => {
+        const folders = resolvedVscodeApi.workspace.workspaceFolders;
+        assert.equal(folders?.length, 1, 'Expected one active workspace folder');
+        assert.equal(path.resolve(folders[0].uri.fsPath), activeLink);
+        assert.equal(path.resolve(fileSystem.realpathSync(activeLink)), expectedTarget);
+      },
+      { delay, now },
+    );
+  await waitForActiveLane(laneA);
   if (phase === 'bootstrap') {
+    // 初期化後の extension host 再起動をこの launch 内で済ませ、確認待ちの launch へ持ち越さない
+    try {
+      await activation;
+    } catch (error) {
+      if (!isCancellation(error)) throw error;
+    }
+    await waitForActiveLane(laneA);
     log('E2E PASS: legacy terminal prompt workspace initialized');
     return;
   }
@@ -142,7 +164,49 @@ const run = async ({
     { delay, now },
   );
   assertLegacyPromptPending();
-  log('E2E PASS: closing Lane Terminal during the legacy prompt ended its shell');
+
+  await waitForSettlement(
+    activation,
+    'Extension activation waited for the legacy settings answer',
+    { delay, now },
+  );
+  assertLegacyPromptPending();
+  await waitForSettlement(
+    resolvedVscodeApi.commands.executeCommand('projectLanes.switchLane', 'lane-b'),
+    'Switch Lane waited for the legacy settings answer',
+    { delay, now },
+  );
+  await waitForActiveLane(laneB);
+  assertLegacyPromptPending();
+
+  const pause =
+    delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const clock = now ?? (() => Date.now());
+  const deadline = clock() + POLL_TIMEOUT_MS;
+  while (terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue === false) {
+    if (clock() > deadline) throw new Error('Timed out while selecting Remove Legacy Settings');
+    await resolvedVscodeApi.commands.executeCommand('notifications.focusToasts');
+    await resolvedVscodeApi.commands.executeCommand('notification.acceptPrimaryAction');
+    await pause(POLL_INTERVAL_MS);
+  }
+  await waitFor(
+    () => {
+      assert.equal(
+        terminalConfiguration.inspect('enablePersistentSessions')?.workspaceValue,
+        undefined,
+        'Remove Legacy Settings kept the persistence override',
+      );
+      assert.equal(
+        terminalConfiguration.inspect('defaultProfile.linux')?.workspaceValue,
+        'Lane Terminal',
+        'Remove Legacy Settings did not reacquire the Lane Terminal default profile',
+      );
+    },
+    { delay, now },
+  );
+  log(
+    'E2E PASS: the legacy prompt left Lane Terminal close, activation, and lane commands responsive',
+  );
 };
 
 module.exports = { run };

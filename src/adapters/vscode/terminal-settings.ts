@@ -95,13 +95,24 @@ export interface TerminalSettingsLeaseDeps {
   ) => Promise<TerminalSettingsLegacyChoice | undefined>;
 }
 
+/** ターミナル設定 lease の所有開始結果 */
+export interface TerminalSettingsActivation {
+  /**
+   * 旧版設定への利用者選択と、それに続く既定プロファイル取得の反映完了
+   *
+   * 利用者が選択するまで完了しないため、所有開始の完了とは分けて扱う
+   */
+  readonly legacyDecision: Promise<void>;
+}
+
 /** ターミナル設定 lease */
 export interface TerminalSettingsLease {
   /**
    * 既定プロファイルの一時所有開始
    * @param profileTitle - Lane Terminal の公開 title
+   * @returns 旧版設定の選択待ちを含む所有開始結果
    */
-  readonly activate: (profileTitle: string) => Promise<void>;
+  readonly activate: (profileTitle: string) => Promise<TerminalSettingsActivation>;
   /** 所有中の既定プロファイル復元 */
   readonly release: () => Promise<void>;
 }
@@ -223,13 +234,18 @@ export const createTerminalSettingsLease = (
   const parsed = parseEnvelope(deps.workspaceState.get<unknown>(TERMINAL_SETTINGS_STATE_KEY));
   if (parsed.kind === 'protected') {
     return {
-      activate: async () => {},
+      activate: async () => ({ legacyDecision: Promise.resolve() }),
       release: async () => {},
     };
   }
 
   let envelope = parsed.value;
   let queue = Promise.resolve();
+  const currentPlatformKey = terminalProfileTarget(deps.platform).platformKey;
+  /** 所有中の runtime が要求した profile title。release 後は undefined */
+  let activeProfileTitle: string | undefined;
+  /** 応答待ちの旧版設定選択。再 activate は同じ選択を待つ */
+  let pendingLegacyDecision: Promise<void> | undefined;
 
   const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
     const running = queue.then(operation, operation);
@@ -351,17 +367,31 @@ export const createTerminalSettingsLease = (
       deps.configuration.inspectWorkspaceValue(TERMINAL_PERSISTENCE_KEY) === false,
   });
 
-  const migrateLegacySettings = async (): Promise<void> => {
-    if (envelope.legacyDecision !== undefined) return;
+  /**
+   * 未決の旧版設定の検出
+   * @returns 利用者の選択を要する一致候補。判定済みまたは一致なしなら undefined
+   */
+  const scanLegacySettings = async (): Promise<TerminalSettingsLegacyCandidates | undefined> => {
+    if (envelope.legacyDecision !== undefined) return undefined;
 
     const candidates = inspectLegacyCandidates();
     if (!candidates.defaultProfile && !candidates.persistentSessions) {
       await persist({ ...envelope, legacyDecision: 'scanned' });
-      return;
+      return undefined;
     }
+    return candidates;
+  };
 
-    const choice = await deps.chooseLegacyAction(candidates);
-    if (choice === undefined) return;
+  /**
+   * 旧版設定への利用者選択の反映
+   * @param candidates - 選択を求めた時点の一致候補
+   * @param choice - 利用者の選択。dismiss は undefined
+   */
+  const applyLegacyChoice = async (
+    candidates: TerminalSettingsLegacyCandidates,
+    choice: TerminalSettingsLegacyChoice | undefined,
+  ): Promise<void> => {
+    if (choice === undefined || envelope.legacyDecision !== undefined) return;
     if (choice === 'remove') {
       if (candidates.defaultProfile) {
         await releasePlatform('linux');
@@ -411,17 +441,59 @@ export const createTerminalSettingsLease = (
     await persist({ ...envelope, legacyDecision: 'kept' });
   };
 
+  const releaseAllPlatforms = async (): Promise<void> => {
+    for (const platformKey of ['linux', 'osx', 'windows'] as const) {
+      await releasePlatform(platformKey);
+    }
+  };
+
+  /** 選択反映後の lease を runtime の所有状態へ合わせる */
+  const settleLease = async (): Promise<void> => {
+    if (activeProfileTitle === undefined) {
+      // 応答前に runtime が止まった場合、Manage で採用した値も所有終了として戻す
+      await releaseAllPlatforms();
+      return;
+    }
+    await acquirePlatform(currentPlatformKey, activeProfileTitle);
+  };
+
+  /**
+   * 旧版設定の選択待ちと応答時の反映
+   * @param candidates - 選択を求める一致候補
+   */
+  const awaitLegacyDecision = async (
+    candidates: TerminalSettingsLegacyCandidates,
+  ): Promise<void> => {
+    let choice: TerminalSettingsLegacyChoice | undefined;
+    try {
+      choice = await deps.chooseLegacyAction(candidates);
+    } finally {
+      // 応答は lease の操作順に反映し、表示に失敗した場合も dismiss と同じく lease を取得する
+      await enqueue(async () => {
+        pendingLegacyDecision = undefined;
+        await applyLegacyChoice(candidates, choice);
+        await settleLease();
+      });
+    }
+  };
+
   return {
-    activate: (profileTitle) =>
-      enqueue(async () => {
-        await migrateLegacySettings();
-        await acquirePlatform(terminalProfileTarget(deps.platform).platformKey, profileTitle);
-      }),
+    activate: async (profileTitle) => {
+      const candidates = await enqueue(async () => {
+        activeProfileTitle = profileTitle;
+        const pending = await scanLegacySettings();
+        // 選択に応じて previous と書込順が決まるため、未決の間は取得を応答の反映まで延ばす
+        if (pending === undefined) await acquirePlatform(currentPlatformKey, profileTitle);
+        return pending;
+      });
+      if (candidates === undefined) return { legacyDecision: Promise.resolve() };
+      pendingLegacyDecision ??= awaitLegacyDecision(candidates);
+      return { legacyDecision: pendingLegacyDecision };
+    },
     release: () =>
       enqueue(async () => {
-        for (const platformKey of ['linux', 'osx', 'windows'] as const) {
-          await releasePlatform(platformKey);
-        }
+        activeProfileTitle = undefined;
+        await releaseAllPlatforms();
       }),
   };
 };

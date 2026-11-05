@@ -1,13 +1,14 @@
 import type { Disposable } from '../../foundation/model';
-import type { TerminalSettingsLease } from './terminal-settings';
+import type { TerminalSettingsActivation, TerminalSettingsLease } from './terminal-settings';
 
 /** runtime 間で共有するターミナル設定 lifecycle */
 export interface TerminalSettingsLifecycle extends Disposable {
   /**
    * runtime の設定所有開始
    * @param profileTitle - Lane Terminal の公開 title
+   * @returns 旧版設定の選択待ちを含む所有開始結果
    */
-  readonly activate: (profileTitle: string) => Promise<void>;
+  readonly activate: (profileTitle: string) => Promise<TerminalSettingsActivation>;
   /** 設定所有の非同期解放 */
   readonly release: () => Promise<void>;
 }
@@ -129,7 +130,7 @@ export const createTerminalSettingsLifecycle = (
       return enqueue(async () => {
         deps.register(lifecycle);
         try {
-          await deps.lease.activate(profileTitle);
+          return await deps.lease.activate(profileTitle);
         } catch (activationError) {
           try {
             await releaseLease();
