@@ -3921,6 +3921,16 @@ test('the editor snapshot restore suite rejects an unknown phase', async () => {
   );
 });
 
+test('editor snapshot restore fixture shares a same-size relative path between lanes', () => {
+  const readFixture = (...segments) =>
+    fs.readFileSync(path.join(editorSnapshotRestoreScenario.fixtureRoot, ...segments));
+  const laneAShared = readFixture('lane-a', 'src', 'shared.txt');
+  const laneBShared = readFixture('lane-b', 'src', 'shared.txt');
+
+  assert.equal(laneAShared.length, laneBShared.length);
+  assert.notDeepEqual(laneAShared, laneBShared);
+});
+
 test('the editor snapshot restore phase requires exactly one tab in each saved column', async () => {
   const { run } = require('./suite/editor-snapshot-persistence.cjs');
   const workspaceDirectory = '/tmp/project-lanes-e2e-editor-snapshot/workspace';

@@ -156,6 +156,10 @@ const run = async ({
   const laneASecondText = fileSystem.readFileSync(path.join(laneA, SECOND_RELATIVE_PATH), 'utf8');
   const laneBSharedText = fileSystem.readFileSync(laneBShared, 'utf8');
   assert.notEqual(laneASharedText, laneBSharedText);
+  assert.equal(Buffer.byteLength(laneASharedText), Buffer.byteLength(laneBSharedText));
+  const sharedModifiedTime = new Date(now?.() ?? Date.now());
+  fileSystem.utimesSync(laneAShared, sharedModifiedTime, sharedModifiedTime);
+  fileSystem.utimesSync(laneBShared, sharedModifiedTime, sharedModifiedTime);
 
   const linkedShared = path.join(activeLink, SHARED_RELATIVE_PATH);
   const linkedSecond = path.join(activeLink, SECOND_RELATIVE_PATH);
@@ -178,7 +182,15 @@ const run = async ({
   await switchLane({ vscodeApi: resolvedVscodeApi, laneLabel: 'lane-a' });
   await waitForWorkspaceState(laneA);
   await waitForRestoredTabs('lane-a snapshot restored after the first switch back', laneATabs);
-  log('E2E PASS: lane snapshot restored every pinned tab in its column');
+
+  await switchLane({ vscodeApi: resolvedVscodeApi, laneLabel: 'lane-b' });
+  await waitForWorkspaceState(laneB);
+  await waitForRestoredTabs('lane-b snapshot restored after the lane-a restore', laneBTabs);
+
+  await switchLane({ vscodeApi: resolvedVscodeApi, laneLabel: 'lane-a' });
+  await waitForWorkspaceState(laneA);
+  await waitForRestoredTabs('lane-a snapshot restored after the lane-b restore', laneATabs);
+  log('E2E PASS: lane snapshots restored every pinned tab with the active lane contents');
 };
 
 module.exports = { readPhase, run, textTabs };
