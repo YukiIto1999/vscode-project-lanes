@@ -1,7 +1,11 @@
 # Project Lanes - zsh 用 .zshrc
 # 役割: 元の .zshrc を委譲ロードした後、コマンド実行境界を OSC 633 で通知する
 
-[[ -n "$LANES_ORIG_ZDOTDIR" && -r "$LANES_ORIG_ZDOTDIR/.zshrc" ]] && source "$LANES_ORIG_ZDOTDIR/.zshrc"
+if [[ -n "$LANES_ORIG_ZDOTDIR" && -r "$LANES_ORIG_ZDOTDIR/.zshrc" ]]; then
+    ZDOTDIR="$LANES_ORIG_ZDOTDIR"
+    source "$ZDOTDIR/.zshrc"
+    ZDOTDIR="$LANES_ZDOTDIR"
+fi
 
 # 入れ子 zsh が元の dotfiles を読むよう ZDOTDIR を復元
 if [[ -n "$LANES_ORIG_ZDOTDIR" ]]; then
