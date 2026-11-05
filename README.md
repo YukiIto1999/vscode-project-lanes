@@ -129,6 +129,7 @@ Every choice keeps the standard terminal **+** button connected to Lane Terminal
 - Activity detection requires `bash` or `zsh` and OSC 633. Other shells such as `fish` and `pwsh` fall back to `no-agent`.
 - Editor restoration covers normal file tabs, not diff views or notebooks.
 - Terminal sessions do not survive a VS Code window reload.
+- VS Code's file watcher stays on the lane that was active when the window opened, because VS Code resolves the symbolic link only once. After you switch lanes, files that other programs, such as a coding agent in a Lane Terminal, create, change, or delete in the active lane are not picked up automatically. Use **Refresh Explorer** to update the tree and **File: Revert File** to reload an unmodified open editor. Edits saved from VS Code are not affected. Changes in the lane that was active at startup may show up at the same relative path in the active lane. Reloading the window moves the watcher to the active lane but ends terminal sessions.
 
 ## License
 
