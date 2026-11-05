@@ -145,6 +145,27 @@ const scenarios = Object.freeze([
     ]),
   }),
   Object.freeze({
+    name: 'foreign-anchor-recovery',
+    fixtureRoot: path.join(__dirname, 'fixtures', 'foreign-anchor-recovery'),
+    workspaceFixture: path.join(
+      __dirname,
+      'fixtures',
+      'foreign-anchor-recovery',
+      'alpha.code-workspace',
+    ),
+    suitePath: path.join(__dirname, 'suite', 'foreign-anchor-recovery.cjs'),
+    launches: Object.freeze([
+      Object.freeze({
+        phase: 'alpha-initialize',
+        workspaceFixtureName: 'alpha.code-workspace',
+      }),
+      Object.freeze({
+        phase: 'copied-recover',
+        workspaceFixtureName: 'copied.code-workspace',
+      }),
+    ]),
+  }),
+  Object.freeze({
     name: 'legacy-anchor-classification',
     fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
     workspaceFixture: path.join(

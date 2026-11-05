@@ -138,6 +138,21 @@ const sameLabelLaneSwitchScenario = {
   suitePath: path.join(__dirname, 'suite', 'same-label-lane-switch.cjs'),
   launches: [{ phase: 'prepare-second-lane' }, { phase: 'switch-same-label' }],
 };
+const foreignAnchorRecoveryScenario = {
+  name: 'foreign-anchor-recovery',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'foreign-anchor-recovery'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'foreign-anchor-recovery',
+    'alpha.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'foreign-anchor-recovery.cjs'),
+  launches: [
+    { phase: 'alpha-initialize', workspaceFixtureName: 'alpha.code-workspace' },
+    { phase: 'copied-recover', workspaceFixtureName: 'copied.code-workspace' },
+  ],
+};
 const legacyAnchorClassificationScenario = {
   name: 'legacy-anchor-classification',
   fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-anchor-classification'),
@@ -308,6 +323,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
     sameLabelLaneSwitchScenario,
+    foreignAnchorRecoveryScenario,
     legacyAnchorClassificationScenario,
   ]);
 });
@@ -949,6 +965,144 @@ test('the switch-same-label phase rejects a retarget without a workspace folder 
   await assert.rejects(
     runSameLabelSwitchPhase({ emitFolderChange: false }),
     /Expected a workspace folder change after retargeting/,
+  );
+});
+
+test('the foreign anchor recovery suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/foreign-anchor-recovery.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+const foreignAnchorPaths = (workspaceDirectory) => ({
+  alphaWorkspace: path.join(workspaceDirectory, 'alpha.code-workspace'),
+  copiedWorkspace: path.join(workspaceDirectory, 'copied.code-workspace'),
+  alphaLink: activeLinkForPath(path.join(workspaceDirectory, 'alpha.code-workspace')),
+  copiedLink: activeLinkForPath(path.join(workspaceDirectory, 'copied.code-workspace')),
+  laneA: path.join(workspaceDirectory, 'lane-a'),
+  laneB: path.join(workspaceDirectory, 'lane-b'),
+});
+
+const activeExtension = {
+  getExtension() {
+    return { isActive: true, async activate() {} };
+  },
+};
+
+test('the alpha-initialize phase copies the workspace with its own active link folder', async () => {
+  const { run } = require('./suite/foreign-anchor-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-foreign-alpha/workspace';
+  const paths = foreignAnchorPaths(workspaceDirectory);
+  const alphaFolderPath = path.relative(workspaceDirectory, paths.alphaLink);
+  const commands = [];
+  const messages = [];
+  const written = new Map();
+  let alphaTarget = paths.laneA;
+  const workspace = {
+    workspaceFile: { fsPath: paths.alphaWorkspace },
+    workspaceFolders: [{ uri: { fsPath: paths.alphaLink }, name: 'lane-a' }],
+  };
+
+  await run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'alpha-initialize' }),
+    },
+    vscodeApi: {
+      workspace,
+      extensions: activeExtension,
+      commands: {
+        async executeCommand(command, laneId) {
+          commands.push([command, laneId]);
+          alphaTarget = paths.laneB;
+          workspace.workspaceFolders = [{ uri: { fsPath: paths.alphaLink }, name: 'lane-b' }];
+        },
+      },
+    },
+    fileSystem: {
+      readlinkSync(target) {
+        assert.equal(target, paths.alphaLink);
+        return alphaTarget;
+      },
+      readFileSync(target) {
+        assert.equal(target, paths.alphaWorkspace);
+        return `{"folders":[{"name":"lane-b","path":${JSON.stringify(alphaFolderPath)}}]}`;
+      },
+      writeFileSync(target, content) {
+        written.set(target, content);
+      },
+    },
+    log(message) {
+      messages.push(message);
+    },
+  });
+
+  assert.deepEqual(commands, [['projectLanes.switchLane', 'lane-b']]);
+  assert.deepEqual(JSON.parse(written.get(paths.copiedWorkspace)), {
+    folders: [{ name: 'lane-b', path: alphaFolderPath }],
+    settings: { 'projectLanes.initializationMode': 'automatic' },
+  });
+  assert.deepEqual(messages, ['E2E PASS: alpha workspace copied with its active link folder']);
+});
+
+const runCopiedRecoverPhase = ({ copiedTarget, now }) => {
+  const { run } = require('./suite/foreign-anchor-recovery.cjs');
+  const workspaceDirectory = '/tmp/project-lanes-e2e-foreign-copied/workspace';
+  const paths = foreignAnchorPaths(workspaceDirectory);
+  const messages = [];
+  const targets = new Map([
+    [paths.alphaLink, paths.laneB],
+    [paths.copiedLink, copiedTarget(paths)],
+  ]);
+
+  return run({
+    environment: {
+      PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'copied-recover' }),
+    },
+    vscodeApi: {
+      workspace: {
+        workspaceFile: { fsPath: paths.copiedWorkspace },
+        workspaceFolders: [{ uri: { fsPath: paths.copiedLink }, name: 'lane-b' }],
+      },
+      extensions: activeExtension,
+    },
+    fileSystem: {
+      readlinkSync(target) {
+        assert.ok(targets.has(target), `Unexpected readlink: ${target}`);
+        return targets.get(target);
+      },
+    },
+    delay: async () => {},
+    now,
+    log(message) {
+      messages.push(message);
+    },
+  }).then(() => messages);
+};
+
+test('the copied-recover phase requires the copied link to target the real lane', async () => {
+  const messages = await runCopiedRecoverPhase({ copiedTarget: (paths) => paths.laneB });
+
+  assert.deepEqual(messages, [
+    'E2E PASS: copied workspace recovered the lane behind the foreign active link',
+  ]);
+});
+
+test('the copied-recover phase rejects a lane rooted at the foreign active link', async () => {
+  let clock = 0;
+
+  await assert.rejects(
+    runCopiedRecoverPhase({
+      copiedTarget: (paths) => paths.alphaLink,
+      now: () => (clock += 20_000),
+    }),
+    /Timed out waiting for foreign anchor recovery/,
   );
 });
 

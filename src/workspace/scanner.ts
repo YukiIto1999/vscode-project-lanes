@@ -1,7 +1,12 @@
 import type { AbsolutePath } from '../foundation/model';
 import { uriToAbsolutePath } from '../foundation/path';
 import { isCanonicalLaneId } from '../lane/model';
-import { classifyWorkspaceFolder, deriveWorkspaceAnchor, type WorkspaceAnchor } from './anchor';
+import {
+  classifyWorkspaceFolder,
+  deriveWorkspaceAnchor,
+  resolveLaneCandidate,
+  type WorkspaceAnchor,
+} from './anchor';
 import type {
   CatalogEntry,
   WorkspaceBootstrapResult,
@@ -9,6 +14,7 @@ import type {
   WorkspaceFolder,
 } from './model';
 import type {
+  AnchorTargetPort,
   CatalogStorePort,
   DirectoryPort,
   LaneIdFactoryPort,
@@ -17,10 +23,12 @@ import type {
 
 /**
  * レーン候補の純粋抽出
+ * 他 workspace の anchor folder は参照先が未登録の利用可能 directory の場合だけ、その参照先を root として残す
  * @param rawFolders - workspaceFolders の現状
  * @param stored - 永続化されたカタログ
  * @param anchor - 現 workspace の新旧 anchor
  * @param laneIdFactory - 新規レーン識別子採番
+ * @param anchorTarget - 他 workspace の anchor folder の参照先解決
  * @returns レーン候補列
  */
 export const collectLaneCandidates = (
@@ -28,6 +36,7 @@ export const collectLaneCandidates = (
   stored: readonly CatalogEntry[] | undefined,
   anchor: WorkspaceAnchor,
   laneIdFactory: LaneIdFactoryPort,
+  anchorTarget: AnchorTargetPort,
 ): readonly CatalogEntry[] => {
   const storedRoots = new Set<AbsolutePath>();
   for (const entry of stored ?? []) {
@@ -39,12 +48,26 @@ export const collectLaneCandidates = (
   }
   for (const folder of rawFolders) uriToAbsolutePath(folder.uri);
 
-  const real = rawFolders.filter((folder) => classifyWorkspaceFolder(folder, anchor) === 'lane');
   const canonicalStored = (stored ?? []).filter(
     (folder) => classifyWorkspaceFolder(folder, anchor) === 'lane',
   );
   const known = new Set(canonicalStored.map((entry) => uriToAbsolutePath(entry.uri)));
   const usedIds = new Set(canonicalStored.map((entry) => entry.id));
+  const recoveredStored: CatalogEntry[] = [];
+  for (const entry of stored ?? []) {
+    if (classifyWorkspaceFolder(entry, anchor) !== 'foreign-anchor') continue;
+    const recovered = resolveLaneCandidate(entry, anchor, anchorTarget);
+    if (!recovered) continue;
+    const rootPath = uriToAbsolutePath(recovered.uri);
+    if (known.has(rootPath)) continue;
+    known.add(rootPath);
+    usedIds.add(recovered.id);
+    recoveredStored.push(recovered);
+  }
+  const real = rawFolders.flatMap((folder) => {
+    const candidate = resolveLaneCandidate(folder, anchor, anchorTarget);
+    return candidate ? [candidate] : [];
+  });
   const additions: CatalogEntry[] = [];
   for (const folder of real) {
     const rootPath = uriToAbsolutePath(folder.uri);
@@ -60,7 +83,7 @@ export const collectLaneCandidates = (
     usedIds.add(id);
     additions.push({ ...folder, id });
   }
-  return [...canonicalStored, ...additions];
+  return [...canonicalStored, ...recoveredStored, ...additions];
 };
 
 /**
@@ -89,6 +112,7 @@ export const collapseFoldersToLink = (
  * @param catalogStore - カタログ永続化ポート
  * @param directory - ディレクトリ操作ポート
  * @param laneIdFactory - 新規レーン識別子採番
+ * @param anchorTarget - 他 workspace の anchor folder の参照先解決
  * @returns ブートストラップ結果
  */
 export const bootstrapWorkspace = async (
@@ -97,11 +121,12 @@ export const bootstrapWorkspace = async (
   catalogStore: CatalogStorePort,
   directory: DirectoryPort,
   laneIdFactory: LaneIdFactoryPort,
+  anchorTarget: AnchorTargetPort,
 ): Promise<WorkspaceBootstrapResult> => {
   const anchor = deriveWorkspaceAnchor(fileInfo);
   const rawFolders = host.readFolders();
   const stored = catalogStore.load();
-  const lanes = collectLaneCandidates(rawFolders, stored, anchor, laneIdFactory);
+  const lanes = collectLaneCandidates(rawFolders, stored, anchor, laneIdFactory, anchorTarget);
 
   if (stored === undefined && lanes.length === 0) {
     return { kind: 'disabled', reason: 'missing-lane-source' };

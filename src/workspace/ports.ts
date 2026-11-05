@@ -1,4 +1,4 @@
-import type { AbsolutePath, LaneId } from '../foundation/model';
+import type { AbsolutePath, LaneId, UriString } from '../foundation/model';
 import type { LaneRootAvailability } from '../lane/model';
 import type { CatalogEntry, FolderMutation, WorkspaceFileInfo, WorkspaceFolder } from './model';
 
@@ -52,6 +52,16 @@ export interface DirectoryPort {
    * @returns 存在化に成功すれば true
    */
   readonly ensureDirectory: (path: AbsolutePath) => boolean;
+}
+
+/** 他 workspace の anchor folder から lane root を復元する参照先解決ポート */
+export interface AnchorTargetPort {
+  /**
+   * anchor folder の symlink 参照先の解決
+   * @param path - anchor folder の絶対パス
+   * @returns 参照先が利用可能なディレクトリならその URI、解決不能なら undefined
+   */
+  readonly resolve: (path: AbsolutePath) => UriString | undefined;
 }
 
 /** レーンルート利用可否の検査ポート */

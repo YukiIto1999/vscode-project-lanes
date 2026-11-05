@@ -25,6 +25,7 @@ import { createTerminalPresentationAdapter } from '../adapters/vscode/terminals'
 import { createTreeViewAdapter } from '../adapters/vscode/tree-view';
 import { createLaneViewRebindAdapter } from '../adapters/vscode/view-rebind';
 import {
+  createAnchorTargetAdapter,
   createDirectoryAdapter,
   createLaneRootAvailabilityAdapter,
   createWorkspaceFileAdapter,
@@ -61,6 +62,7 @@ import type {
   WorkspaceFileInfo,
 } from '../workspace/model';
 import type {
+  AnchorTargetPort,
   CatalogStorePort,
   LaneIdFactoryPort,
   WorkspaceHostPort,
@@ -148,6 +150,7 @@ interface ManagedRuntimeDeps {
   readonly resources: WorkspaceResources;
   readonly catalogStore: CatalogStorePort;
   readonly laneIdFactory: LaneIdFactoryPort;
+  readonly anchorTarget: AnchorTargetPort;
   readonly config: ConfigPort;
   readonly toUri: (path: string) => UriString;
   readonly terminalSettings: TerminalSettingsLifecycle;
@@ -241,6 +244,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
     resources,
     catalogStore,
     laneIdFactory,
+    anchorTarget,
     config,
     toUri,
     terminalSettings,
@@ -393,6 +397,7 @@ const createManagedRuntime = async (deps: ManagedRuntimeDeps): Promise<ManagedRu
       finalizePendingOperations: () => laneService.finalizePendingOperations(),
       anchor,
       linkUri: toUri(link.linkPath),
+      anchorTarget,
     });
     const runtimeReconciler = createRuntimeReconciler({
       reconcileWorkspaceFolders: () => workspaceFolderReconciler.reconcileWorkspaceFolders(),
@@ -531,6 +536,7 @@ export const bootstrapRuntime = async (
   const directory = createDirectoryAdapter();
   const catalogStore = createCatalogStoreAdapter(context.workspaceState);
   const laneIdFactory: LaneIdFactoryPort = { next: () => toLaneId(randomUUID()) };
+  const anchorTarget = createAnchorTargetAdapter();
   const terminalSettings = createTerminalSettingsLifecycle({
     lease: createTerminalSettingsLeaseAdapter(context.workspaceState, process.platform),
     register: (lifecycle) => activeTerminalSettingsLifecycles.add(lifecycle),
@@ -580,6 +586,7 @@ export const bootstrapRuntime = async (
         catalogStore,
         directory,
         laneIdFactory,
+        anchorTarget,
       );
       if (result.kind === 'disabled') return result;
 
@@ -597,6 +604,7 @@ export const bootstrapRuntime = async (
         resources,
         catalogStore,
         laneIdFactory,
+        anchorTarget,
         config,
         toUri,
         terminalSettings,

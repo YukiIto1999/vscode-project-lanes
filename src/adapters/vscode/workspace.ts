@@ -3,6 +3,7 @@ import type { AbsolutePath, UriString } from '../../foundation/model';
 import { uriToAbsolutePath } from '../../foundation/path';
 import type { FolderMutation, WorkspaceFolder } from '../../workspace/model';
 import type {
+  AnchorTargetPort,
   DirectoryPort,
   LaneRootAvailabilityPort,
   WorkspaceFilePort,
@@ -113,3 +114,24 @@ export const createLaneRootAvailabilityAdapter = (): LaneRootAvailabilityPort =>
     access: (path, mode) => fs.accessSync(path, mode),
     readExecuteAccessMode: fs.constants.R_OK | fs.constants.X_OK,
   });
+
+/**
+ * 他 workspace の anchor folder の参照先解決アダプターの生成
+ * @returns symlink 1 段の参照先が利用可能な directory なら、その URI を返す参照先解決ポート
+ */
+export const createAnchorTargetAdapter = (): AnchorTargetPort => {
+  const rootAvailability = createLaneRootAvailabilityAdapter();
+  return {
+    resolve: (path) => {
+      let target: string;
+      try {
+        target = fs.readlinkSync(path);
+      } catch {
+        return undefined;
+      }
+      const targetPath = nodePath.resolve(nodePath.dirname(path), target) as AbsolutePath;
+      if (rootAvailability.inspect(targetPath) !== 'available') return undefined;
+      return vscode.Uri.file(targetPath).toString() as UriString;
+    },
+  };
+};

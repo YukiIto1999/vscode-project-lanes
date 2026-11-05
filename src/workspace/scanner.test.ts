@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { AbsolutePath, LaneId, UriString } from '../foundation/model';
 import type { CatalogEntry, WorkspaceFileInfo, WorkspaceFolder } from './model';
-import type { CatalogStorePort, DirectoryPort, WorkspaceHostPort } from './ports';
+import type { AnchorTargetPort, CatalogStorePort, DirectoryPort, WorkspaceHostPort } from './ports';
 import { deriveWorkspaceAnchor } from './anchor';
 import { bootstrapWorkspace, collapseFoldersToLink, collectLaneCandidates } from './scanner';
 
@@ -38,6 +38,17 @@ const fileInfo: WorkspaceFileInfo = {
 const anchor = deriveWorkspaceAnchor(fileInfo);
 const linkPath = anchor.activeLinkPath;
 const linkFolder = mkFolder('web', linkPath);
+const noAnchorTarget: AnchorTargetPort = { resolve: () => undefined };
+const anchorTargets = (targets: Readonly<Record<string, string>>): AnchorTargetPort => ({
+  resolve: (path) => {
+    const target = targets[path];
+    return target === undefined ? undefined : toUri(target);
+  },
+});
+const otherAnchor = deriveWorkspaceAnchor({
+  uri: toUri('/home/user/other.code-workspace'),
+  directoryPath: '/home/user' as AbsolutePath,
+});
 
 const deferred = () => {
   let resolve!: () => void;
@@ -62,16 +73,22 @@ describe('collectLaneCandidates', () => {
       linkFolder,
       mkFolder('web', '/home/user/web'),
     ];
-    expect(collectLaneCandidates(raw, undefined, anchor, idFactory('web'))).toEqual([
-      mkEntry('web', 'web', '/home/user/web'),
-    ]);
+    expect(collectLaneCandidates(raw, undefined, anchor, idFactory('web'), noAnchorTarget)).toEqual(
+      [mkEntry('web', 'web', '/home/user/web')],
+    );
   });
 
   it('表示名が `.lanes-root` の実レーンを候補に残す', () => {
     const realLane = mkFolder('.lanes-root', '/home/user/projects/.lanes-root');
-    expect(collectLaneCandidates([realLane], undefined, anchor, idFactory('.lanes-root'))).toEqual([
-      mkEntry('.lanes-root', '.lanes-root', '/home/user/projects/.lanes-root'),
-    ]);
+    expect(
+      collectLaneCandidates(
+        [realLane],
+        undefined,
+        anchor,
+        idFactory('.lanes-root'),
+        noAnchorTarget,
+      ),
+    ).toEqual([mkEntry('.lanes-root', '.lanes-root', '/home/user/projects/.lanes-root')]);
   });
 
   it('stored あれば stored を正本とし、rawFolders の追加を吸収', () => {
@@ -81,9 +98,11 @@ describe('collectLaneCandidates', () => {
       mkFolder('api', '/home/user/api'),
       mkFolder('new', '/home/user/new'),
     ];
-    expect(collectLaneCandidates(raw, stored, anchor, idFactory('new')).map((f) => f.name)).toEqual(
-      ['web', 'api', 'new'],
-    );
+    expect(
+      collectLaneCandidates(raw, stored, anchor, idFactory('new'), noAnchorTarget).map(
+        (f) => f.name,
+      ),
+    ).toEqual(['web', 'api', 'new']);
   });
 
   it('stored に誤登録された旧アンカーを除外し、同名の実レーンは残す', () => {
@@ -92,22 +111,21 @@ describe('collectLaneCandidates', () => {
       mkEntry('anchor', 'renamed-anchor', '/home/user/.lanes-root'),
       mkEntry('real', realLane.name, '/home/user/projects/.lanes-root'),
     ];
-    expect(collectLaneCandidates([linkFolder], contaminatedStored, anchor, idFactory())).toEqual([
-      mkEntry('real', realLane.name, '/home/user/projects/.lanes-root'),
-    ]);
+    expect(
+      collectLaneCandidates([linkFolder], contaminatedStored, anchor, idFactory(), noAnchorTarget),
+    ).toEqual([mkEntry('real', realLane.name, '/home/user/projects/.lanes-root')]);
   });
 
   it('rawFolders が symlink folder のみなら stored そのまま', () => {
     const raw = [linkFolder];
-    expect(collectLaneCandidates(raw, stored, anchor, idFactory())).toEqual(stored);
+    expect(collectLaneCandidates(raw, stored, anchor, idFactory(), noAnchorTarget)).toEqual(stored);
   });
 
   it('stored が空でも rawFolders の通常 folder を候補にする', () => {
     const raw = [mkFolder('web', '/home/user/web'), mkFolder('api', '/home/user/api')];
-    expect(collectLaneCandidates(raw, [], anchor, idFactory('web', 'api'))).toEqual([
-      mkEntry('web', 'web', '/home/user/web'),
-      mkEntry('api', 'api', '/home/user/api'),
-    ]);
+    expect(collectLaneCandidates(raw, [], anchor, idFactory('web', 'api'), noAnchorTarget)).toEqual(
+      [mkEntry('web', 'web', '/home/user/web'), mkEntry('api', 'api', '/home/user/api')],
+    );
   });
 
   it('stored ID を維持し、同名の新規 root だけに factory ID を割り当てる', () => {
@@ -120,6 +138,7 @@ describe('collectLaneCandidates', () => {
         [storedEntry],
         anchor,
         idFactory(newId),
+        noAnchorTarget,
       ),
     ).toEqual([storedEntry, mkEntry(newId, 'same', '/home/user/api')]);
   });
@@ -134,6 +153,7 @@ describe('collectLaneCandidates', () => {
         ],
         anchor,
         idFactory(),
+        noAnchorTarget,
       ),
     ).toThrow(/duplicate lane root/i);
   });
@@ -148,6 +168,7 @@ describe('collectLaneCandidates', () => {
         ],
         anchor,
         idFactory(),
+        noAnchorTarget,
       ),
     ).toThrow(/duplicate lane root/i);
   });
@@ -162,6 +183,7 @@ describe('collectLaneCandidates', () => {
         ],
         anchor,
         idFactory(),
+        noAnchorTarget,
       ),
     ).toThrow(/duplicate lane root/i);
   });
@@ -178,6 +200,7 @@ describe('collectLaneCandidates', () => {
         undefined,
         anchor,
         allocated,
+        noAnchorTarget,
       ),
     ).toEqual([mkEntry('web', 'encoded', '/home/user/my%20project')]);
     expect(() => allocated.next()).toThrow(/unexpected LaneId allocation/);
@@ -192,9 +215,69 @@ describe('collectLaneCandidates', () => {
         undefined,
         anchor,
         allocated,
+        noAnchorTarget,
       ),
     ).toEqual([mkEntry('web', 'with-slash', '/home/user/web/')]);
     expect(() => allocated.next()).toThrow(/unexpected LaneId allocation/);
+  });
+
+  it('Save As で残った別 workspace の active link は既知 lane へ解決して phantom にしない', () => {
+    const copiedLink = mkFolder('web', otherAnchor.activeLinkPath);
+
+    expect(
+      collectLaneCandidates(
+        [copiedLink],
+        stored,
+        anchor,
+        idFactory(),
+        anchorTargets({ [otherAnchor.activeLinkPath]: '/home/user/web' }),
+      ),
+    ).toEqual(stored);
+  });
+
+  it('catalog に無い別 workspace の active link は参照先 directory を lane として復元する', () => {
+    expect(
+      collectLaneCandidates(
+        [mkFolder('web', otherAnchor.activeLinkPath)],
+        undefined,
+        anchor,
+        idFactory('web'),
+        anchorTargets({ [otherAnchor.activeLinkPath]: '/home/user/web' }),
+      ),
+    ).toEqual([mkEntry('web', 'web', '/home/user/web')]);
+  });
+
+  it('参照先を解決できない anchor folder は lane 候補にしない', () => {
+    expect(
+      collectLaneCandidates(
+        [
+          mkFolder('web', otherAnchor.activeLinkPath),
+          mkFolder('namespace', anchor.namespaceDirectoryPath),
+        ],
+        undefined,
+        anchor,
+        idFactory(),
+        noAnchorTarget,
+      ),
+    ).toEqual([]);
+  });
+
+  it('stored に誤登録された別 workspace の active link は既知 lane なら除外し未知なら参照先へ移す', () => {
+    const phantomToKnown = mkEntry('phantom-web', 'web', otherAnchor.activeLinkPath);
+    const phantomToUnknown = mkEntry('phantom-worker', 'worker', `${anchor.rootDirectoryPath}/x`);
+
+    expect(
+      collectLaneCandidates(
+        [linkFolder],
+        [phantomToKnown, ...stored, phantomToUnknown],
+        anchor,
+        idFactory(),
+        anchorTargets({
+          [otherAnchor.activeLinkPath]: '/home/user/web',
+          [`${anchor.rootDirectoryPath}/x`]: '/home/user/worker',
+        }),
+      ),
+    ).toEqual([...stored, mkEntry('phantom-worker', 'worker', '/home/user/worker')]);
   });
 
   it('factory が非 canonical ID を返したら拒否する', () => {
@@ -204,6 +287,7 @@ describe('collectLaneCandidates', () => {
         undefined,
         anchor,
         rawIdFactory('web'),
+        noAnchorTarget,
       ),
     ).toThrow(/invalid LaneId/i);
   });
@@ -216,6 +300,7 @@ describe('collectLaneCandidates', () => {
         [mkEntry(existingId, 'web', '/home/user/web')],
         anchor,
         idFactory(existingId),
+        noAnchorTarget,
       ),
     ).toThrow(/duplicate LaneId/i);
   });
@@ -298,6 +383,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       okDir,
       idFactory('worker'),
+      noAnchorTarget,
     );
 
     expect(result).toEqual({
@@ -310,6 +396,28 @@ describe('bootstrapWorkspace', () => {
     expect(store.saved()).toEqual([...stored, mkEntry('worker', 'worker', '/home/user/worker')]);
   });
 
+  it('別 workspace の active link だけの初回 workspace は参照先 lane で ready を返す', async () => {
+    const store = makeCatalogStore(undefined);
+
+    const result = await bootstrapWorkspace(
+      makeHost([mkFolder('web', otherAnchor.activeLinkPath)]),
+      fileInfo,
+      store.port,
+      okDir,
+      idFactory(generatedId),
+      anchorTargets({ [otherAnchor.activeLinkPath]: '/home/user/web' }),
+    );
+
+    expect(result).toEqual({
+      kind: 'ready',
+      context: {
+        key: `workspace:${fileInfo.uri}`,
+        canonicalLanes: [mkEntry(generatedId, 'web', '/home/user/web')],
+      },
+    });
+    expect(store.saved()).toEqual([mkEntry(generatedId, 'web', '/home/user/web')]);
+  });
+
   it('初回 raw folder に opaque ID を付与し、保存完了後に ready を返す', async () => {
     const events: string[] = [];
     const store = makeCatalogStore(undefined, async () => {}, events);
@@ -320,6 +428,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       okDir,
       idFactory(generatedId),
+      noAnchorTarget,
     );
 
     expect(events).toEqual(['save']);
@@ -344,6 +453,7 @@ describe('bootstrapWorkspace', () => {
         store.port,
         okDir,
         rawIdFactory('web'),
+        noAnchorTarget,
       ),
     ).rejects.toThrow(/invalid LaneId/i);
     expect(events).toEqual([]);
@@ -358,6 +468,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       failDir,
       idFactory('web'),
+      noAnchorTarget,
     );
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-anchor' });
   });
@@ -378,6 +489,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       directory,
       idFactory('web'),
+      noAnchorTarget,
     );
 
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-anchor' });
@@ -393,6 +505,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       makeDirectory(true, events),
       idFactory(),
+      noAnchorTarget,
     );
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-lane-source' });
     expect(events).toEqual([]);
@@ -408,6 +521,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       makeDirectory(true, events),
       idFactory(),
+      noAnchorTarget,
     );
     expect(result).toEqual({
       kind: 'ready',
@@ -429,6 +543,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       makeDirectory(true, events),
       idFactory('web', 'api'),
+      noAnchorTarget,
     );
     await Promise.resolve();
 
@@ -456,6 +571,7 @@ describe('bootstrapWorkspace', () => {
         store.port,
         makeDirectory(true, events),
         idFactory('web'),
+        noAnchorTarget,
       ),
     ).rejects.toBe(failure);
     expect(events).toEqual(['save']);
@@ -473,6 +589,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       makeDirectory(false, events),
       idFactory('web'),
+      noAnchorTarget,
     );
 
     expect(result).toEqual({ kind: 'disabled', reason: 'missing-anchor' });
@@ -497,6 +614,7 @@ describe('bootstrapWorkspace', () => {
       store.port,
       okDir,
       idFactory('web', 'api'),
+      noAnchorTarget,
     );
 
     expect(result).toMatchObject({ kind: 'ready' });
