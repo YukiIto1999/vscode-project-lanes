@@ -6,6 +6,26 @@ import type { LaneQuery, LaneRoot, LaneSearchResult } from './model';
 /** 検索結果 preview の UTF-16 code unit 上限 */
 const PREVIEW_CODE_UNIT_LIMIT = 1000;
 
+const isWithin = (rootPath: string, absolutePath: string): boolean =>
+  absolutePath === rootPath || absolutePath.startsWith(`${rootPath}/`);
+
+/**
+ * 他ルート配下に入れ子となるルートを除いた走査起点の抽出
+ * @param roots - 検索対象レーンルート列
+ * @returns 重複走査を生まない走査起点パス列
+ */
+export const searchEntryPaths = (roots: readonly LaneRoot[]): readonly string[] => {
+  const paths: string[] = [];
+  for (const { rootPath } of roots) {
+    if (paths.includes(rootPath)) continue;
+    const nested = roots.some(
+      (other) => other.rootPath !== rootPath && isWithin(other.rootPath, rootPath),
+    );
+    if (!nested) paths.push(rootPath);
+  }
+  return paths;
+};
+
 /**
  * content 検索の ripgrep 引数組立
  * @param query - 検証済みクエリ
@@ -22,7 +42,7 @@ export const buildContentArgs = (
   '--smart-case',
   '--',
   query,
-  ...roots.map((root) => root.rootPath),
+  ...searchEntryPaths(roots),
 ];
 
 /**
@@ -34,7 +54,7 @@ export const buildFileListArgs = (roots: readonly LaneRoot[]): readonly string[]
   '--no-config',
   '--files',
   '--',
-  ...roots.map((root) => root.rootPath),
+  ...searchEntryPaths(roots),
 ];
 
 /**
@@ -49,8 +69,7 @@ export const attributeLane = (
 ): LaneRoot | undefined => {
   let matched: LaneRoot | undefined;
   for (const root of roots) {
-    const within = absolutePath === root.rootPath || absolutePath.startsWith(`${root.rootPath}/`);
-    if (!within) continue;
+    if (!isWithin(root.rootPath, absolutePath)) continue;
     if (!matched || root.rootPath.length > matched.rootPath.length) matched = root;
   }
   return matched;

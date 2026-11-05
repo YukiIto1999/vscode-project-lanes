@@ -7,6 +7,7 @@ import {
   buildFileListArgs,
   parseContentMatches,
   parseFileList,
+  searchEntryPaths,
 } from './ripgrep';
 
 const root = (laneId: string, rootPath: string): LaneRoot => ({
@@ -39,6 +40,28 @@ describe('buildFileListArgs', () => {
       '--',
       '/repo/web',
       '/repo/api',
+    ]);
+  });
+});
+
+describe('searchEntryPaths', () => {
+  it('他ルート配下に入れ子のルートを走査起点から除き、重複走査を防ぐ', () => {
+    const nested = [
+      root('inner', '/repo/packages/web'),
+      root('outer', '/repo'),
+      root('sibling', '/repo-extra'),
+    ];
+    expect(searchEntryPaths(nested)).toEqual(['/repo', '/repo-extra']);
+    expect(buildFileListArgs(nested)).toEqual([
+      '--no-config',
+      '--files',
+      '--',
+      '/repo',
+      '/repo-extra',
+    ]);
+    expect(buildContentArgs('foo' as LaneQuery, nested).slice(-2)).toEqual([
+      '/repo',
+      '/repo-extra',
     ]);
   });
 });
