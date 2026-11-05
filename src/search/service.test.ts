@@ -75,7 +75,7 @@ const harness = (
   };
   const fileOpen: FileOpenPort = { openAt };
   const focus = vi.fn(async (): Promise<LaneFocusPlan> => over.focusResult ?? focusOk('web'));
-  const inspectRoot = vi.fn((_: AbsolutePath): LaneRootAvailability => 'available');
+  const inspectRoot = vi.fn<LaneRootAvailabilityPort['inspect']>(() => 'available');
   const rootAvailability: LaneRootAvailabilityPort = { inspect: inspectRoot };
   return {
     openAt,
