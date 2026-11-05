@@ -249,7 +249,7 @@ describe('managed runtime の共通 operation queue', () => {
 
     const profile = managedRuntime.slice(
       managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
-      managedRuntime.indexOf('vscode.window.onDidCloseTerminal'),
+      managedRuntime.indexOf('terminalSettings.activate('),
     );
     expect(profile).toMatch(/if \(!lane \|\| !isLaneAvailable\(lane\)\) return undefined;/);
   });
@@ -257,12 +257,28 @@ describe('managed runtime の共通 operation queue', () => {
   it('TerminalProfile の遅延 bind 失敗を共通失敗境界へ渡す', () => {
     const profile = managedRuntime.slice(
       managedRuntime.indexOf('vscode.window.registerTerminalProfileProvider'),
-      managedRuntime.indexOf('vscode.window.onDidCloseTerminal'),
+      managedRuntime.indexOf('terminalSettings.activate('),
     );
 
     expect(profile).toMatch(/runAsyncBoundary/);
     expect(profile).toMatch(/terminalService\.bindTerminal/);
     expect(profile).toMatch(/reportAsyncFailure/);
+  });
+
+  it('Lane Terminal の close 購読は最初の terminal 生成より前に登録する', () => {
+    const closeSubscription = managedRuntime.indexOf('vscode.window.onDidCloseTerminal');
+    expect(closeSubscription).toBeGreaterThan(managedRuntime.indexOf('createTerminalService({'));
+    for (const terminalEntry of [
+      'await laneService.reconcileActiveLane()',
+      'terminalService.revealLane(',
+      'vscode.window.registerTerminalProfileProvider',
+      'terminalSettings.activate(',
+    ]) {
+      expect(managedRuntime.indexOf(terminalEntry), terminalEntry).toBeGreaterThan(
+        closeSubscription,
+      );
+    }
+    expect(managedRuntime.match(/vscode\.window\.onDidCloseTerminal/g)).toHaveLength(1);
   });
 
   it('terminal の pending 表示更新を lane の共通 finalization へ接続する', () => {

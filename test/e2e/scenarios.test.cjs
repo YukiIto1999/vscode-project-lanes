@@ -94,6 +94,18 @@ const laneTerminalReplayScenario = {
   suitePath: path.join(__dirname, 'suite', 'lane-terminal-replay.cjs'),
   launches: [{ phase: 'bootstrap' }, { phase: 'replay' }],
 };
+const legacyTerminalPromptScenario = {
+  name: 'legacy-terminal-prompt',
+  fixtureRoot: path.join(__dirname, 'fixtures', 'legacy-terminal-prompt'),
+  workspaceFixture: path.join(
+    __dirname,
+    'fixtures',
+    'legacy-terminal-prompt',
+    'legacy-terminal-prompt.code-workspace',
+  ),
+  suitePath: path.join(__dirname, 'suite', 'legacy-terminal-prompt.cjs'),
+  launches: [{ phase: 'bootstrap' }, { phase: 'pending-prompt' }],
+};
 const editorSnapshotPersistenceScenario = {
   name: 'editor-snapshot-persistence',
   fixtureRoot: path.join(__dirname, 'fixtures', 'editor-snapshot-persistence'),
@@ -305,6 +317,7 @@ test('each registered scenario binds its fixture and launch phases to its dedica
     workspaceManualInitializationScenario,
     laneSwitchTransactionScenario,
     laneTerminalReplayScenario,
+    legacyTerminalPromptScenario,
     editorSnapshotPersistenceScenario,
     activeLaneReconciliationScenario,
     missingLaneRecoveryScenario,
@@ -502,6 +515,124 @@ test('the lane terminal replay phase rejects terminal responses recorded after r
   await assert.rejects(
     runLaneTerminalReplay('\x1b[?1;2c'),
     /Scrollback replay sent terminal responses to the shell: "\\u001b\[\?1;2c"/,
+  );
+});
+
+test('the legacy terminal prompt suite rejects an unknown phase', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+
+  await assert.rejects(
+    run({
+      environment: {
+        PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'unknown' }),
+      },
+    }),
+    /Unknown E2E phase: unknown/,
+  );
+});
+
+test('legacy terminal prompt fixture keeps the matching v0.1.13 terminal settings', () => {
+  const fixtureSource = fs.readFileSync(legacyTerminalPromptScenario.workspaceFixture, 'utf8');
+  const { settings } = JSON.parse(fixtureSource.replace(/,\s*([}\]])/g, '$1'));
+
+  assert.equal(settings['projectLanes.initializationMode'], 'automatic');
+  assert.equal(settings['terminal.integrated.defaultProfile.linux'], 'Lane Terminal');
+  assert.equal(settings['terminal.integrated.enablePersistentSessions'], false);
+});
+
+const createLegacyPromptHarness = ({ killOnDispose = true } = {}) => {
+  const workspaceDirectory = '/tmp/project-lanes-e2e-legacy-prompt/workspace';
+  const workspaceFile = path.join(workspaceDirectory, 'legacy-terminal-prompt.code-workspace');
+  const activeLink = activeLinkForPath(workspaceFile);
+  const laneA = path.join(workspaceDirectory, 'lane-a');
+  const files = new Map();
+  const events = [];
+  const alive = new Set([4321]);
+  const terminal = {
+    name: 'lane-a',
+    sendText(text) {
+      events.push('sendText');
+      assert.match(text, /^printf '%s' "\$\$" > /);
+      files.set(path.join(laneA, 'startup-shell-pid'), '4321');
+    },
+    dispose() {
+      events.push('dispose');
+      if (killOnDispose) alive.delete(4321);
+    },
+  };
+  return {
+    events,
+    dependencies: {
+      environment: { PROJECT_LANES_E2E_PAYLOAD: JSON.stringify({ phase: 'pending-prompt' }) },
+      vscodeApi: {
+        workspace: {
+          workspaceFile: { fsPath: workspaceFile },
+          workspaceFolders: [{ uri: { fsPath: activeLink } }],
+          getConfiguration(section) {
+            assert.equal(section, 'terminal.integrated');
+            return {
+              inspect(key) {
+                assert.equal(key, 'enablePersistentSessions');
+                return { workspaceValue: false };
+              },
+            };
+          },
+        },
+        extensions: {
+          getExtension() {
+            return { activate: () => new Promise(() => {}) };
+          },
+        },
+        window: { terminals: [terminal] },
+      },
+      fileSystem: {
+        realpathSync(value) {
+          assert.equal(value, activeLink);
+          return laneA;
+        },
+        existsSync(value) {
+          return files.has(value);
+        },
+        readFileSync(value) {
+          return files.get(value);
+        },
+      },
+      processApi: {
+        kill(pid, signal) {
+          assert.equal(signal, 0);
+          if (alive.has(pid)) return true;
+          throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
+        },
+      },
+      delay: async () => {},
+      now: (() => {
+        let instant = 0;
+        return () => (instant += 1_000);
+      })(),
+    },
+  };
+};
+
+test('the pending-prompt phase closes the startup Lane Terminal without waiting for activation', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness();
+  const messages = [];
+
+  await run({ ...harness.dependencies, log: (message) => messages.push(message) });
+
+  assert.deepEqual(harness.events, ['sendText', 'dispose']);
+  assert.deepEqual(messages, [
+    'E2E PASS: closing Lane Terminal during the legacy prompt ended its shell',
+  ]);
+});
+
+test('the pending-prompt phase rejects a startup shell that survives its closed Terminal', async () => {
+  const { run } = require('./suite/legacy-terminal-prompt.cjs');
+  const harness = createLegacyPromptHarness({ killOnDispose: false });
+
+  await assert.rejects(
+    run({ ...harness.dependencies, log: () => {} }),
+    /Closing the startup Lane Terminal left its shell running/,
   );
 });
 
