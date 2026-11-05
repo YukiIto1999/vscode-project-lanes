@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.1.16] - 2026-11-05
+
+### Changed
+
+- The v0.1.13 legacy terminal-settings question no longer blocks lanes or Lane Terminal while it is open. The choice is applied when you answer. (6913c2b)
+- Restored editor tabs now reopen pinned so that every tab in a column comes back. Non-text files are restored in VS Code's normal viewer instead of being skipped. (d461c83, bcfb80c)
+- Documented that VS Code's file watcher stays on the lane that was active when the window opened, with workarounds. (4e60d69)
+- Updated development tooling (vite-plus 1.4.0, @vscode/vsce 4.1.0) to resolve dependency vulnerabilities, pinned the VS Code API types to the minimum supported version, and added E2E coverage on the latest stable VS Code. (5273878, fb4883b, 6ce29e6, e637da9)
+
+### Fixed
+
+- Find in Lanes and Go to File in Lanes no longer fail entirely when a lane contains an unreadable directory, a non-UTF-8 file, or a very long line such as a minified bundle. Only the affected entries are skipped. (f552d14)
+- Nested lanes no longer produce duplicate search results. (9c12324)
+- Search results containing `$(...)` are shown as text instead of icons. (a0e18b8)
+- Opening a search result reuses the editor already open for that file instead of opening a second, out-of-sync editor outside the workspace folder. (e2dfba8)
+- Switching back to a lane now restores every tab in a column, and files with the same relative path in two lanes no longer show the other lane's contents. (d461c83, bcfb80c)
+- Lane switching no longer fails when 10 or more editor groups are open. (b2aaba8)
+- zsh shell integration now reports command completion, so zsh lanes no longer stay in an active state indefinitely. (e864d58)
+- zsh dotfiles now see their own `ZDOTDIR`, and shell integration also works when `~/.zshenv` moves `ZDOTDIR`, for example to `~/.config/zsh`. (9526f66)
+- bash prompts that display the last exit status now receive the real status instead of `0`. (c88c426)
+- A Lane Terminal whose shell exits before the terminal opens now closes instead of staying blank. (1e215af)
+- Activity detection no longer misses command boundaries after an unterminated escape sequence. (fe225f0)
+- Switching back to a lane no longer types stray characters such as `1;2c` into its terminal. (e42b4e4)
+- Closing a Lane Terminal while the v0.1.13 legacy-settings question is open now ends its shell. (3735ee8)
+- Switching between lanes with the same name, or relocating the active lane, now refreshes the Explorer. (ef5d463)
+- After **Save Workspace As** or moving the workspace file, the previous workspace's active link is no longer imported as an extra lane. If it still points to a readable folder that is not a lane yet, that folder is imported instead. (5a7f22a)
+- A deleted `.lanes-root` directory is recreated by Reload Lanes, and a blocked lane switch now shows a warning with a Reload Lanes action instead of failing silently. (6790d1c)
+- Activation no longer fails when the workspace state cannot be inspected, for example because of a corrupt lane catalog. The error is reported and initialization can be retried. (441dd1e)
+
 ## [0.1.15] - 2026-08-10
 
 ### Fixed
